@@ -1,0 +1,66 @@
+{
+  "name": "ssh-session-mcp",
+  "license": "MIT",
+  "version": "1.0.3",
+  "description": "Persistent SSH PTY session manager for MCP clients with actor-aware input tracking, split dashboard rendering, and automatic session cleanup.",
+  "type": "module",
+  "author": "Zw-awa",
+  "homepage": "https://github.com/Zw-awa/ssh-session-mcp",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Zw-awa/ssh-session-mcp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Zw-awa/ssh-session-mcp/issues"
+  },
+  "bin": {
+    "ssh-session-mcp": "build/index.js",
+    "ssh-session-mcp-view": "build/viewer-cli.js"
+  },
+  "scripts": {
+    "prepare": "npm run build",
+    "build": "tsc && shx chmod +x build/*.js",
+    "inspect": "npx @modelcontextprotocol/inspector node build/index.js",
+    "test": "cross-env SSH_MCP_DISABLE_MAIN=1 vitest --run",
+    "test:watch": "cross-env SSH_MCP_DISABLE_MAIN=1 vitest",
+    "coverage": "cross-env SSH_MCP_DISABLE_MAIN=1 vitest --run --coverage"
+  },
+  "files": [
+    "build"
+  ],
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.17.5",
+    "ssh2": "^1.17.0",
+    "zod": "3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^24.5.2",
+    "@types/ssh2": "^1.15.5",
+    "cross-env": "^7.0.3",
+    "shx": "^0.4.0",
+    "testcontainers": "^11.7.0",
+    "ts-node": "^10.9.2",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.4"
+  },
+  "keywords": [
+    "ssh",
+    "mcp",
+    "pty",
+    "terminal",
+    "remote",
+    "agent",
+    "typescript",
+    "model-context-protocol",
+    "claude",
+    "codex",
+    "cursor"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}
