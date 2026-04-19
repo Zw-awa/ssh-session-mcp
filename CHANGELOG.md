@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.1] - 2026-04-19
+
+### Added
+- **Smart output truncation**: When `ssh-run` output exceeds `maxChars` (default 16000), shows head (30%) and tail (70%) with clear separator and instructions to read omitted section
+- **Omitted section recovery**: Truncation message includes exact offset and command to retrieve omitted data via `ssh-session-read`
+
+### Fixed
+- **Increased default buffer**: `ssh-run` default `maxChars` increased from 8000 to 16000 for longer command outputs
+
 ## [2.0.0] - 2026-04-19
 
 ### Added

@@ -3231,7 +3231,7 @@ server.tool(
     command: z.string().describe('Shell command to execute'),
     session: z.string().optional().describe('Session name or id. Defaults to "default"'),
     waitMs: z.number().int().nonnegative().optional().describe('How long to wait for output after sending the command (default 2000ms)'),
-    maxChars: z.number().int().positive().optional().describe('Max chars to read from output (default 8000)'),
+    maxChars: z.number().int().positive().optional().describe('Max chars to read from output (default 16000). When output exceeds this limit, head (30%) and tail (70%) are returned with the middle omitted.'),
   },
   async ({ command, session, waitMs, maxChars }) => {
     sweepSessions();
@@ -3251,7 +3251,7 @@ server.tool(
     broadcastLock(target);
 
     const resolvedWaitMs = sanitizeNonNegativeInt(waitMs, 'waitMs', 2000);
-    const resolvedMaxChars = sanitizePositiveInt(maxChars, 'maxChars', 8000);
+    const resolvedMaxChars = sanitizePositiveInt(maxChars, 'maxChars', 16000);
 
     const beforeOffset = target.currentBufferEnd();
     target.write(`${command}\n`, 'agent');
@@ -3264,16 +3264,57 @@ server.tool(
 
     const snapshot = target.read(beforeOffset, resolvedMaxChars);
 
-    // Release lock
+    // Release lock (subsequent reads are stateless buffer operations)
     target.inputLock = 'none';
     broadcastLock(target);
+
+    if (!snapshot.truncatedAfter) {
+      // Output fits within maxChars -- return as-is
+      return createToolResponse(JSON.stringify({
+        command,
+        sessionName: target.sessionName,
+        host: target.host,
+        exitHint: 'Check output for command result. Use ssh-run again for next command.',
+      }, null, 2), [snapshot.output.length > 0 ? snapshot.output : '(no output yet)']);
+    }
+
+    // Output exceeds maxChars -- apply head+tail truncation (30% head, 70% tail)
+    const SEPARATOR_RESERVE = 200;
+    const HEAD_RATIO = 0.30;
+    const usableChars = resolvedMaxChars - SEPARATOR_RESERVE;
+    const headChars = Math.floor(usableChars * HEAD_RATIO);
+    const tailChars = usableChars - headChars;
+
+    const headSnapshot = target.read(beforeOffset, headChars);
+    const tailSnapshot = target.read(undefined, tailChars);
+
+    // If tail overlaps head, no real gap -- return the original full read
+    if (tailSnapshot.effectiveOffset <= headSnapshot.nextOffset) {
+      return createToolResponse(JSON.stringify({
+        command,
+        sessionName: target.sessionName,
+        host: target.host,
+        exitHint: 'Check output for command result. Use ssh-run again for next command.',
+      }, null, 2), [snapshot.output.length > 0 ? snapshot.output : '(no output yet)']);
+    }
+
+    const omittedStart = headSnapshot.nextOffset;
+    const omittedEnd = tailSnapshot.effectiveOffset;
+    const omittedChars = omittedEnd - omittedStart;
+    const totalOutputChars = snapshot.availableEnd - beforeOffset;
+
+    const separator = `\n\n--- OUTPUT TRUNCATED: ${omittedChars} chars omitted (offset ${omittedStart} to ${omittedEnd}) ---\n--- To read omitted section: use ssh-session-read with session="${target.sessionName}", offset=${omittedStart}, maxChars=${omittedChars} ---\n\n`;
+    const combinedOutput = headSnapshot.output + separator + tailSnapshot.output;
 
     return createToolResponse(JSON.stringify({
       command,
       sessionName: target.sessionName,
       host: target.host,
-      exitHint: 'Check output for command result. Use ssh-run again for next command.',
-    }, null, 2), [snapshot.output.length > 0 ? snapshot.output : '(no output yet)']);
+      outputTruncated: true,
+      totalOutputChars,
+      omittedRange: { start: omittedStart, end: omittedEnd, chars: omittedChars },
+      exitHint: `Output was truncated (${totalOutputChars} total chars). Head and tail are shown. Use ssh-session-read with offset=${omittedStart} to read the omitted middle section.`,
+    }, null, 2), [combinedOutput]);
   },
 );
 
