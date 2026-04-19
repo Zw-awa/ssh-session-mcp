@@ -2,7 +2,7 @@
   "name": "ssh-session-mcp",
   "license": "MIT",
   "version": "1.0.3",
-  "description": "Persistent SSH PTY session manager for MCP clients with actor-aware input tracking, split dashboard rendering, and automatic session cleanup.",
+  "description": "Persistent SSH PTY session manager for MCP clients with actor-aware input tracking, terminal-style dashboard rendering, and automatic session cleanup.",
   "type": "module",
   "author": "Zw-awa",
   "homepage": "https://github.com/Zw-awa/ssh-session-mcp",

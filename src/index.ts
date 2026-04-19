@@ -14,8 +14,9 @@ import { z } from 'zod';
 import {
   delay,
   normalizePaneText,
-  renderSplitDashboard,
+  renderTerminalDashboard,
   renderTranscriptEvent,
+  renderViewerTranscript,
   sanitizeActor,
   sanitizeNonNegativeInt,
   sanitizeOptionalText,
@@ -28,6 +29,7 @@ import {
   SSHSession,
   type SSHConfig,
   type SessionTuning,
+  type SessionWriteRecord,
 } from './session.js';
 
 function parseArgv() {
@@ -383,6 +385,34 @@ function resolveSession(sessionRef: string): SSHSession {
   throw new McpError(ErrorCode.InvalidParams, `Unknown session: ${sessionRef}`);
 }
 
+function resolveSessionForBinding(bindingKey: string) {
+  const binding = viewerBindings.get(bindingKey);
+  if (!binding) {
+    throw new McpError(ErrorCode.InvalidParams, `Unknown viewer binding: ${bindingKey}`);
+  }
+
+  const session = sessions.get(binding.sessionId);
+  if (!session) {
+    throw new McpError(ErrorCode.InvalidParams, `Viewer binding ${bindingKey} is not attached to an active session`);
+  }
+
+  return {
+    binding,
+    session,
+  };
+}
+
+function resolveAttachTarget(kind: 'session' | 'binding', ref: string) {
+  if (kind === 'binding') {
+    return resolveSessionForBinding(ref);
+  }
+
+  return {
+    binding: undefined,
+    session: resolveSession(ref),
+  };
+}
+
 function ensureUniqueSessionName(sessionName: string | undefined) {
   if (!sessionName) return;
   sweepSessions();
@@ -429,24 +459,29 @@ function buildDashboardState(session: SSHSession, options: {
   const conversationEvents = session.getConversationEvents(options.rightEvents);
   const terminalText = normalizePaneText(outputSnapshot.output, options.stripAnsiFromLeft);
   const conversationText = conversationEvents.map(renderTranscriptEvent).join('\n\n');
-  const leftTitleBase = session.sessionName
+  const transcriptSnapshot = session.readEvents(
+    undefined,
+    Math.max(options.rightEvents * 8, options.height * 12, 120),
+    Math.max(options.leftChars, options.width * options.height * 2),
+  );
+  const transcriptText = renderViewerTranscript(transcriptSnapshot.events, options.stripAnsiFromLeft);
+  const titleBase = session.sessionName
     ? `SSH ${session.sessionName} ${session.user}@${session.host}:${session.port}`
     : `SSH ${session.user}@${session.host}:${session.port}`;
-  const leftTitle = session.closed ? `${leftTitleBase} [closed]` : leftTitleBase;
-  const rightTitle = 'Inputs (user / agent)';
+  const title = session.closed ? `${titleBase} [closed]` : titleBase;
 
   return {
     terminalText,
     conversationText,
-    leftTitle,
-    rightTitle,
-    dashboard: renderSplitDashboard({
-      leftTitle,
-      rightTitle,
-      leftText: terminalText,
-      rightText: conversationText,
+    transcriptText,
+    leftTitle: title,
+    rightTitle: '',
+    dashboard: renderTerminalDashboard({
+      title,
+      bodyText: transcriptText,
       width: options.width,
       height: options.height,
+      emptyPlaceholder: '(no terminal activity yet)',
     }),
   };
 }
@@ -480,11 +515,44 @@ function parsePositiveQueryInt(raw: string | null, fallback: number) {
   return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
 }
 
+function parseOptionalNonNegativeQueryInt(raw: string | null) {
+  if (!raw) return undefined;
+  const parsed = Number(raw);
+  return Number.isInteger(parsed) && parsed >= 0 ? parsed : undefined;
+}
+
+function parseNonNegativeQueryInt(raw: string | null, fallback: number) {
+  const parsed = parseOptionalNonNegativeQueryInt(raw);
+  return typeof parsed === 'number' ? parsed : fallback;
+}
+
 function parseBooleanQuery(raw: string | null, fallback: boolean) {
   if (!raw) return fallback;
   if (raw === '1' || raw.toLowerCase() === 'true') return true;
   if (raw === '0' || raw.toLowerCase() === 'false') return false;
   return fallback;
+}
+
+async function readJsonRequestBody(request: AsyncIterable<Buffer | string>) {
+  let body = '';
+
+  for await (const chunk of request) {
+    body += typeof chunk === 'string' ? chunk : chunk.toString('utf8');
+    if (body.length > 1024 * 1024) {
+      throw new McpError(ErrorCode.InvalidRequest, 'Request body exceeds 1 MiB');
+    }
+  }
+
+  if (body.trim().length === 0) {
+    return {};
+  }
+
+  try {
+    return JSON.parse(body) as Record<string, unknown>;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new McpError(ErrorCode.InvalidRequest, `Invalid JSON body: ${message}`);
+  }
 }
 
 function escapeHtml(text: string) {
@@ -520,8 +588,52 @@ function createViewerPayload(
     dashboard: state.dashboard,
     terminalText: state.terminalText,
     conversationText: state.conversationText,
+    transcriptText: state.transcriptText,
     leftTitle: state.leftTitle,
     rightTitle: state.rightTitle,
+  };
+}
+
+function createAttachPayload(
+  session: SSHSession,
+  options: {
+    bindingKey?: string;
+    eventSeq?: number;
+    maxChars: number;
+    maxEvents: number;
+    outputOffset?: number;
+  },
+) {
+  const outputSnapshot = session.read(options.outputOffset, options.maxChars);
+  const eventSnapshot = session.readEvents(
+    options.eventSeq,
+    options.maxEvents,
+    Math.max(options.maxChars * 4, DEFAULT_DASHBOARD_LEFT_CHARS),
+  );
+  const binding = options.bindingKey ? viewerBindings.get(options.bindingKey) ?? null : null;
+
+  return {
+    summary: session.summary(),
+    binding,
+    bindingKey: binding?.bindingKey,
+    viewerBaseUrl: getViewerBaseUrl(),
+    viewerUrl: buildViewerSessionUrl(session),
+    output: outputSnapshot.output,
+    requestedOutputOffset: outputSnapshot.requestedOffset,
+    effectiveOutputOffset: outputSnapshot.effectiveOffset,
+    nextOutputOffset: outputSnapshot.nextOffset,
+    outputAvailableStart: outputSnapshot.availableStart,
+    outputAvailableEnd: outputSnapshot.availableEnd,
+    outputTruncatedBefore: outputSnapshot.truncatedBefore,
+    outputTruncatedAfter: outputSnapshot.truncatedAfter,
+    requestedEventSeq: eventSnapshot.requestedEventSeq,
+    effectiveEventSeq: eventSnapshot.effectiveEventSeq,
+    nextEventSeq: eventSnapshot.nextEventSeq,
+    eventAvailableStartSeq: eventSnapshot.availableStartSeq,
+    eventAvailableEndSeq: eventSnapshot.availableEndSeq,
+    eventTruncatedBefore: eventSnapshot.truncatedBefore,
+    eventTruncatedAfter: eventSnapshot.truncatedAfter,
+    events: eventSnapshot.events.filter(event => event.type !== 'output'),
   };
 }
 
@@ -540,8 +652,9 @@ function createViewerBindingPayload(
   if (!binding) {
     const terminalText = '(viewer binding is not attached to any SSH session yet)';
     const conversationText = '(no user/agent input yet)';
+    const transcriptText = terminalText;
     const leftTitle = `Viewer ${bindingKey}`;
-    const rightTitle = 'Inputs (user / agent)';
+    const rightTitle = '';
 
     return {
       bindingKey,
@@ -555,16 +668,16 @@ function createViewerBindingPayload(
       dashboardLeftChars: options.leftChars,
       dashboardRightEvents: options.rightEvents,
       stripAnsiFromLeft: options.stripAnsiFromLeft,
-      dashboard: renderSplitDashboard({
-        leftTitle,
-        rightTitle,
-        leftText: terminalText,
-        rightText: conversationText,
+      dashboard: renderTerminalDashboard({
+        title: leftTitle,
+        bodyText: transcriptText,
         width: options.width,
         height: options.height,
+        emptyPlaceholder: '(viewer binding is not attached to any SSH session yet)',
       }),
       terminalText,
       conversationText,
+      transcriptText,
       leftTitle,
       rightTitle,
     };
@@ -574,8 +687,9 @@ function createViewerBindingPayload(
   if (!session) {
     const terminalText = `(binding ${binding.bindingKey} is waiting for session ${binding.sessionId})`;
     const conversationText = '(no user/agent input yet)';
+    const transcriptText = terminalText;
     const leftTitle = `Viewer ${binding.user}@${binding.host}:${binding.port}`;
-    const rightTitle = 'Inputs (user / agent)';
+    const rightTitle = '';
 
     return {
       bindingKey: binding.bindingKey,
@@ -589,16 +703,16 @@ function createViewerBindingPayload(
       dashboardLeftChars: options.leftChars,
       dashboardRightEvents: options.rightEvents,
       stripAnsiFromLeft: options.stripAnsiFromLeft,
-      dashboard: renderSplitDashboard({
-        leftTitle,
-        rightTitle,
-        leftText: terminalText,
-        rightText: conversationText,
+      dashboard: renderTerminalDashboard({
+        title: leftTitle,
+        bodyText: transcriptText,
         width: options.width,
         height: options.height,
+        emptyPlaceholder: `(binding ${binding.bindingKey} is waiting for session ${binding.sessionId})`,
       }),
       terminalText,
       conversationText,
+      transcriptText,
       leftTitle,
       rightTitle,
     };
@@ -986,18 +1100,19 @@ function renderViewerHomePage() {
 </html>`;
 }
 
-function renderViewerSessionPage(sessionRef: string) {
-  const baseUrl = getViewerBaseUrl() || '';
-  const refreshMs = DEFAULT_VIEWER_REFRESH_MS;
-  const session = sessions.get(sessionRef) || [...sessions.values()].find(s => s.sessionName === sessionRef);
-  const sessionData = session ? session.summary() : null;
-
+function renderViewerErrorPage(options: {
+  baseUrl: string;
+  detail: string;
+  footerLabel: string;
+  footerValue: string;
+  title: string;
+}) {
   return `<!doctype html>
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>\${sessionData ? escapeHtml(sessionData.sessionName || sessionData.sessionId) : 'Session Not Found'} • SSH Session MCP Viewer</title>
+  <title>${escapeHtml(options.title)} • SSH Session MCP Viewer</title>
   <style>
     :root {
       color-scheme: dark;
@@ -1007,302 +1122,708 @@ function renderViewerSessionPage(sessionRef: string) {
       --text: #e8edf5;
       --muted: #9aabbd;
       --accent: #6dd3ce;
-      --warn: #ffb84d;
       --error: #ff6b6b;
       font-family: Consolas, "SFMono-Regular", "Courier New", monospace;
     }
     body {
       margin: 0;
-      padding: 0;
+      min-height: 100vh;
       background: var(--bg);
       color: var(--text);
+      display: grid;
+      grid-template-rows: auto 1fr auto;
     }
-    .header {
-      padding: 15px 20px;
+    .header, footer {
+      padding: 16px 20px;
       background: var(--panel);
       border-bottom: 1px solid var(--line);
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-    }
-    .title {
-      font-size: 18px;
-      font-weight: bold;
-      color: var(--accent);
-    }
-    .meta {
-      font-size: 13px;
-      color: var(--muted);
-    }
-    .controls {
-      display: flex;
-      gap: 10px;
-      align-items: center;
-    }
-    .btn {
-      padding: 6px 12px;
-      background: var(--panel);
-      border: 1px solid var(--line);
-      border-radius: 4px;
-      color: var(--text);
-      text-decoration: none;
-      font-size: 13px;
-      cursor: pointer;
-    }
-    .btn:hover {
-      background: var(--line);
-    }
-    .dashboard-container {
-      padding: 20px;
-    }
-    .dashboard {
-      background: #000;
-      border: 1px solid var(--line);
-      border-radius: 4px;
-      padding: 15px;
-      font-family: Consolas, "SFMono-Regular", "Courier New", monospace;
-      font-size: 14px;
-      line-height: 1.4;
-      white-space: pre-wrap;
-      overflow-x: auto;
-      min-height: 400px;
-    }
-    .error {
-      padding: 40px 20px;
-      text-align: center;
-      color: var(--error);
     }
     footer {
-      padding: 15px 20px;
+      border-bottom: 0;
       border-top: 1px solid var(--line);
-      font-size: 12px;
       color: var(--muted);
+      font-size: 12px;
+    }
+    .body {
+      display: grid;
+      place-items: center;
+      padding: 24px;
+    }
+    .error {
+      max-width: 720px;
+      width: 100%;
+      background: #0b0f15;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 24px;
       text-align: center;
+    }
+    .title {
+      color: var(--error);
+      font-size: 20px;
+      margin-bottom: 12px;
+    }
+    .detail {
+      color: var(--muted);
+      white-space: pre-wrap;
+      margin-bottom: 20px;
+    }
+    .btn {
+      display: inline-block;
+      padding: 8px 14px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      color: var(--text);
+      text-decoration: none;
     }
   </style>
 </head>
 <body>
-  <div class="header">
-    <div>
-      <div class="title">${sessionData ? escapeHtml(sessionData.sessionName || sessionData.sessionId) : 'Session Not Found'}</div>
-      <div class="meta">${sessionData ? `${sessionData.user}@${sessionData.host}:${sessionData.port}` : ''}</div>
-    </div>
-    <div class="controls">
-      <a href="${baseUrl}" class="btn">Home</a>
-      <button class="btn" onclick="location.reload()">Refresh</button>
+  <div class="header">SSH Session MCP Viewer</div>
+  <div class="body">
+    <div class="error">
+      <div class="title">${escapeHtml(options.title)}</div>
+      <div class="detail">${escapeHtml(options.detail)}</div>
+      <a class="btn" href="${options.baseUrl}">Return to Home</a>
     </div>
   </div>
-
-  <div class="dashboard-container">
-    ${sessionData ? `
-      <div id="dashboard" class="dashboard">Loading dashboard...</div>
-    ` : `
-      <div class="error">
-        <div style="font-size: 18px; margin-bottom: 10px;">Session not found</div>
-        <div>Session reference: ${escapeHtml(sessionRef)}</div>
-        <div style="margin-top: 20px;">
-          <a href="${baseUrl}" class="btn">Return to Home</a>
-        </div>
-      </div>
-    `}
-  </div>
-
-  <footer>
-    <div>SSH Session MCP • Auto‑refresh: ${refreshMs}ms</div>
-    <div>Session ID: ${escapeHtml(sessionRef)}</div>
-  </footer>
-
-  \${sessionData ? \`
-    <script>
-      const sessionRef = '\${sessionRef}';
-      const baseUrl = '\${baseUrl}';
-      const refreshMs = \${refreshMs};
-
-      async function loadDashboard() {
-        try {
-          const response = await fetch(\`\${baseUrl}/api/session/\${encodeURIComponent(sessionRef)}\`);
-          if (!response.ok) {
-            throw new Error(\`HTTP \${response.status}\`);
-          }
-          const data = await response.json();
-          document.getElementById('dashboard').textContent = data.dashboard;
-          
-          if (data.summary?.closed) {
-            document.getElementById('dashboard').style.color = 'var(--muted)';
-            document.getElementById('dashboard').innerHTML += '\\n\\n<span style="color: var(--warn)">[Session closed]</span>';
-          }
-        } catch (error) {
-          document.getElementById('dashboard').textContent = \`Error loading dashboard: \${error.message}\`;
-          document.getElementById('dashboard').style.color = 'var(--error)';
-        }
-      }
-
-      loadDashboard();
-      setInterval(loadDashboard, refreshMs);
-    </script>
-  \` : ''}
+  <footer>${escapeHtml(options.footerLabel)}: ${escapeHtml(options.footerValue)}</footer>
 </body>
 </html>`;
 }
 
-function renderViewerBindingPage(bindingKey: string) {
-  const baseUrl = getViewerBaseUrl() || '';
+function renderInteractiveAttachPage(options: {
+  actor: string;
+  attachPath: string;
+  baseUrl: string;
+  footerLabel: string;
+  footerValue: string;
+  meta: string;
+  subtitle: string;
+  title: string;
+}) {
   const refreshMs = DEFAULT_VIEWER_REFRESH_MS;
-  const binding = viewerBindings.get(bindingKey);
-  const session = binding ? sessions.get(binding.sessionId) : null;
-  const sessionData = session ? session.summary() : null;
 
   return `<!doctype html>
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>\${sessionData ? escapeHtml(sessionData.sessionName || sessionData.sessionId) : 'Binding Not Found'} • SSH Session MCP Viewer</title>
+  <title>${escapeHtml(options.title)} • SSH Session MCP Viewer</title>
   <style>
     :root {
       color-scheme: dark;
-      --bg: #11151c;
-      --panel: #1a2029;
-      --line: #2b3442;
-      --text: #e8edf5;
-      --muted: #9aabbd;
-      --accent: #6dd3ce;
-      --warn: #ffb84d;
+      --bg: #0d1117;
+      --panel: #161b22;
+      --panel-alt: #0f141b;
+      --line: #2f3845;
+      --text: #e6edf3;
+      --muted: #91a0b3;
+      --accent: #72d6d1;
+      --warn: #ffbc6d;
       --error: #ff6b6b;
+      --user: #2f81f7;
+      --codex: #ff9f43;
+      --claude: #b197fc;
       font-family: Consolas, "SFMono-Regular", "Courier New", monospace;
     }
+    * { box-sizing: border-box; }
     body {
       margin: 0;
-      padding: 0;
-      background: var(--bg);
+      min-height: 100vh;
+      background: radial-gradient(circle at top, #182232 0%, #0d1117 55%, #090c11 100%);
       color: var(--text);
+      display: grid;
+      grid-template-rows: auto 1fr auto;
     }
-    .header {
-      padding: 15px 20px;
-      background: var(--panel);
+    .header, footer {
+      padding: 16px 20px;
+      background: rgba(22, 27, 34, 0.96);
       border-bottom: 1px solid var(--line);
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-    }
-    .title {
-      font-size: 18px;
-      font-weight: bold;
-      color: var(--accent);
-    }
-    .meta {
-      font-size: 13px;
-      color: var(--muted);
-    }
-    .controls {
-      display: flex;
-      gap: 10px;
-      align-items: center;
-    }
-    .btn {
-      padding: 6px 12px;
-      background: var(--panel);
-      border: 1px solid var(--line);
-      border-radius: 4px;
-      color: var(--text);
-      text-decoration: none;
-      font-size: 13px;
-      cursor: pointer;
-    }
-    .btn:hover {
-      background: var(--line);
-    }
-    .dashboard-container {
-      padding: 20px;
-    }
-    .dashboard {
-      background: #000;
-      border: 1px solid var(--line);
-      border-radius: 4px;
-      padding: 15px;
-      font-family: Consolas, "SFMono-Regular", "Courier New", monospace;
-      font-size: 14px;
-      line-height: 1.4;
-      white-space: pre-wrap;
-      overflow-x: auto;
-      min-height: 400px;
-    }
-    .error {
-      padding: 40px 20px;
-      text-align: center;
-      color: var(--error);
+      backdrop-filter: blur(10px);
     }
     footer {
-      padding: 15px 20px;
+      border-bottom: 0;
       border-top: 1px solid var(--line);
-      font-size: 12px;
       color: var(--muted);
-      text-align: center;
+      font-size: 12px;
+    }
+    .header {
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      align-items: flex-start;
+    }
+    .title {
+      font-size: 20px;
+      font-weight: 700;
+      color: var(--accent);
+      margin-bottom: 6px;
+    }
+    .subtitle, .meta {
+      color: var(--muted);
+      font-size: 13px;
+      white-space: pre-wrap;
+    }
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+      justify-content: flex-end;
+    }
+    .btn, .actor {
+      height: 36px;
+      padding: 0 12px;
+      border-radius: 8px;
+      border: 1px solid var(--line);
+      background: var(--panel-alt);
+      color: var(--text);
+      font: inherit;
+    }
+    .btn {
+      cursor: pointer;
+    }
+    .btn:hover, .actor:focus, .terminal-shell:focus-within {
+      border-color: var(--accent);
+    }
+    .btn.primary {
+      background: var(--accent);
+      color: #08242a;
+      border-color: transparent;
+      font-weight: 700;
+    }
+    .page {
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+      gap: 12px;
+      padding: 16px 20px;
+      min-height: 0;
+    }
+    .notice {
+      color: var(--warn);
+      font-size: 12px;
+      background: rgba(255, 188, 109, 0.08);
+      border: 1px solid rgba(255, 188, 109, 0.18);
+      border-radius: 10px;
+      padding: 10px 12px;
+    }
+    .terminal-shell {
+      min-height: 0;
+      display: grid;
+      grid-template-rows: 1fr auto;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      overflow: hidden;
+      background: rgba(6, 10, 15, 0.92);
+      box-shadow: 0 20px 80px rgba(0, 0, 0, 0.35);
+    }
+    .terminal-wrap {
+      min-height: 0;
+      overflow: auto;
+      padding: 18px;
+    }
+    .terminal {
+      margin: 0;
+      min-height: 100%;
+      color: var(--text);
+      font-size: 14px;
+      line-height: 1.45;
+      white-space: pre-wrap;
+      word-break: break-word;
+      outline: none;
+      caret-color: transparent;
+    }
+    .status {
+      padding: 10px 14px;
+      border-top: 1px solid var(--line);
+      background: #1f2630;
+      color: #f5f7fa;
+      font-size: 12px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .status.user { background: var(--user); }
+    .status.codex { background: var(--codex); color: #1a140a; }
+    .status.claude { background: var(--claude); }
+    .status.session { background: #4b5563; }
+    .status.error { background: var(--error); }
+    .status.idle { background: #253041; }
+    .shortcut-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .shortcut-row code {
+      background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 6px;
+      padding: 2px 6px;
+      color: var(--text);
+    }
+    @media (max-width: 900px) {
+      .header {
+        flex-direction: column;
+      }
+      .actions {
+        justify-content: flex-start;
+      }
     }
   </style>
 </head>
 <body>
   <div class="header">
     <div>
-      <div class="title">${sessionData ? escapeHtml(sessionData.sessionName || sessionData.sessionId) : 'Binding Not Found'}</div>
-      <div class="meta">${sessionData ? `${sessionData.user}@${sessionData.host}:${sessionData.port}` : `Binding: ${escapeHtml(bindingKey)}`}</div>
+      <div class="title">${escapeHtml(options.title)}</div>
+      <div class="subtitle">${escapeHtml(options.subtitle)}</div>
+      <div class="meta">${escapeHtml(options.meta)}</div>
     </div>
-    <div class="controls">
-      <a href="${baseUrl}" class="btn">Home</a>
-      <button class="btn" onclick="location.reload()">Refresh</button>
+    <div class="actions">
+      <a href="${options.baseUrl}" class="btn">Home</a>
+      <select id="actor" class="actor">
+        <option value="user"${options.actor === 'user' ? ' selected' : ''}>user</option>
+        <option value="codex"${options.actor === 'codex' ? ' selected' : ''}>codex</option>
+        <option value="claude"${options.actor === 'claude' ? ' selected' : ''}>claude</option>
+      </select>
+      <button id="focusBtn" class="btn primary" type="button">Focus</button>
+      <button data-control="ctrl_c" class="btn" type="button">Ctrl+C</button>
+      <button data-control="ctrl_d" class="btn" type="button">Ctrl+D</button>
+      <button id="clearBtn" class="btn" type="button">Clear View</button>
     </div>
   </div>
 
-  <div class="dashboard-container">
-    ${sessionData ? `
-      <div id="dashboard" class="dashboard">Loading dashboard...</div>
-    ` : `
-      <div class="error">
-        <div style="font-size: 18px; margin-bottom: 10px;">Binding not found</div>
-        <div>Binding key: ${escapeHtml(bindingKey)}</div>
-        <div style="margin-top: 20px;">
-          <a href="${baseUrl}" class="btn">Return to Home</a>
-        </div>
+  <div class="page">
+    <div class="notice">Browser attach beta: this page shares the same SSH PTY with AI and supports manual input, but it normalizes ANSI/cursor control for web display. For highest terminal fidelity, continue to use the terminal attach viewer.</div>
+    <div class="terminal-shell" id="terminalShell">
+      <div class="terminal-wrap" id="terminalWrap">
+        <pre id="terminal" class="terminal" tabindex="0">Connecting...</pre>
       </div>
-    `}
+      <div id="statusBar" class="status idle">[browser attach] connecting...</div>
+    </div>
+    <div class="shortcut-row">
+      <span>Shortcuts:</span>
+      <code>Enter</code><span>send line</span>
+      <code>Tab</code><span>forward tab</span>
+      <code>Arrow keys</code><span>forward navigation</span>
+      <code>Ctrl+C</code><span>interrupt</span>
+      <code>Ctrl+D</code><span>EOF</span>
+      <code>Paste</code><span>send clipboard text</span>
+    </div>
   </div>
 
-  <footer>
-    <div>SSH Session MCP • Auto‑refresh: ${refreshMs}ms</div>
-    <div>Binding key: ${escapeHtml(bindingKey)}</div>
-  </footer>
+  <footer>${escapeHtml(options.footerLabel)}: ${escapeHtml(options.footerValue)} • Browser attach refresh: ${refreshMs}ms</footer>
 
-  \${sessionData ? \`
-    <script>
-      const bindingKey = '\${bindingKey}';
-      const baseUrl = '\${baseUrl}';
-      const refreshMs = \${refreshMs};
+  <script>
+    const attachBasePath = ${JSON.stringify(options.attachPath)};
+    const refreshMs = ${refreshMs};
+    const actorEl = document.getElementById('actor');
+    const focusBtn = document.getElementById('focusBtn');
+    const clearBtn = document.getElementById('clearBtn');
+    const terminalEl = document.getElementById('terminal');
+    const terminalWrapEl = document.getElementById('terminalWrap');
+    const statusBarEl = document.getElementById('statusBar');
+    const controlButtons = Array.from(document.querySelectorAll('[data-control]'));
+    const state = {
+      currentLine: '',
+      eventSeq: undefined,
+      outputOffset: undefined,
+      lastEvent: undefined,
+      lastStatusText: '[browser attach] connecting...',
+      initialized: false,
+      polling: false,
+      closed: false,
+      sendQueue: Promise.resolve(),
+      resizeTimer: undefined,
+    };
+    const ansiPattern = /\\u001B(?:[@-Z\\\\-_]|\\[[0-?]*[ -/]*[@-~]|\\].*?(?:\\u0007|\\u001B\\\\))/g;
 
-      async function loadDashboard() {
+    function stripAnsi(text) {
+      return text.replace(ansiPattern, '');
+    }
+
+    function normalizeBrowserOutput(text) {
+      return stripAnsi(text).replace(/\\r\\n/g, '\\n').replace(/\\r/g, '\\n');
+    }
+
+    function normalizeTransportData(text) {
+      return text.replace(/\\r\\n/g, '\\r').replace(/\\n/g, '\\r');
+    }
+
+    function summarizeEvent(event) {
+      const compact = String(event.text || '').replace(/\\s+/g, ' ').trim();
+      const clipped = compact.length > 96 ? compact.slice(0, 93) + '...' : compact;
+      if (event.type === 'input') {
+        return '[' + (event.actor || 'agent') + '] ' + (clipped || '<newline>');
+      }
+      if (event.type === 'control') {
+        return '[' + (event.actor || 'agent') + '] <' + (clipped || 'control') + '>';
+      }
+      return '[session] ' + clipped;
+    }
+
+    function eventTheme(event, text) {
+      if (text.startsWith('[browser attach] error')) return 'error';
+      if (!event) return 'idle';
+      if (event.actor === 'user') return 'user';
+      if (event.actor === 'codex') return 'codex';
+      if (event.actor === 'claude') return 'claude';
+      return 'session';
+    }
+
+    function setStatus(text, event) {
+      state.lastStatusText = text;
+      statusBarEl.textContent = text;
+      statusBarEl.className = 'status ' + eventTheme(event, text);
+    }
+
+    function appendOutput(output) {
+      if (!output) return;
+      const normalized = normalizeBrowserOutput(output);
+      const nearBottom = terminalWrapEl.scrollTop + terminalWrapEl.clientHeight >= terminalWrapEl.scrollHeight - 36;
+      if (terminalEl.textContent === 'Connecting...') {
+        terminalEl.textContent = '';
+      }
+      terminalEl.textContent += normalized;
+      if (terminalEl.textContent.length > 280000) {
+        terminalEl.textContent = terminalEl.textContent.slice(-220000);
+      }
+      if (nearBottom) {
+        terminalWrapEl.scrollTop = terminalWrapEl.scrollHeight;
+      }
+    }
+
+    function enqueue(task) {
+      state.sendQueue = state.sendQueue.then(task).catch(function (error) {
+        setStatus('[browser attach] error: ' + (error && error.message ? error.message : String(error)));
+      });
+      return state.sendQueue;
+    }
+
+    async function postJson(suffix, payload) {
+      const response = await fetch(attachBasePath + suffix, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json; charset=utf-8'
+        },
+        body: JSON.stringify(payload)
+      });
+      if (!response.ok) {
+        throw new Error('HTTP ' + response.status + ': ' + await response.text());
+      }
+      return response.json();
+    }
+
+    function getActor() {
+      return actorEl.value || 'user';
+    }
+
+    function focusTerminal() {
+      terminalEl.focus();
+      terminalWrapEl.scrollTop = terminalWrapEl.scrollHeight;
+    }
+
+    function buildPasteRecords(text) {
+      const records = [];
+      const normalized = String(text).replace(/\\r\\n/g, '\\n').replace(/\\r/g, '\\n');
+      for (const character of normalized) {
+        if (character === '\\n') {
+          records.push({
+            actor: getActor(),
+            text: state.currentLine.length > 0 ? state.currentLine : '<newline>',
+            type: 'input'
+          });
+          state.currentLine = '';
+          continue;
+        }
+        if (character === '\\t') {
+          state.currentLine += '\\t';
+          continue;
+        }
+        if (character >= ' ') {
+          state.currentLine += character;
+        }
+      }
+      return records;
+    }
+
+    function sendRaw(data, records) {
+      return enqueue(function () {
+        return postJson('/input', {
+          data: data,
+          records: records || []
+        });
+      });
+    }
+
+    function sendControl(control, sequence) {
+      if (control === 'ctrl_c') {
+        state.currentLine = '';
+      }
+      return sendRaw(sequence, [{
+        actor: getActor(),
+        text: control,
+        type: 'control'
+      }]);
+    }
+
+    function estimateTerminalSize() {
+      const rect = terminalWrapEl.getBoundingClientRect();
+      const styles = window.getComputedStyle(terminalEl);
+      const fontSize = Number.parseFloat(styles.fontSize || '14') || 14;
+      const lineHeight = Number.parseFloat(styles.lineHeight || String(fontSize * 1.45)) || fontSize * 1.45;
+      const charWidth = fontSize * 0.62;
+      const cols = Math.max(40, Math.floor((rect.width - 36) / charWidth));
+      const rows = Math.max(12, Math.floor((rect.height - 36) / lineHeight));
+      return { cols, rows };
+    }
+
+    function scheduleResize() {
+      if (state.resizeTimer) {
+        window.clearTimeout(state.resizeTimer);
+      }
+      state.resizeTimer = window.setTimeout(function () {
+        const size = estimateTerminalSize();
+        enqueue(function () {
+          return postJson('/resize', size);
+        });
+      }, 120);
+    }
+
+    async function pollOnce(waitMs) {
+      const url = new URL(attachBasePath, window.location.origin);
+      url.searchParams.set('maxChars', '16000');
+      url.searchParams.set('maxEvents', '120');
+      url.searchParams.set('waitMs', String(waitMs));
+      if (typeof state.outputOffset === 'number') {
+        url.searchParams.set('outputOffset', String(state.outputOffset));
+      }
+      if (typeof state.eventSeq === 'number') {
+        url.searchParams.set('eventSeq', String(state.eventSeq));
+      }
+
+      const response = await fetch(url);
+      if (!response.ok) {
+        throw new Error('HTTP ' + response.status + ': ' + await response.text());
+      }
+
+      const payload = await response.json();
+      appendOutput(payload.output || '');
+      if (Array.isArray(payload.events) && payload.events.length > 0) {
+        const latestEvent = payload.events[payload.events.length - 1];
+        state.lastEvent = latestEvent;
+        const time = String(latestEvent.at || '').slice(11, 19);
+        setStatus((time ? time + ' ' : '') + summarizeEvent(latestEvent), latestEvent);
+      } else if (!state.initialized) {
+        setStatus('[browser attach] connected');
+      }
+
+      state.outputOffset = payload.nextOutputOffset;
+      state.eventSeq = payload.nextEventSeq;
+      state.initialized = true;
+      state.closed = payload.summary && payload.summary.closed === true;
+
+      if (state.closed && !state.lastStatusText.includes('[closed]')) {
+        setStatus('[browser attach] session closed');
+      }
+    }
+
+    async function pollLoop() {
+      if (state.polling) return;
+      state.polling = true;
+      while (true) {
         try {
-          const response = await fetch(\`\${baseUrl}/api/viewer-binding/\${encodeURIComponent(bindingKey)}\`);
-          if (!response.ok) {
-            throw new Error(\`HTTP \${response.status}\`);
-          }
-          const data = await response.json();
-          document.getElementById('dashboard').textContent = data.dashboard;
-          
-          if (data.summary?.closed) {
-            document.getElementById('dashboard').style.color = 'var(--muted)';
-            document.getElementById('dashboard').innerHTML += '\\n\\n<span style="color: var(--warn)">[Session closed]</span>';
-          }
+          await pollOnce(state.initialized ? refreshMs : 0);
         } catch (error) {
-          document.getElementById('dashboard').textContent = \`Error loading dashboard: \${error.message}\`;
-          document.getElementById('dashboard').style.color = 'var(--error)';
+          setStatus('[browser attach] error: ' + (error && error.message ? error.message : String(error)));
+          await new Promise(function (resolve) { window.setTimeout(resolve, Math.min(refreshMs, 800)); });
+        }
+      }
+    }
+
+    terminalEl.addEventListener('keydown', function (event) {
+      if (event.metaKey) return;
+
+      if (event.ctrlKey && !event.altKey) {
+        const key = event.key.toLowerCase();
+        if (key === 'c') {
+          event.preventDefault();
+          void sendControl('ctrl_c', '\\u0003');
+          return;
+        }
+        if (key === 'd') {
+          event.preventDefault();
+          void sendControl('ctrl_d', '\\u0004');
+          return;
         }
       }
 
-      loadDashboard();
-      setInterval(loadDashboard, refreshMs);
-    </script>
-  \` : ''}
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        const recordText = state.currentLine.length > 0 ? state.currentLine : '<newline>';
+        state.currentLine = '';
+        void sendRaw('\\r', [{
+          actor: getActor(),
+          text: recordText,
+          type: 'input'
+        }]);
+        return;
+      }
+
+      if (event.key === 'Backspace') {
+        event.preventDefault();
+        state.currentLine = state.currentLine.slice(0, -1);
+        void sendRaw('\\u007f', []);
+        return;
+      }
+
+      if (event.key === 'Tab') {
+        event.preventDefault();
+        state.currentLine += '\\t';
+        void sendRaw('\\t', []);
+        return;
+      }
+
+      if (event.key === 'ArrowUp') {
+        event.preventDefault();
+        void sendRaw('\\u001b[A', []);
+        return;
+      }
+
+      if (event.key === 'ArrowDown') {
+        event.preventDefault();
+        void sendRaw('\\u001b[B', []);
+        return;
+      }
+
+      if (event.key === 'ArrowLeft') {
+        event.preventDefault();
+        void sendRaw('\\u001b[D', []);
+        return;
+      }
+
+      if (event.key === 'ArrowRight') {
+        event.preventDefault();
+        void sendRaw('\\u001b[C', []);
+        return;
+      }
+
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        void sendRaw('\\u001b', []);
+        return;
+      }
+
+      if (!event.ctrlKey && !event.altKey && !event.metaKey && event.key.length === 1) {
+        event.preventDefault();
+        state.currentLine += event.key;
+        void sendRaw(event.key, []);
+      }
+    });
+
+    terminalEl.addEventListener('paste', function (event) {
+      event.preventDefault();
+      const text = (event.clipboardData || window.clipboardData).getData('text');
+      const records = buildPasteRecords(text);
+      void sendRaw(normalizeTransportData(text), records);
+    });
+
+    focusBtn.addEventListener('click', function () {
+      focusTerminal();
+    });
+
+    clearBtn.addEventListener('click', function () {
+      terminalEl.textContent = '';
+      focusTerminal();
+    });
+
+    controlButtons.forEach(function (button) {
+      button.addEventListener('click', function () {
+        const control = button.getAttribute('data-control');
+        if (control === 'ctrl_c') {
+          void sendControl('ctrl_c', '\\u0003');
+          return;
+        }
+        if (control === 'ctrl_d') {
+          void sendControl('ctrl_d', '\\u0004');
+        }
+      });
+    });
+
+    actorEl.addEventListener('change', function () {
+      setStatus('[browser attach] actor -> ' + getActor());
+      focusTerminal();
+    });
+
+    window.addEventListener('resize', scheduleResize);
+    terminalWrapEl.addEventListener('click', focusTerminal);
+    window.addEventListener('load', function () {
+      focusTerminal();
+      scheduleResize();
+      void pollLoop();
+    });
+  </script>
 </body>
 </html>`;
+}
+
+function renderViewerSessionPage(sessionRef: string) {
+  const baseUrl = getViewerBaseUrl() || '';
+  const session = sessions.get(sessionRef) || [...sessions.values()].find(s => s.sessionName === sessionRef);
+  const sessionData = session ? session.summary() : null;
+
+  if (!sessionData) {
+    return renderViewerErrorPage({
+      baseUrl,
+      detail: `Session reference: ${sessionRef}`,
+      footerLabel: 'Session ID',
+      footerValue: sessionRef,
+      title: 'Session not found',
+    });
+  }
+
+  return renderInteractiveAttachPage({
+    actor: 'user',
+    attachPath: `/api/attach/session/${encodeURIComponent(sessionRef)}`,
+    baseUrl,
+    footerLabel: 'Session ID',
+    footerValue: sessionRef,
+    meta: `${sessionData.user}@${sessionData.host}:${sessionData.port}\nCreated: ${new Date(sessionData.createdAt).toLocaleString()}\nLast activity: ${new Date(sessionData.updatedAt).toLocaleString()}`,
+    subtitle: 'Interactive browser attach view',
+    title: sessionData.sessionName || sessionData.sessionId,
+  });
+}
+
+function renderViewerBindingPage(bindingKey: string) {
+  const baseUrl = getViewerBaseUrl() || '';
+  const binding = viewerBindings.get(bindingKey);
+  const session = binding ? sessions.get(binding.sessionId) : null;
+  const sessionData = session ? session.summary() : null;
+
+  if (!binding || !sessionData) {
+    return renderViewerErrorPage({
+      baseUrl,
+      detail: `Binding key: ${bindingKey}`,
+      footerLabel: 'Binding key',
+      footerValue: bindingKey,
+      title: 'Binding not found',
+    });
+  }
+
+  return renderInteractiveAttachPage({
+    actor: 'user',
+    attachPath: `/api/attach/binding/${encodeURIComponent(bindingKey)}`,
+    baseUrl,
+    footerLabel: 'Binding key',
+    footerValue: bindingKey,
+    meta: `${sessionData.user}@${sessionData.host}:${sessionData.port}\nBinding: ${bindingKey}\nCreated: ${new Date(sessionData.createdAt).toLocaleString()}\nLast activity: ${new Date(sessionData.updatedAt).toLocaleString()}`,
+    subtitle: 'Interactive browser attach view',
+    title: sessionData.sessionName || sessionData.sessionId,
+  });
 }
 
 async function startViewerServer() {
@@ -1311,108 +1832,262 @@ async function startViewerServer() {
   }
 
   viewerServer = createServer((request, response) => {
-    const url = new URL(request.url || '/', 'http://127.0.0.1');
-    const writeJson = (statusCode: number, payload: unknown) => {
-      response.writeHead(statusCode, { 'content-type': 'application/json; charset=utf-8' });
-      response.end(JSON.stringify(payload, null, 2));
-    };
-    const writeHtml = (statusCode: number, html: string) => {
-      response.writeHead(statusCode, { 'content-type': 'text/html; charset=utf-8' });
-      response.end(html);
-    };
-    const writeText = (statusCode: number, text: string) => {
-      response.writeHead(statusCode, { 'content-type': 'text/plain; charset=utf-8' });
-      response.end(text);
-    };
-
-    if (url.pathname === '/health') {
-      writeJson(200, {
-        ok: true,
-        viewerBaseUrl: getViewerBaseUrl(),
-        sessions: sessions.size,
-      });
-      return;
-    }
-
-    if (url.pathname === '/api/sessions') {
-      sweepSessions();
-      writeJson(200, {
-        viewerBaseUrl: getViewerBaseUrl(),
-        sessions: [...sessions.values()]
-          .map(session => ({
-            ...session.summary(),
-            viewerUrl: buildViewerSessionUrl(session),
-          }))
-          .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)),
-      });
-      return;
-    }
-
-    if (url.pathname.startsWith('/api/session/')) {
-      try {
-        const sessionRef = decodeURIComponent(url.pathname.slice('/api/session/'.length));
-        const session = resolveSession(sessionRef);
-        const width = parsePositiveQueryInt(url.searchParams.get('width'), DEFAULT_DASHBOARD_WIDTH);
-        const height = parsePositiveQueryInt(url.searchParams.get('height'), DEFAULT_DASHBOARD_HEIGHT);
-        const leftChars = parsePositiveQueryInt(url.searchParams.get('leftChars'), DEFAULT_DASHBOARD_LEFT_CHARS);
-        const rightEvents = parsePositiveQueryInt(url.searchParams.get('rightEvents'), DEFAULT_DASHBOARD_RIGHT_EVENTS);
-        const stripAnsiFromLeft = parseBooleanQuery(url.searchParams.get('stripAnsiFromLeft'), true);
-
-        writeJson(200, createViewerPayload(session, {
-          width,
-          height,
-          leftChars,
-          rightEvents,
-          stripAnsiFromLeft,
-        }));
-      } catch (error) {
+    void (async () => {
+      const url = new URL(request.url || '/', 'http://127.0.0.1');
+      const writeJson = (statusCode: number, payload: unknown) => {
+        response.writeHead(statusCode, { 'content-type': 'application/json; charset=utf-8' });
+        response.end(JSON.stringify(payload, null, 2));
+      };
+      const writeHtml = (statusCode: number, html: string) => {
+        response.writeHead(statusCode, { 'content-type': 'text/html; charset=utf-8' });
+        response.end(html);
+      };
+      const writeText = (statusCode: number, text: string) => {
+        response.writeHead(statusCode, { 'content-type': 'text/plain; charset=utf-8' });
+        response.end(text);
+      };
+      const writeError = (statusCode: number, error: unknown) => {
         const message = error instanceof Error ? error.message : String(error);
-        writeJson(404, { error: message });
+        writeJson(statusCode, { error: message });
+      };
+
+      const attachPrefixes = {
+        binding: '/api/attach/binding/',
+        session: '/api/attach/session/',
+      } as const;
+
+      const tryMatchAttachRoute = (kind: 'binding' | 'session', suffix: '' | '/input' | '/resize') => {
+        const prefix = `${attachPrefixes[kind]}`;
+        if (!url.pathname.startsWith(prefix)) {
+          return undefined;
+        }
+
+        const rest = url.pathname.slice(prefix.length);
+        if (!rest) {
+          return undefined;
+        }
+
+        if (!suffix) {
+          if (rest.endsWith('/input') || rest.endsWith('/resize')) {
+            return undefined;
+          }
+
+          return decodeURIComponent(rest);
+        }
+
+        if (!rest.endsWith(suffix)) {
+          return undefined;
+        }
+
+        return decodeURIComponent(rest.slice(0, -suffix.length));
+      };
+
+      if (url.pathname === '/health') {
+        writeJson(200, {
+          ok: true,
+          viewerBaseUrl: getViewerBaseUrl(),
+          sessions: sessions.size,
+        });
+        return;
       }
-      return;
-    }
 
-    if (url.pathname.startsWith('/api/viewer-binding/')) {
-      try {
-        const bindingKey = decodeURIComponent(url.pathname.slice('/api/viewer-binding/'.length));
-        const width = parsePositiveQueryInt(url.searchParams.get('width'), DEFAULT_DASHBOARD_WIDTH);
-        const height = parsePositiveQueryInt(url.searchParams.get('height'), DEFAULT_DASHBOARD_HEIGHT);
-        const leftChars = parsePositiveQueryInt(url.searchParams.get('leftChars'), DEFAULT_DASHBOARD_LEFT_CHARS);
-        const rightEvents = parsePositiveQueryInt(url.searchParams.get('rightEvents'), DEFAULT_DASHBOARD_RIGHT_EVENTS);
-        const stripAnsiFromLeft = parseBooleanQuery(url.searchParams.get('stripAnsiFromLeft'), true);
-
-        writeJson(200, createViewerBindingPayload(bindingKey, {
-          width,
-          height,
-          leftChars,
-          rightEvents,
-          stripAnsiFromLeft,
-        }));
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        writeJson(404, { error: message });
+      if (url.pathname === '/api/sessions') {
+        sweepSessions();
+        writeJson(200, {
+          viewerBaseUrl: getViewerBaseUrl(),
+          sessions: [...sessions.values()]
+            .map(session => ({
+              ...session.summary(),
+              viewerUrl: buildViewerSessionUrl(session),
+            }))
+            .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)),
+        });
+        return;
       }
-      return;
-    }
 
-    if (url.pathname.startsWith('/session/')) {
-      const sessionRef = decodeURIComponent(url.pathname.slice('/session/'.length));
-      writeHtml(200, renderViewerSessionPage(sessionRef));
-      return;
-    }
+      for (const kind of ['session', 'binding'] as const) {
+        const attachRef = tryMatchAttachRoute(kind, '');
+        if (request.method === 'GET' && attachRef) {
+          try {
+            const { binding, session } = resolveAttachTarget(kind, attachRef);
+            const requestedOutputOffset = parseOptionalNonNegativeQueryInt(url.searchParams.get('outputOffset'));
+            const requestedEventSeq = parseOptionalNonNegativeQueryInt(url.searchParams.get('eventSeq'));
+            const maxChars = parsePositiveQueryInt(url.searchParams.get('maxChars'), DEFAULT_DASHBOARD_LEFT_CHARS);
+            const maxEvents = parsePositiveQueryInt(url.searchParams.get('maxEvents'), DEFAULT_DASHBOARD_RIGHT_EVENTS * 4);
+            const waitMs = parseNonNegativeQueryInt(url.searchParams.get('waitMs'), 0);
+            const baselineOutputOffset = typeof requestedOutputOffset === 'number' ? requestedOutputOffset : session.currentBufferEnd();
+            const baselineEventSeq = typeof requestedEventSeq === 'number' ? requestedEventSeq : session.currentEventEnd();
 
-    if (url.pathname.startsWith('/binding/')) {
-      const bindingKey = decodeURIComponent(url.pathname.slice('/binding/'.length));
-      writeHtml(200, renderViewerBindingPage(bindingKey));
-      return;
-    }
+            if (waitMs > 0) {
+              await session.waitForChange({
+                outputOffset: baselineOutputOffset,
+                eventSeq: baselineEventSeq,
+                waitMs,
+              });
+            }
 
-    if (url.pathname === '/' || url.pathname === '/index.html') {
-      writeHtml(200, renderViewerHomePage());
-      return;
-    }
+            writeJson(200, createAttachPayload(session, {
+              bindingKey: binding?.bindingKey,
+              outputOffset: requestedOutputOffset,
+              eventSeq: requestedEventSeq,
+              maxChars,
+              maxEvents,
+            }));
+          } catch (error) {
+            writeError(404, error);
+          }
+          return;
+        }
 
-    writeText(404, 'Not found');
+        const inputRef = tryMatchAttachRoute(kind, '/input');
+        if (request.method === 'POST' && inputRef) {
+          try {
+            const { session } = resolveAttachTarget(kind, inputRef);
+            const body = await readJsonRequestBody(request);
+            const rawData = typeof body.data === 'string' ? body.data : undefined;
+
+            if (!rawData || rawData.length === 0) {
+              throw new McpError(ErrorCode.InvalidRequest, 'data must be a non-empty string');
+            }
+
+            const records: SessionWriteRecord[] = [];
+
+            if (Array.isArray(body.records)) {
+              for (const value of body.records) {
+                if (!value || typeof value !== 'object') {
+                  continue;
+                }
+
+                const candidate = value as Record<string, unknown>;
+                if ((candidate.type !== 'input' && candidate.type !== 'control') || typeof candidate.text !== 'string') {
+                  continue;
+                }
+
+                records.push({
+                  actor: sanitizeActor(typeof candidate.actor === 'string' ? candidate.actor : undefined, 'user'),
+                  text: candidate.text,
+                  type: candidate.type,
+                });
+              }
+            } else if ((body.recordType === 'input' || body.recordType === 'control') && typeof body.displayText === 'string') {
+              records.push({
+                actor: sanitizeActor(typeof body.actor === 'string' ? body.actor : undefined, 'user'),
+                text: body.displayText,
+                type: body.recordType,
+              });
+            }
+
+            session.writeRaw(rawData, records);
+            writeJson(200, {
+              ok: true,
+              ...session.summary(),
+              recordedEvents: records.length,
+              nextOutputOffset: session.currentBufferEnd(),
+              nextEventSeq: session.currentEventEnd(),
+            });
+          } catch (error) {
+            writeError(400, error);
+          }
+          return;
+        }
+
+        const resizeRef = tryMatchAttachRoute(kind, '/resize');
+        if (request.method === 'POST' && resizeRef) {
+          try {
+            const { session } = resolveAttachTarget(kind, resizeRef);
+            const body = await readJsonRequestBody(request);
+            const cols = typeof body.cols === 'number' ? body.cols : Number(body.cols);
+            const rows = typeof body.rows === 'number' ? body.rows : Number(body.rows);
+            const resolvedCols = sanitizePositiveInt(cols, 'cols', session.cols);
+            const resolvedRows = sanitizePositiveInt(rows, 'rows', session.rows);
+
+            session.resize(resolvedCols, resolvedRows);
+            writeJson(200, {
+              ok: true,
+              ...session.summary(),
+              cols: resolvedCols,
+              rows: resolvedRows,
+            });
+          } catch (error) {
+            writeError(400, error);
+          }
+          return;
+        }
+      }
+
+      if (url.pathname.startsWith('/api/session/')) {
+        try {
+          const sessionRef = decodeURIComponent(url.pathname.slice('/api/session/'.length));
+          const session = resolveSession(sessionRef);
+          const width = parsePositiveQueryInt(url.searchParams.get('width'), DEFAULT_DASHBOARD_WIDTH);
+          const height = parsePositiveQueryInt(url.searchParams.get('height'), DEFAULT_DASHBOARD_HEIGHT);
+          const leftChars = parsePositiveQueryInt(url.searchParams.get('leftChars'), DEFAULT_DASHBOARD_LEFT_CHARS);
+          const rightEvents = parsePositiveQueryInt(url.searchParams.get('rightEvents'), DEFAULT_DASHBOARD_RIGHT_EVENTS);
+          const stripAnsiFromLeft = parseBooleanQuery(url.searchParams.get('stripAnsiFromLeft'), true);
+
+          writeJson(200, createViewerPayload(session, {
+            width,
+            height,
+            leftChars,
+            rightEvents,
+            stripAnsiFromLeft,
+          }));
+        } catch (error) {
+          writeError(404, error);
+        }
+        return;
+      }
+
+      if (url.pathname.startsWith('/api/viewer-binding/')) {
+        try {
+          const bindingKey = decodeURIComponent(url.pathname.slice('/api/viewer-binding/'.length));
+          const width = parsePositiveQueryInt(url.searchParams.get('width'), DEFAULT_DASHBOARD_WIDTH);
+          const height = parsePositiveQueryInt(url.searchParams.get('height'), DEFAULT_DASHBOARD_HEIGHT);
+          const leftChars = parsePositiveQueryInt(url.searchParams.get('leftChars'), DEFAULT_DASHBOARD_LEFT_CHARS);
+          const rightEvents = parsePositiveQueryInt(url.searchParams.get('rightEvents'), DEFAULT_DASHBOARD_RIGHT_EVENTS);
+          const stripAnsiFromLeft = parseBooleanQuery(url.searchParams.get('stripAnsiFromLeft'), true);
+
+          writeJson(200, createViewerBindingPayload(bindingKey, {
+            width,
+            height,
+            leftChars,
+            rightEvents,
+            stripAnsiFromLeft,
+          }));
+        } catch (error) {
+          writeError(404, error);
+        }
+        return;
+      }
+
+      if (url.pathname.startsWith('/session/')) {
+        const sessionRef = decodeURIComponent(url.pathname.slice('/session/'.length));
+        writeHtml(200, renderViewerSessionPage(sessionRef));
+        return;
+      }
+
+      if (url.pathname.startsWith('/binding/')) {
+        const bindingKey = decodeURIComponent(url.pathname.slice('/binding/'.length));
+        writeHtml(200, renderViewerBindingPage(bindingKey));
+        return;
+      }
+
+      if (url.pathname === '/' || url.pathname === '/index.html') {
+        writeHtml(200, renderViewerHomePage());
+        return;
+      }
+
+      writeText(404, 'Not found');
+    })().catch(error => {
+      const message = error instanceof Error ? error.message : String(error);
+      if (!response.headersSent) {
+        response.writeHead(500, { 'content-type': 'application/json; charset=utf-8' });
+        response.end(JSON.stringify({ error: message }, null, 2));
+        return;
+      }
+
+      response.end();
+    });
   });
 
   await new Promise<void>((resolve, reject) => {
@@ -1446,7 +2121,7 @@ const server = new McpServer({
 
 server.tool(
   'ssh-session-open',
-  'Open a persistent interactive SSH PTY session with automatic idle cleanup and a split dashboard view.',
+  'Open a persistent interactive SSH PTY session with automatic idle cleanup and a terminal-style dashboard view.',
   {
     sessionName: z.string().optional().describe('Optional human-readable alias for the session'),
     host: z.string().optional().describe('SSH host. Falls back to server --host if omitted'),
@@ -1464,9 +2139,9 @@ server.tool(
     startupWaitMs: z.number().int().nonnegative().optional().describe('How long to wait before capturing the initial dashboard'),
     dashboardWidth: z.number().int().positive().optional().describe('Rendered dashboard width in columns'),
     dashboardHeight: z.number().int().positive().optional().describe('Rendered dashboard height in rows'),
-    dashboardLeftChars: z.number().int().positive().optional().describe('How many recent terminal-output chars to use for the left pane'),
-    dashboardRightEvents: z.number().int().positive().optional().describe('How many recent input/control/lifecycle events to use for the right pane'),
-    stripAnsiFromLeft: z.boolean().optional().describe('Strip ANSI escape sequences from the rendered left pane'),
+    dashboardLeftChars: z.number().int().positive().optional().describe('How many recent transcript chars to retain in the rendered viewer'),
+    dashboardRightEvents: z.number().int().positive().optional().describe('How many recent input/control/lifecycle events to retain for actor markers'),
+    stripAnsiFromLeft: z.boolean().optional().describe('Strip ANSI escape sequences from rendered SSH output'),
     includeDashboard: z.boolean().optional().describe('Include the rendered dashboard text in the tool response'),
     autoOpenViewer: z.boolean().optional().describe('Automatically ensure a local viewer is opened for this session'),
     viewerMode: z.enum(['terminal', 'browser']).optional().describe('Viewer launch mode when autoOpenViewer is enabled'),
@@ -1631,12 +2306,12 @@ server.tool(
 
 server.tool(
   'ssh-session-send',
-  'Send raw input to an interactive SSH PTY session. Actor is shown in the dashboard right pane.',
+  'Send raw input to an interactive SSH PTY session. Actor is shown inline in the dashboard transcript.',
   {
     session: z.string().describe('Session id or unique session name'),
     input: z.string().describe('Raw text to send into the PTY'),
     appendNewline: z.boolean().optional().describe('Append a newline after the input'),
-    actor: z.string().optional().describe('Label for the sender shown in the dashboard, e.g. codex, claude, user'),
+    actor: z.string().optional().describe('Label for the sender shown inline in the dashboard, e.g. codex, claude, user'),
   },
   async ({ session, input, appendNewline, actor }) => {
     const target = resolveSession(sanitizeRequiredText(session, 'session'));
@@ -1694,7 +2369,7 @@ server.tool(
 
 server.tool(
   'ssh-session-watch',
-  'Long-poll an SSH PTY session and render a split dashboard: left pane is remote terminal output, right pane is user/agent inputs and session lifecycle.',
+  'Long-poll an SSH PTY session and render a terminal-style dashboard with inline actor markers.',
   {
     session: z.string().describe('Session id or unique session name'),
     outputOffset: z.number().int().nonnegative().optional().describe('Wait until terminal output grows beyond this offset'),
@@ -1702,9 +2377,9 @@ server.tool(
     waitForChangeMs: z.number().int().nonnegative().optional().describe('Long-poll duration in milliseconds'),
     dashboardWidth: z.number().int().positive().optional().describe('Rendered dashboard width in columns'),
     dashboardHeight: z.number().int().positive().optional().describe('Rendered dashboard height in rows'),
-    dashboardLeftChars: z.number().int().positive().optional().describe('How many recent terminal-output chars to use for the left pane'),
-    dashboardRightEvents: z.number().int().positive().optional().describe('How many recent input/control/lifecycle events to use for the right pane'),
-    stripAnsiFromLeft: z.boolean().optional().describe('Strip ANSI escape sequences from the rendered left pane'),
+    dashboardLeftChars: z.number().int().positive().optional().describe('How many recent transcript chars to retain in the rendered viewer'),
+    dashboardRightEvents: z.number().int().positive().optional().describe('How many recent input/control/lifecycle events to retain for actor markers'),
+    stripAnsiFromLeft: z.boolean().optional().describe('Strip ANSI escape sequences from rendered SSH output'),
     includeDashboard: z.boolean().optional().describe('Include the rendered dashboard text in the tool response'),
   },
   async ({
@@ -1770,11 +2445,11 @@ server.tool(
 
 server.tool(
   'ssh-session-control',
-  'Send a control key to an interactive SSH PTY session. Actor is shown in the dashboard right pane.',
+  'Send a control key to an interactive SSH PTY session. Actor is shown inline in the dashboard transcript.',
   {
     session: z.string().describe('Session id or unique session name'),
     control: z.enum(['ctrl_c', 'ctrl_d', 'enter', 'tab', 'esc', 'up', 'down', 'left', 'right', 'backspace']).describe('Control key to send'),
-    actor: z.string().optional().describe('Label for the sender shown in the dashboard, e.g. codex, claude, user'),
+    actor: z.string().optional().describe('Label for the sender shown inline in the dashboard, e.g. codex, claude, user'),
   },
   async ({ session, control, actor }) => {
     const target = resolveSession(sanitizeRequiredText(session, 'session'));
@@ -1965,6 +2640,9 @@ export {
   createEventSnapshot,
   getControlSequence,
   normalizeTerminalInput,
+  renderTerminalDashboard,
   renderSplitDashboard,
+  renderViewerTranscript,
+  renderViewerTranscriptEvent,
   stripAnsi,
 } from './shared.js';

@@ -57,6 +57,12 @@ export interface SessionSummary {
   eventEndSeq: number;
 }
 
+export interface SessionWriteRecord {
+  actor: string;
+  text: string;
+  type: Extract<TranscriptEventType, 'input' | 'control'>;
+}
+
 interface ChangeWaiter {
   outputOffset?: number;
   eventSeq?: number;
@@ -343,22 +349,34 @@ export class SSHSession {
     });
   }
 
-  write(input: string, actor: string) {
+  writeRaw(data: string, records: SessionWriteRecord[] = []) {
     if (this.closed) {
       throw new McpError(ErrorCode.InvalidParams, `Session is closed: ${this.closeReason || this.sessionId}`);
     }
 
-    this.stream.write(normalizeTerminalInput(input));
-    this.pushEvent('input', input, actor, nowIso(), true);
+    this.stream.write(data);
+    const at = nowIso();
+
+    if (records.length > 0) {
+      for (const record of records) {
+        this.pushEvent(record.type, record.text, record.actor, at, true);
+      }
+      return;
+    }
+
+    this.markUpdated(at, true);
+  }
+
+  write(input: string, actor: string) {
+    this.writeRaw(normalizeTerminalInput(input), [
+      { actor, text: input, type: 'input' },
+    ]);
   }
 
   sendControl(control: ControlKey, actor: string) {
-    if (this.closed) {
-      throw new McpError(ErrorCode.InvalidParams, `Session is closed: ${this.closeReason || this.sessionId}`);
-    }
-
-    this.stream.write(getControlSequence(control));
-    this.pushEvent('control', control, actor, nowIso(), true);
+    this.writeRaw(getControlSequence(control), [
+      { actor, text: control, type: 'control' },
+    ]);
   }
 
   resize(cols: number, rows: number) {

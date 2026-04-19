@@ -192,6 +192,49 @@ export function renderTranscriptEvent(event: TranscriptEvent): string {
   return `[session ${event.at}] ${event.text}`;
 }
 
+function formatViewerActorLines(actorLabel: string, rawText: string): string {
+  const normalized = rawText.replace(/\r\n/g, '\n').replace(/\r/g, '\n').replace(/\n+$/, '');
+  if (normalized.length === 0) {
+    return `[${actorLabel}] <newline>\n`;
+  }
+
+  const lines = normalized.split('\n');
+  return `${lines.map((line, index) => index === 0 ? `[${actorLabel}] ${line}` : `  ${line}`).join('\n')}\n`;
+}
+
+export function renderViewerTranscriptEvent(event: TranscriptEvent, removeAnsiFromOutput: boolean): string {
+  if (event.type === 'output') {
+    return normalizePaneText(event.text, removeAnsiFromOutput);
+  }
+
+  if (event.type === 'input') {
+    const actor = event.actor || 'agent';
+    return `\n${formatViewerActorLines(actor, normalizePaneText(event.text, false))}`;
+  }
+
+  if (event.type === 'control') {
+    const actor = event.actor || 'agent';
+    return `\n[${actor}] <${event.text}>\n`;
+  }
+
+  return `\n[session] ${normalizePaneText(event.text, false).trim()}\n`;
+}
+
+export function renderViewerTranscript(events: TranscriptEvent[], removeAnsiFromOutput: boolean): string {
+  if (events.length === 0) {
+    return '';
+  }
+
+  const combined = events
+    .map((event, index) => {
+      const rendered = renderViewerTranscriptEvent(event, removeAnsiFromOutput);
+      return index === 0 ? rendered.replace(/^\n+/, '') : rendered;
+    })
+    .join('');
+
+  return combined.trimEnd();
+}
+
 export interface EventSnapshot {
   requestedEventSeq: number | null;
   effectiveEventSeq: number;
@@ -380,13 +423,34 @@ function wrapDisplayText(text: string, width: number): string[] {
   return lines;
 }
 
-function selectPaneLines(text: string, width: number, height: number, placeholder: string): string[] {
+function selectViewportLines(text: string, width: number, height: number, placeholder: string): string[] {
   const wrapped = wrapDisplayText(text.trim().length > 0 ? text : placeholder, width);
   const visible = wrapped.slice(-height);
   while (visible.length < height) {
     visible.push('');
   }
   return visible;
+}
+
+export function renderTerminalDashboard(options: {
+  title: string;
+  bodyText: string;
+  width: number;
+  height: number;
+  emptyPlaceholder?: string;
+}): string {
+  const safeWidth = Math.max(40, options.width);
+  const safeHeight = Math.max(6, options.height);
+  const titleLine = truncateDisplay(options.title, safeWidth);
+  const contentHeight = Math.max(2, safeHeight - 2);
+  const bodyLines = selectViewportLines(
+    options.bodyText,
+    safeWidth,
+    contentHeight,
+    options.emptyPlaceholder || '(no terminal activity yet)',
+  );
+
+  return [titleLine, '', ...bodyLines].join('\n');
 }
 
 export function renderSplitDashboard(options: {
@@ -402,8 +466,8 @@ export function renderSplitDashboard(options: {
   const paneWidth = Math.max(24, Math.floor((safeWidth - 3) / 2));
   const contentHeight = Math.max(3, safeHeight - 4);
 
-  const leftLines = selectPaneLines(options.leftText, paneWidth, contentHeight, '(no terminal output yet)');
-  const rightLines = selectPaneLines(options.rightText, paneWidth, contentHeight, '(no user/agent input yet)');
+  const leftLines = selectViewportLines(options.leftText, paneWidth, contentHeight, '(no terminal output yet)');
+  const rightLines = selectViewportLines(options.rightText, paneWidth, contentHeight, '(no user/agent input yet)');
   const border = `+${'-'.repeat(paneWidth)}+${'-'.repeat(paneWidth)}+`;
   const titleRow = `|${padDisplay(options.leftTitle, paneWidth)}|${padDisplay(options.rightTitle, paneWidth)}|`;
   const rows = leftLines.map((left, index) => `|${padDisplay(left, paneWidth)}|${padDisplay(rightLines[index] || '', paneWidth)}|`);

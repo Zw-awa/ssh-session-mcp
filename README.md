@@ -4,7 +4,7 @@
 [![Node.js Version](https://img.shields.io/badge/node-%3E%3D18-brightgreen)](https://nodejs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.9.2-blue)](https://www.typescriptlang.org/)
 
-Persistent SSH PTY session manager for MCP clients with actor-aware input tracking, split dashboard rendering, and automatic session cleanup.
+Persistent SSH PTY session manager for MCP clients with actor-aware input tracking, terminal-style dashboard rendering, and automatic session cleanup.
 
 它不是一次性 SSH 命令执行器，而是：
 
@@ -13,7 +13,7 @@ Persistent SSH PTY session manager for MCP clients with actor-aware input tracki
 - 持续写入输入
 - 增量读取终端输出
 - 长轮询会话变化
-- 实时渲染双栏 dashboard
+- 实时渲染单栏终端式 dashboard
 - 自动回收空闲/悬挂 SSH 会话
 
 ## 当前能力
@@ -37,9 +37,9 @@ Persistent SSH PTY session manager for MCP clients with actor-aware input tracki
 
 - `ssh-session-watch`
   - 长轮询会话变化
-  - 返回一个双栏 dashboard
-  - 左边是远端 SSH 终端输出
-  - 右边是 `user/codex/claude` 输入与会话生命周期
+  - 返回一个单栏终端式 dashboard
+  - 远端 SSH 输出按正常终端顺序显示
+  - `user/codex/claude` 输入与会话生命周期以内嵌标记显示
   - 支持 `includeDashboard=false` 只取结构化状态
 
 - `ssh-session-control`
@@ -62,21 +62,23 @@ Persistent SSH PTY session manager for MCP clients with actor-aware input tracki
   - 为某个会话确保存在 viewer
   - 支持 `terminal` / `browser`
   - 支持按 `connection` 或 `session` 维度做单实例复用
+  - `terminal` 模式会打开可交互的共享终端 attach 窗口
+  - `browser` 模式会打开可交互的 browser attach beta 页面
 
 - `ssh-viewer-list`
   - 查看当前持久化 viewer 进程状态
   - 可用于排查 viewer 绑定关系和 PID
 
-## 双栏显示
+## 终端式显示
 
-`ssh-session-watch` 返回的是一个接近 CLI Agent 的 dashboard：
+`ssh-session-watch` 返回的是一个接近正常终端的 dashboard：
 
-- 左栏：远端主机 shell / codex / claude / tmux 的终端输出
-- 右栏：谁输入了什么
-  - `actor=user`
-  - `actor=codex`
-  - `actor=claude`
-  - 控制键和会话关闭原因也会记录在右栏
+- 远端主机 shell / codex / claude / tmux 的终端输出保持单栏连续显示
+- 你和代理发出的输入会以内嵌标记写入时间线
+  - `[user] ...`
+  - `[codex] ...`
+  - `[claude] ...`
+- 控制键和会话关闭原因也会以内嵌标记显示
 
 如果你想自己和代理共用同一个 SSH 会话，关键是：
 
@@ -84,7 +86,13 @@ Persistent SSH PTY session manager for MCP clients with actor-aware input tracki
 2. 你自己手动调用 `ssh-session-send` 时传 `actor=user`
 3. 持续调用 `ssh-session-watch`
 
-这样右栏就能明确区分“谁发的输入”。
+这样单栏终端视图里也能明确区分“谁发的输入”。
+
+补充说明：
+
+- actor 标记只在本地 viewer / dashboard 中展示
+- 这些标记不会被额外写进远端 SSH PTY
+- 远端程序看到的仍然只是原始按键和控制序列
 
 ## 自动回收
 
@@ -153,14 +161,21 @@ Persistent SSH PTY session manager for MCP clients with actor-aware input tracki
 - `ssh-viewer-list`
   - 查看当前 viewer 绑定、PID 和状态
 
-Windows 下也可以直接用仓库自带脚本：
+Windows 下也可以直接用仓库自带脚本。先复制 `.env.example` 为 `.env` 并填入你的 SSH 连接信息：
+
+```bash
+cp .env.example .env
+# 编辑 .env 填入实际的 SSH_HOST、SSH_USER、SSH_PASSWORD 或 SSH_KEY
+```
+
+然后运行脚本时通过参数传入：
 
 ```powershell
-# 在新窗口里确保 runner 就绪并打开只读 viewer
+# 在新窗口里确保 runner 就绪并打开可交互的共享终端
 powershell -NoLogo -NoExit -ExecutionPolicy Bypass -File .\scripts\open-viewer-window.ps1 `
-  -Host 192.168.1.100 `
-  -User board `
-  -Key C:\path\to\id_ed25519
+  -Host $env:SSH_HOST `
+  -User $env:SSH_USER `
+  -Key $env:SSH_KEY
 
 # 查看后台 runner / viewer 状态
 powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File .\scripts\live-viewer.ps1 -Action status
@@ -169,11 +184,32 @@ powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File .\scripts\live-viewe
 powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File .\scripts\live-viewer.ps1 -Action stop
 ```
 
-这些脚本会在仓库根目录产生本地运行时文件，但默认已忽略：
+这些脚本会在仓库根目录产生本地运行时文件，但默认已忽略，不应提交到版本库：
 
 - `.viewer-processes.json`
 - `.demo-viewer-state.json`
 - `logs/live-viewer/*`
+
+## 环境变量配置
+
+本项目支持通过 `.env` 文件配置 SSH 连接信息，避免在命令行中硬编码凭证。
+
+```bash
+cp .env.example .env
+```
+
+编辑 `.env` 填入实际值：
+
+```ini
+SSH_HOST=your-host
+SSH_PORT=22
+SSH_USER=your-username
+SSH_PASSWORD=your-password
+# 或使用私钥（推荐）
+SSH_KEY=/path/to/private/key
+```
+
+`.env` 文件已被 `.gitignore` 和 `.npmignore` 排除，不会被提交或发布。
 
 ## 接入 Codex CLI
 
@@ -226,7 +262,7 @@ claude mcp add --transport stdio ssh-session-mcp -- node /path/to/ssh-session-mc
 }
 ```
 
-### 4. 实时看双栏 dashboard
+### 4. 实时看终端式 dashboard
 
 ```json
 {
@@ -288,7 +324,8 @@ claude mcp add --transport stdio ssh-session-mcp -- node /path/to/ssh-session-mc
 
 - **持久化 SSH PTY 会话**: 建立并维护交互式 SSH 终端会话
 - **多客户端支持**: 兼容 Codex、Claude Code、Cursor 等 MCP 客户端
-- **双栏仪表盘**: 实时显示终端输出和输入历史
+- **终端式仪表盘**: 实时显示终端输出，并以内嵌 actor 标记展示输入历史
+- **共享终端附着**: 终端查看器可直接附着到同一个 SSH PTY 并手动输入
 - **角色感知输入跟踪**: 区分用户、Codex、Claude 等不同角色的输入
 - **自动会话管理**: 空闲超时自动回收，悬挂会话清理
 - **控制键支持**: 支持 Ctrl+C、Ctrl+D、方向键等控制操作
@@ -348,15 +385,36 @@ claude mcp add --transport stdio ssh-session-mcp -- node /path/to/ssh-session-mc
 
 #### 终端查看器
 ```bash
-# 启动终端查看器
-ssh-session-mcp-view --session=my-server --host=127.0.0.1 --port=8765
+# 启动终端 attach 查看器
+ssh-session-mcp-view --session=my-server --host=127.0.0.1 --port=8765 --actor=user
 
 # 或使用绑定键
-ssh-session-mcp-view --binding=connection:username@192.168.1.100:22 --host=127.0.0.1 --port=8765
+ssh-session-mcp-view --binding=connection:username@192.168.1.100:22 --host=127.0.0.1 --port=8765 --actor=user
+
+# 如果不想显示本地状态栏
+ssh-session-mcp-view --session=my-server --host=127.0.0.1 --port=8765 --actor=user --statusBar=false
 ```
+
+终端查看器行为：
+
+- 它会直接附着到同一个 SSH PTY
+- 你可以像普通 SSH 工具一样直接输入
+- AI 继续通过 MCP 往同一个会话里发命令
+- 输入来源标记只显示在本地窗口标题和本地状态栏，不会写进远端终端流
+- 终端窗口标题会显示最近一次输入来源，例如 `[user] ...` 或 `[codex] ...`
+- 终端底部会保留一个本地状态栏，用颜色区分最近一次输入来源
+- 使用 `Ctrl+]` 只会脱离本地 attach 窗口，不会关闭远端 SSH 会话
+- 如果某些全屏程序和本地状态栏冲突，可加 `--statusBar=false`
 
 #### 浏览器查看器
 访问 `http://127.0.0.1:8765` 查看所有活跃会话的 Web 界面。
+
+说明：
+
+- 浏览器页现在也可以直接附着到同一个 SSH PTY 并手动输入
+- 页面内可切换 `user` / `codex` / `claude` actor，并通过底部状态栏显示最近一次输入来源
+- 浏览器端会把 ANSI / 光标控制归一化后再显示，所以显示保真度仍低于终端 attach viewer
+- 如果你要跑 `vim`、`top`、`htop`、`tmux` 之类更依赖原生终端行为的程序，优先用终端 attach viewer
 
 ## API 参考
 
@@ -367,7 +425,7 @@ ssh-session-mcp-view --binding=connection:username@192.168.1.100:22 --host=127.0
 | `ssh-session-open`    | 打开持久 SSH PTY 会话      | `sessionName`, `host`, `user`, `key`/`password`, `startupInput`, `idleTimeoutMs`, `includeDashboard`, `autoOpenViewer` |
 | `ssh-session-send`    | 发送输入到会话             | `session`, `input`, `actor`, `appendNewline`                                     |
 | `ssh-session-read`    | 读取终端输出               | `session`, `offset`, `maxChars`                                                  |
-| `ssh-session-watch`   | 监控会话变化（双栏仪表盘） | `session`, `waitForChangeMs`, `dashboardWidth`, `dashboardHeight`, `includeDashboard` |
+| `ssh-session-watch`   | 监控会话变化（终端式仪表盘） | `session`, `waitForChangeMs`, `dashboardWidth`, `dashboardHeight`, `includeDashboard` |
 | `ssh-session-control` | 发送控制键                 | `session`, `ctrl_c`, `ctrl_d`, `arrow_up`, 等                                    |
 | `ssh-session-resize`  | 调整 PTY 窗口大小          | `session`, `cols`, `rows`                                                        |
 | `ssh-session-list`    | 列出当前会话               | `includeClosed`                                                                  |
@@ -429,7 +487,13 @@ powershell -NoLogo -NoProfile -Command "$paths = @('scripts\\ensure-viewer.ps1',
 # 3. demo runner 脚本语法检查
 node --check scripts/demo-session-runner.mjs
 
-# 4. 单元测试
+# 4. 共享 attach 烟测（需要可访问的 SSH 目标）
+powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File .\scripts\smoke-shared-terminal.ps1 `
+  -Host $env:SSH_HOST `
+  -User $env:SSH_USER `
+  -Key $env:SSH_KEY
+
+# 5. 单元测试
 npm test
 ```
 

@@ -6,7 +6,8 @@ import {
   getControlSequence,
   normalizeTerminalInput,
   parseArgv,
-  renderSplitDashboard,
+  renderTerminalDashboard,
+  renderViewerTranscript,
   stripAnsi,
   type TranscriptEvent,
 } from '../src/index';
@@ -94,20 +95,32 @@ describe('dashboard rendering', () => {
     expect(normalizeTerminalInput('line1\nline2\r\nline3\rline4')).toBe('line1\rline2\rline3\rline4');
   });
 
-  it('renders a split dashboard with both panes', () => {
-    const dashboard = renderSplitDashboard({
-      leftTitle: 'SSH board',
-      rightTitle: 'Inputs',
-      leftText: 'line1\nline2',
-      rightText: '[user]\nhello',
+  it('renders a terminal-style dashboard without split borders', () => {
+    const dashboard = renderTerminalDashboard({
+      title: 'SSH board',
+      bodyText: 'line1\nline2\n[user] hello',
       width: 80,
       height: 8,
     });
 
     expect(dashboard).toContain('SSH board');
-    expect(dashboard).toContain('Inputs');
     expect(dashboard).toContain('line2');
-    expect(dashboard).toContain('hello');
+    expect(dashboard).toContain('[user] hello');
+    expect(dashboard).not.toContain('|');
+  });
+
+  it('renders transcript markers inline with terminal output', () => {
+    const transcript = renderViewerTranscript([
+      { seq: 1, at: '2026-04-15T09:00:00.000Z', type: 'lifecycle', text: 'session opened' },
+      { seq: 2, at: '2026-04-15T09:00:01.000Z', type: 'input', text: 'ls\n', actor: 'codex' },
+      { seq: 3, at: '2026-04-15T09:00:02.000Z', type: 'output', text: 'file1\nfile2\n' },
+      { seq: 4, at: '2026-04-15T09:00:03.000Z', type: 'input', text: 'pwd\n', actor: 'user' },
+    ], true);
+
+    expect(transcript).toContain('[session] session opened');
+    expect(transcript).toContain('[codex] ls');
+    expect(transcript).toContain('file1');
+    expect(transcript).toContain('[user] pwd');
   });
 });
 

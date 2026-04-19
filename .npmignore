@@ -47,3 +47,50 @@ coverage/
 # Local development configs
 local.config.json
 dev.config.json
+
+# Local design docs
+docs/
+
+.github/
+.vscode/
+.claude/
+.serial_mcp/
+.gitlab-ci.yml
+.circleci/
+.travis.yml
+
+.prettierrc.*
+.eslintrc.*
+.editorconfig
+.commitlintrc.*
+
+tsconfig*.json
+!tsconfig.build.json
+
+yarn.lock
+package-lock.json
+pnpm-lock.yaml
+
+rollup.config.*
+webpack.config.*
+
+Dockerfile
+docker-compose.yml
+.dockerignore
+
+CHANGELOG.md
+CONTRIBUTING.md
+
+.git/
+
+.demo-viewer-state*
+.smoke-viewer-state*
+.viewer-processes.json
+
+# Scripts (contain local dev helpers, not needed for npm package)
+scripts/
+
+# Environment files
+.env
+.env.*
+!.env.example

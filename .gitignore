@@ -157,4 +157,27 @@ test-output/
 # Local development configs
 local.config.json
 dev.config.json
-.viewer-processes.json
+
+# Local design docs
+docs/
+
+.env.*
+!.env.example
+
+.vite/
+.turbo/
+.nx/
+.cache/
+
+*.tsbuildinfo
+test-results/
+playwright-report/
+playwright/.cache/
+
+*.local
+local.*
+
+**/.DS_Store
+
+package-lock.json.*
+yarn.lock.*
