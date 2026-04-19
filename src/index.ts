@@ -1940,7 +1940,7 @@ function handleWsAttach(ws: WebSocket, kind: 'session' | 'binding', ref: string,
       if (msg.type === 'input' && typeof msg.data === 'string' && msg.data.length > 0) {
         // Check lock: browser input is always 'user' source
         if (session.inputLock === 'agent') {
-          ws.send(JSON.stringify({ type: 'lock_rejected', lock: session.inputLock, message: 'Input locked by AI agent. Switch to "user" mode to type.' }));
+          ws.send(JSON.stringify({ type: 'lock_rejected', lock: session.inputLock, message: 'Input locked by AI agent. Switch to "common" or "user" mode to type.' }));
           return;
         }
         const records: SessionWriteRecord[] = [];
@@ -2067,8 +2067,9 @@ function renderXtermTerminalPage(options: {
     </div>
     <div class="header-actions">
       <a href="${options.baseUrl}" class="btn">Home</a>
-      <select id="actorSelect" class="btn" title="Switch input mode: user = you type, claude/codex = AI types (your input blocked)">
-        <option value="user" selected>user</option>
+      <select id="actorSelect" class="btn" title="Switch input mode: common = both can type, user = only you type (AI blocked), claude/codex = AI types (your input blocked)">
+        <option value="common" selected>common</option>
+        <option value="user">user</option>
         <option value="codex">codex</option>
         <option value="claude">claude</option>
       </select>
@@ -2112,7 +2113,7 @@ function renderXtermTerminalPage(options: {
     var isFirstConnect = true;
     var currentLock = 'none';
 
-    function getActor() { return actorSelect.value || 'user'; }
+    function getActor() { var v = actorSelect.value; return (v && v !== 'common') ? v : 'user'; }
 
     function isUserBlocked() {
       return currentLock === 'agent';
@@ -2129,6 +2130,12 @@ function renderXtermTerminalPage(options: {
       } else {
         lockBadge.textContent = 'unlocked';
         lockBadge.className = 'lock-badge none';
+      }
+      // Sync dropdown to match lock state
+      if (lock === 'user' && actorSelect.value !== 'user') {
+        actorSelect.value = 'user';
+      } else if (lock === 'none' && actorSelect.value !== 'common') {
+        actorSelect.value = 'common';
       }
     }
 
@@ -2196,7 +2203,7 @@ function renderXtermTerminalPage(options: {
             updateLockUI(msg.lock);
           }
           if (msg.type === 'lock_rejected') {
-            setStatus('Input blocked: AI is active. Switch to "user" to type.', 'locked');
+            setStatus('Input blocked: AI is active. Switch to "common" or "user" to type.', 'locked');
           }
         } catch(e) {}
       };
@@ -2218,7 +2225,7 @@ function renderXtermTerminalPage(options: {
 
     terminal.onData(function(data) {
       if (isUserBlocked()) {
-        setStatus('Input blocked: AI is active. Switch to "user" to type.', 'locked');
+        setStatus('Input blocked: AI is active. Switch to "common" or "user" to type.', 'locked');
         return;
       }
       var records = [];
@@ -2258,10 +2265,14 @@ function renderXtermTerminalPage(options: {
 
     actorSelect.addEventListener('change', function() {
       var actor = getActor();
-      if (actor === 'user') {
+      if (actor === 'common') {
         sendJson({ type: 'lock', lock: 'none' });
         updateLockUI('none');
-        setStatus('Switched to user mode. You can type now.', 'user');
+        setStatus('Switched to common mode. Both user and AI can type.', 'user');
+      } else if (actor === 'user') {
+        sendJson({ type: 'lock', lock: 'user' });
+        updateLockUI('user');
+        setStatus('Switched to user mode. AI input is blocked.', 'user');
       } else {
         sendJson({ type: 'lock', lock: 'agent' });
         updateLockUI('agent');
@@ -2874,6 +2885,14 @@ server.tool(
       throw new McpError(ErrorCode.InvalidParams, 'input cannot be empty');
     }
 
+    if (target.inputLock === 'user') {
+      return createToolResponse(JSON.stringify({
+        error: 'INPUT_LOCKED',
+        lock: 'user',
+        message: 'Terminal is locked by user. The user must switch to agent or common mode in the browser terminal before AI can send input.',
+      }, null, 2));
+    }
+
     const payload = appendNewline === true ? `${input}\n` : input;
     const resolvedActor = sanitizeActor(actor, 'agent');
     target.write(payload, resolvedActor);
@@ -3008,6 +3027,15 @@ server.tool(
   },
   async ({ session, control, actor }) => {
     const target = resolveSession(sanitizeRequiredText(session, 'session'));
+
+    if (target.inputLock === 'user') {
+      return createToolResponse(JSON.stringify({
+        error: 'INPUT_LOCKED',
+        lock: 'user',
+        message: 'Terminal is locked by user. The user must switch to agent or common mode in the browser terminal before AI can send control keys.',
+      }, null, 2));
+    }
+
     const resolvedActor = sanitizeActor(actor, 'agent');
     target.sendControl(control, resolvedActor);
 
@@ -3242,7 +3270,7 @@ server.tool(
       return createToolResponse(JSON.stringify({
         error: 'INPUT_LOCKED',
         lock: 'user',
-        message: 'Terminal is locked by user. The user must switch to agent mode (claude/codex) in the browser terminal before AI can send commands.',
+        message: 'Terminal is locked by user. The user must switch to agent or common mode in the browser terminal before AI can send commands.',
       }, null, 2));
     }
 
@@ -3257,10 +3285,23 @@ server.tool(
     target.write(`${command}\n`, 'agent');
 
     if (resolvedWaitMs > 0) {
-      await target.waitForChange({ outputOffset: beforeOffset, waitMs: resolvedWaitMs });
-    }
+      const waitStart = Date.now();
 
-    await delay(Math.min(resolvedWaitMs, 300));
+      // Phase 1: Wait for first output change (usually just the command echo)
+      await target.waitForChange({ outputOffset: beforeOffset, waitMs: resolvedWaitMs });
+
+      // Phase 2: Use remaining time to wait for actual command output
+      const elapsed = Date.now() - waitStart;
+      const remaining = resolvedWaitMs - elapsed;
+      if (remaining > 100) {
+        const afterEcho = target.currentBufferEnd();
+        await target.waitForChange({ outputOffset: afterEcho, waitMs: remaining });
+      }
+
+      // Grace period for trailing output flush
+      const graceMs = Math.min(300, Math.max(0, resolvedWaitMs - (Date.now() - waitStart)));
+      if (graceMs > 0) await delay(graceMs);
+    }
 
     const snapshot = target.read(beforeOffset, resolvedMaxChars);
 

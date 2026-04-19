@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.2] - 2026-04-19
+
+### Added
+- **Common mode**: New "common" option in browser terminal dropdown allowing both user and AI to type simultaneously without locking conflicts
+- **User lock enforcement**: AI tools (`ssh-run`, `ssh-session-send`, `ssh-session-control`) now respect "user" lock mode and return `INPUT_LOCKED` error when terminal is locked to user
+
+### Changed
+- **Dropdown order**: "common" is now the default mode instead of "user"
+- **Lock synchronization**: Browser dropdown automatically updates to reflect server lock state
+- **Improved waiting logic**: `ssh-run` waits for both command echo and actual output in two phases for better reliability
+- **Error messages**: More helpful lock rejection messages guiding users to switch modes
+
+### Fixed
+- **UI text consistency**: Updated lock messages and tooltips for new "common" mode
+- **Input blocking**: Proper handling of user lock preventing AI input across all relevant tools
+
 ## [2.0.1] - 2026-04-19
 
 ### Added
