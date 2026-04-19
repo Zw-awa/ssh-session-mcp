@@ -55,6 +55,7 @@ export interface SessionSummary {
   bufferEnd: number;
   eventStartSeq: number;
   eventEndSeq: number;
+  inputLock: 'none' | 'agent' | 'user';
 }
 
 export interface SessionWriteRecord {
@@ -164,13 +165,18 @@ export class SSHSession {
   public closeReason: string | undefined;
   public buffer = '';
   public bufferStart = 0;
+  public rawBuffer = '';
+  public rawBufferStart = 0;
   public closed = false;
+  public inputLock: 'none' | 'agent' | 'user' = 'none';
 
   private eventSeqStart = 0;
   private nextEventSeq = 0;
   private transcriptCharCount = 0;
   private readonly events: TranscriptEvent[] = [];
   private readonly waiters = new Set<ChangeWaiter>();
+  private readonly rawOutputListeners = new Set<(chunk: Buffer) => void>();
+  private readonly eventListeners = new Set<(event: TranscriptEvent) => void>();
   private lastActivityMs = Date.now();
 
   constructor(
@@ -189,7 +195,9 @@ export class SSHSession {
     private readonly stream: ClientChannel,
   ) {
     const onData = (chunk: Buffer | string) => {
-      this.appendOutput(typeof chunk === 'string' ? chunk : chunk.toString());
+      const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      const text = buf.toString();
+      this.appendOutput(text, buf);
     };
 
     stream.on('data', onData);
@@ -268,21 +276,28 @@ export class SSHSession {
     countAsActivity = true,
   ) {
     const clipped = this.clipEventText(text);
-    this.events.push({
+    const event: TranscriptEvent = {
       seq: this.nextEventSeq,
       at,
       type,
       text: clipped,
       actor,
-    });
+    };
+    this.events.push(event);
     this.nextEventSeq += 1;
     this.transcriptCharCount += clipped.length;
     this.trimTranscriptEvents();
     this.markUpdated(at, countAsActivity);
     this.flushWaiters();
+
+    if (type !== 'output') {
+      for (const listener of this.eventListeners) {
+        try { listener(event); } catch { /* ignore */ }
+      }
+    }
   }
 
-  private appendOutput(text: string) {
+  private appendOutput(text: string, rawChunk?: Buffer) {
     if (text.length === 0) return;
 
     this.buffer += text;
@@ -292,11 +307,27 @@ export class SSHSession {
       this.bufferStart += trimChars;
     }
 
+    this.rawBuffer += text;
+    if (this.rawBuffer.length > this.tuning.maxBufferChars) {
+      const trimChars = this.rawBuffer.length - this.tuning.maxBufferChars;
+      this.rawBuffer = this.rawBuffer.slice(trimChars);
+      this.rawBufferStart += trimChars;
+    }
+
+    const buf = rawChunk || Buffer.from(text);
+    for (const listener of this.rawOutputListeners) {
+      try { listener(buf); } catch { /* ignore */ }
+    }
+
     this.pushEvent('output', text, undefined, nowIso(), true);
   }
 
   currentBufferEnd(): number {
     return this.bufferStart + this.buffer.length;
+  }
+
+  currentRawBufferEnd(): number {
+    return this.rawBufferStart + this.rawBuffer.length;
   }
 
   currentEventEnd(): number {
@@ -305,6 +336,20 @@ export class SSHSession {
 
   read(offset: number | undefined, maxChars: number): BufferSnapshot {
     return createBufferSnapshot(this.bufferStart, this.buffer, offset, maxChars, this.tuning.defaultReadChars);
+  }
+
+  readRaw(offset: number | undefined, maxChars: number): BufferSnapshot {
+    return createBufferSnapshot(this.rawBufferStart, this.rawBuffer, offset, maxChars, this.tuning.defaultReadChars);
+  }
+
+  onRawOutput(listener: (chunk: Buffer) => void): () => void {
+    this.rawOutputListeners.add(listener);
+    return () => { this.rawOutputListeners.delete(listener); };
+  }
+
+  onEvent(listener: (event: TranscriptEvent) => void): () => void {
+    this.eventListeners.add(listener);
+    return () => { this.eventListeners.delete(listener); };
   }
 
   readEvents(eventSeq: number | undefined, maxEvents: number, maxViewChars: number): EventSnapshot {
@@ -451,6 +496,7 @@ export class SSHSession {
       bufferEnd: this.currentBufferEnd(),
       eventStartSeq: this.eventSeqStart,
       eventEndSeq: this.currentEventEnd(),
+      inputLock: this.inputLock,
     };
   }
 }

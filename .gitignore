@@ -181,3 +181,6 @@ local.*
 
 package-lock.json.*
 yarn.lock.*
+
+logs/
+.claude/

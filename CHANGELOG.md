@@ -5,6 +5,40 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.0] - 2026-04-19
+
+### Added
+- **Shared SSH Terminal**: xterm.js browser terminal with real terminal emulation (replaces text dashboard)
+- **WebSocket communication**: Binary PTY output streaming via WebSocket, replacing HTTP polling for terminal pages
+- **Input lock mechanism**: User/AI mode switch prevents simultaneous input conflicts
+  - Browser dropdown (user/claude/codex) controls who can type
+  - AI's `ssh-run` auto-acquires and releases agent lock
+  - User input blocked when AI is active, with visual feedback
+- **Simplified AI tools**:
+  - `ssh-quick-connect`: One-step connect + open terminal, auto-reuses existing sessions
+  - `ssh-run`: Execute command and return output, with auto-locking
+  - `ssh-status`: Quick status check for active sessions
+- **`.env` support**: SSH credentials and config loaded from `.env` file automatically
+- **`npm run launch`**: One-command startup (MCP + SSH + browser terminal)
+- **CLI management**: `npm run status`, `npm run kill`, `npm run cleanup`
+- **rawBuffer**: Independent raw output buffer for WebSocket clients (preserves ANSI/cursor control)
+- **Session event subscriptions**: `onRawOutput()` and `onEvent()` for real-time push to WebSocket clients
+- **Reconnect without duplication**: WebSocket reconnect sends only incremental data via `rawOffset`
+- **Auto-open terminal**: `--autoOpenTerminal` / `AUTO_OPEN_TERMINAL` env var
+- **AI Agent Guide**: `AI_AGENT_GUIDE.md` documenting correct AI workflow
+
+### Changed
+- Browser terminal pages now use xterm.js (CDN) instead of `<pre>` text rendering
+- Old browser pages (`/session/`, `/binding/`) preserved as fallback
+- New terminal pages at `/terminal/session/`, `/terminal/binding/`
+- Home page now shows "Terminal" button as primary action
+- `viewer-cli.ts` supports `--interactive` mode via WebSocket
+
+### Technical
+- Added `ws` dependency for WebSocket server
+- WebSocket endpoints: `/ws/attach/session/:id`, `/ws/attach/binding/:key`
+- Server cleanup now closes all WebSocket connections on shutdown
+
 ## [1.0.2] - 2026-04-18
 
 ### Added

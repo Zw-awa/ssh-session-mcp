@@ -1,15 +1,17 @@
 #!/usr/bin/env node
 
-import { promises as fs } from 'node:fs';
+import { promises as fs, readFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { createServer, type Server as HttpServer } from 'node:http';
 import { fileURLToPath } from 'node:url';
+import { resolve as pathResolve } from 'node:path';
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
+import { WebSocketServer, WebSocket } from 'ws';
 
 import {
   delay,
@@ -32,6 +34,28 @@ import {
   type SessionWriteRecord,
 } from './session.js';
 
+function loadDotEnv() {
+  try {
+    const envPath = pathResolve(fileURLToPath(import.meta.url), '../../.env');
+    const content = readFileSync(envPath, 'utf8');
+    for (const line of content.split('\n')) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('#')) continue;
+      const eqIdx = trimmed.indexOf('=');
+      if (eqIdx === -1) continue;
+      const key = trimmed.slice(0, eqIdx).trim();
+      const val = trimmed.slice(eqIdx + 1).trim();
+      if (key && val && !process.env[key]) {
+        process.env[key] = val;
+      }
+    }
+  } catch {
+    // .env not found, that's fine
+  }
+}
+
+loadDotEnv();
+
 function parseArgv() {
   const args = process.argv.slice(2);
   const config: Record<string, string | null> = {};
@@ -52,11 +76,11 @@ function parseArgv() {
 const isCliEnabled = process.env.SSH_MCP_DISABLE_MAIN !== '1';
 const argvConfig = isCliEnabled ? parseArgv() : {} as Record<string, string>;
 
-const DEFAULT_HOST = argvConfig.host;
-const DEFAULT_PORT = argvConfig.port ? parseInt(argvConfig.port, 10) : 22;
-const DEFAULT_USER = argvConfig.user;
-const DEFAULT_PASSWORD = argvConfig.password;
-const DEFAULT_KEY = argvConfig.key;
+const DEFAULT_HOST = argvConfig.host || process.env.SSH_HOST;
+const DEFAULT_PORT = argvConfig.port ? parseInt(argvConfig.port, 10) : (process.env.SSH_PORT ? parseInt(process.env.SSH_PORT, 10) : 22);
+const DEFAULT_USER = argvConfig.user || process.env.SSH_USER;
+const DEFAULT_PASSWORD = argvConfig.password || process.env.SSH_PASSWORD;
+const DEFAULT_KEY = argvConfig.key || process.env.SSH_KEY;
 const DEFAULT_TIMEOUT = argvConfig.timeout ? parseInt(argvConfig.timeout, 10) : 30 * 60 * 1000;
 const DEFAULT_COLS = argvConfig.cols ? parseInt(argvConfig.cols, 10) : 120;
 const DEFAULT_ROWS = argvConfig.rows ? parseInt(argvConfig.rows, 10) : 40;
@@ -73,10 +97,11 @@ const DEFAULT_DASHBOARD_WIDTH = argvConfig.defaultDashboardWidth ? parseInt(argv
 const DEFAULT_DASHBOARD_HEIGHT = argvConfig.defaultDashboardHeight ? parseInt(argvConfig.defaultDashboardHeight, 10) : 24;
 const DEFAULT_DASHBOARD_LEFT_CHARS = argvConfig.defaultDashboardLeftChars ? parseInt(argvConfig.defaultDashboardLeftChars, 10) : 12000;
 const DEFAULT_DASHBOARD_RIGHT_EVENTS = argvConfig.defaultDashboardRightEvents ? parseInt(argvConfig.defaultDashboardRightEvents, 10) : 40;
-const DEFAULT_VIEWER_HOST = argvConfig.viewerHost || '127.0.0.1';
-const DEFAULT_VIEWER_PORT = argvConfig.viewerPort ? parseInt(argvConfig.viewerPort, 10) : 0;
+const DEFAULT_VIEWER_HOST = argvConfig.viewerHost || process.env.VIEWER_HOST || '127.0.0.1';
+const DEFAULT_VIEWER_PORT = argvConfig.viewerPort ? parseInt(argvConfig.viewerPort, 10) : (process.env.VIEWER_PORT ? parseInt(process.env.VIEWER_PORT, 10) : 0);
 const DEFAULT_VIEWER_REFRESH_MS = argvConfig.viewerRefreshMs ? parseInt(argvConfig.viewerRefreshMs, 10) : 1000;
 const SSH_CONNECT_TIMEOUT_MS = 30000;
+const AUTO_OPEN_TERMINAL = argvConfig.autoOpenTerminal === 'true' || argvConfig.autoOpenTerminal === '1' || process.env.AUTO_OPEN_TERMINAL === 'true' || process.env.AUTO_OPEN_TERMINAL === '1';
 const VIEWER_STATE_FILE = new URL('../.viewer-processes.json', import.meta.url);
 const VIEWER_CLI_ENTRY_PATH = fileURLToPath(new URL('./viewer-cli.js', import.meta.url));
 
@@ -112,6 +137,7 @@ interface ViewerBindingState {
 const viewerProcesses = new Map<string, ViewerProcessState>();
 const viewerBindings = new Map<string, ViewerBindingState>();
 let viewerServer: HttpServer | undefined;
+let viewerWss: WebSocketServer | undefined;
 let viewerStateLoaded = false;
 
 function validateConfig(config: Record<string, string | null>) {
@@ -1062,6 +1088,7 @@ function renderViewerHomePage() {
         
         return sessionList.map(session => {
           const sessionUrl = `${baseUrl}/session/${encodeURIComponent(session.sessionId)}`;
+          const terminalUrl = `${baseUrl}/terminal/session/${encodeURIComponent(session.sessionId)}`;
           const bindingKey = buildViewerBindingKeyForSession(session as any, 'connection');
           const bindingUrl = `${baseUrl}/binding/${encodeURIComponent(bindingKey)}`;
           return `
@@ -1072,7 +1099,8 @@ function renderViewerHomePage() {
                   <div class="session-meta">${session.user}@${session.host}:${session.port}</div>
                 </div>
                 <div class="session-actions">
-                  <a href="${sessionUrl}" class="btn btn-primary" target="_blank">Session View</a>
+                  <a href="${terminalUrl}" class="btn btn-primary" target="_blank">Terminal</a>
+                  <a href="${sessionUrl}" class="btn" target="_blank">Session View</a>
                   <a href="${bindingUrl}" class="btn" target="_blank">Binding View</a>
                 </div>
               </div>
@@ -1826,6 +1854,485 @@ function renderViewerBindingPage(bindingKey: string) {
   });
 }
 
+function broadcastLock(session: SSHSession) {
+  if (!viewerWss) return;
+  const msg = JSON.stringify({ type: 'lock', lock: session.inputLock });
+  for (const client of viewerWss.clients) {
+    if (client.readyState === WebSocket.OPEN) {
+      try { client.send(msg); } catch { /* ignore */ }
+    }
+  }
+}
+
+function handleWsAttach(ws: WebSocket, kind: 'session' | 'binding', ref: string, rawOffset?: number) {
+  let session: SSHSession;
+  let bindingKey: string | undefined;
+
+  try {
+    const target = resolveAttachTarget(kind, ref);
+    session = target.session;
+    bindingKey = target.binding?.bindingKey;
+  } catch (err) {
+    ws.close(4004, err instanceof Error ? err.message : 'session not found');
+    return;
+  }
+
+  const currentRawEnd = session.currentRawBufferEnd();
+
+  ws.send(JSON.stringify({
+    type: 'init',
+    summary: session.summary(),
+    bindingKey,
+    rawBufferEnd: currentRawEnd,
+  }));
+
+  if (typeof rawOffset === 'number' && rawOffset >= session.rawBufferStart && rawOffset < currentRawEnd) {
+    const slice = session.rawBuffer.slice(rawOffset - session.rawBufferStart);
+    if (slice.length > 0) {
+      ws.send(Buffer.from(slice), { binary: true });
+    }
+  } else if (typeof rawOffset !== 'number' || rawOffset < session.rawBufferStart) {
+    if (session.rawBuffer.length > 0) {
+      ws.send(Buffer.from(session.rawBuffer), { binary: true });
+    }
+  }
+
+  const recentEvents = session.getConversationEvents(50);
+  for (const event of recentEvents) {
+    ws.send(JSON.stringify({ type: 'event', seq: event.seq, at: event.at, eventType: event.type, text: event.text, actor: event.actor }));
+  }
+
+  const unsubOutput = session.onRawOutput((chunk) => {
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.send(chunk, { binary: true });
+    }
+  });
+
+  const unsubEvent = session.onEvent((event) => {
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: 'event', seq: event.seq, at: event.at, eventType: event.type, text: event.text, actor: event.actor }));
+    }
+  });
+
+  ws.on('message', (data, isBinary) => {
+    if (isBinary) return;
+
+    try {
+      const msg = JSON.parse(data.toString());
+
+      if (msg.type === 'lock' && typeof msg.lock === 'string') {
+        const validLocks = ['none', 'agent', 'user'];
+        if (validLocks.includes(msg.lock)) {
+          session.inputLock = msg.lock as 'none' | 'agent' | 'user';
+          // Broadcast lock change to all WS clients
+          if (viewerWss) {
+            const lockMsg = JSON.stringify({ type: 'lock', lock: session.inputLock });
+            for (const client of viewerWss.clients) {
+              if (client.readyState === WebSocket.OPEN) {
+                try { client.send(lockMsg); } catch { /* ignore */ }
+              }
+            }
+          }
+        }
+        return;
+      }
+
+      if (msg.type === 'input' && typeof msg.data === 'string' && msg.data.length > 0) {
+        // Check lock: browser input is always 'user' source
+        if (session.inputLock === 'agent') {
+          ws.send(JSON.stringify({ type: 'lock_rejected', lock: session.inputLock, message: 'Input locked by AI agent. Switch to "user" mode to type.' }));
+          return;
+        }
+        const records: SessionWriteRecord[] = [];
+        if (Array.isArray(msg.records)) {
+          for (const r of msg.records) {
+            if (r && (r.type === 'input' || r.type === 'control') && typeof r.text === 'string') {
+              records.push({ actor: sanitizeActor(r.actor, 'user'), text: r.text, type: r.type });
+            }
+          }
+        }
+        session.writeRaw(msg.data, records);
+      }
+
+      if (msg.type === 'control' && typeof msg.key === 'string') {
+        if (session.inputLock === 'agent') {
+          ws.send(JSON.stringify({ type: 'lock_rejected', lock: session.inputLock, message: 'Input locked by AI agent.' }));
+          return;
+        }
+        session.sendControl(msg.key as any, sanitizeActor(msg.actor, 'user'));
+      }
+
+      if (msg.type === 'resize' && typeof msg.cols === 'number' && typeof msg.rows === 'number') {
+        session.resize(
+          sanitizePositiveInt(msg.cols, 'cols', session.cols),
+          sanitizePositiveInt(msg.rows, 'rows', session.rows),
+        );
+      }
+    } catch {
+      // ignore invalid messages
+    }
+  });
+
+  const cleanup = () => {
+    unsubOutput();
+    unsubEvent();
+  };
+
+  ws.on('close', cleanup);
+  ws.on('error', cleanup);
+}
+
+function renderXtermTerminalPage(options: {
+  attachKind: 'session' | 'binding';
+  attachRef: string;
+  baseUrl: string;
+  footerLabel: string;
+  footerValue: string;
+  meta: string;
+  subtitle: string;
+  title: string;
+}) {
+  const wsProtocol = 'ws';
+  const wsPath = options.attachKind === 'binding'
+    ? `/ws/attach/binding/${encodeURIComponent(options.attachRef)}`
+    : `/ws/attach/session/${encodeURIComponent(options.attachRef)}`;
+
+  return `<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>${escapeHtml(options.title)} • SSH Terminal</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css">
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0d1117;
+      --panel: #161b22;
+      --line: #2f3845;
+      --text: #e6edf3;
+      --muted: #91a0b3;
+      --accent: #72d6d1;
+      --user: #2f81f7;
+      --codex: #ff9f43;
+      --claude: #b197fc;
+      --locked: #f85149;
+      font-family: Consolas, "SFMono-Regular", "Courier New", monospace;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(--text); }
+    body { display: flex; flex-direction: column; }
+    .header {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 8px 16px; background: var(--panel); border-bottom: 1px solid var(--line);
+      flex-shrink: 0; gap: 12px;
+    }
+    .header-left { display: flex; align-items: center; gap: 12px; min-width: 0; }
+    .header-title { font-size: 15px; font-weight: 700; color: var(--accent); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .header-meta { font-size: 12px; color: var(--muted); white-space: nowrap; }
+    .header-actions { display: flex; gap: 6px; align-items: center; flex-shrink: 0; }
+    .btn {
+      height: 30px; padding: 0 10px; border-radius: 6px; border: 1px solid var(--line);
+      background: rgba(255,255,255,0.04); color: var(--text); font: inherit; font-size: 12px; cursor: pointer;
+    }
+    .btn:hover { border-color: var(--accent); }
+    .conn-dot { width: 8px; height: 8px; border-radius: 50%; background: #3fb950; flex-shrink: 0; }
+    .conn-dot.disconnected { background: #f85149; }
+    #terminal-container { flex: 1; min-height: 0; padding: 4px; }
+    .status-bar {
+      padding: 6px 16px; border-top: 1px solid var(--line); font-size: 12px;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex-shrink: 0;
+      background: #1f2630; color: #f5f7fa; transition: background 0.2s;
+    }
+    .status-bar.user { background: var(--user); }
+    .status-bar.codex { background: var(--codex); color: #1a140a; }
+    .status-bar.claude { background: var(--claude); }
+    .status-bar.session { background: #4b5563; }
+    .status-bar.error { background: #f85149; }
+    .status-bar.locked { background: var(--locked); }
+    .lock-badge {
+      display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 700; margin-left: 8px;
+    }
+    .lock-badge.agent { background: var(--claude); color: #fff; }
+    .lock-badge.user-lock { background: var(--user); color: #fff; }
+    .lock-badge.none { background: rgba(255,255,255,0.1); color: var(--muted); }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="header-left">
+      <div class="conn-dot" id="connDot"></div>
+      <div class="header-title" id="headerTitle">${escapeHtml(options.title)}</div>
+      <div class="header-meta" id="headerMeta">${escapeHtml(options.meta)}</div>
+    </div>
+    <div class="header-actions">
+      <a href="${options.baseUrl}" class="btn">Home</a>
+      <select id="actorSelect" class="btn" title="Switch input mode: user = you type, claude/codex = AI types (your input blocked)">
+        <option value="user" selected>user</option>
+        <option value="codex">codex</option>
+        <option value="claude">claude</option>
+      </select>
+      <span id="lockBadge" class="lock-badge none">unlocked</span>
+    </div>
+  </div>
+  <div id="terminal-container"></div>
+  <div class="status-bar" id="statusBar">Connecting...</div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
+  <script>
+  (function() {
+    var wsPath = ${JSON.stringify(wsPath)};
+    var terminal = new window.Terminal({
+      cursorBlink: true,
+      fontSize: 14,
+      fontFamily: 'Consolas, "SFMono-Regular", "Courier New", monospace',
+      theme: {
+        background: '#0d1117',
+        foreground: '#e6edf3',
+        cursor: '#72d6d1',
+        selectionBackground: 'rgba(114,214,209,0.3)',
+      },
+      allowProposedApi: true,
+    });
+    var fitAddon = new window.FitAddon.FitAddon();
+    terminal.loadAddon(fitAddon);
+    terminal.open(document.getElementById('terminal-container'));
+    fitAddon.fit();
+
+    var connDot = document.getElementById('connDot');
+    var statusBar = document.getElementById('statusBar');
+    var actorSelect = document.getElementById('actorSelect');
+    var lockBadge = document.getElementById('lockBadge');
+    var headerTitle = document.getElementById('headerTitle');
+    var ws = null;
+    var currentLine = '';
+    var reconnectTimer = null;
+    var knownRawEnd = 0;
+    var isFirstConnect = true;
+    var currentLock = 'none';
+
+    function getActor() { return actorSelect.value || 'user'; }
+
+    function isUserBlocked() {
+      return currentLock === 'agent';
+    }
+
+    function updateLockUI(lock) {
+      currentLock = lock;
+      if (lock === 'agent') {
+        lockBadge.textContent = 'AI active';
+        lockBadge.className = 'lock-badge agent';
+      } else if (lock === 'user') {
+        lockBadge.textContent = 'user active';
+        lockBadge.className = 'lock-badge user-lock';
+      } else {
+        lockBadge.textContent = 'unlocked';
+        lockBadge.className = 'lock-badge none';
+      }
+    }
+
+    function setStatus(text, theme) {
+      statusBar.textContent = text;
+      statusBar.className = 'status-bar' + (theme ? ' ' + theme : '');
+    }
+
+    function eventTheme(event) {
+      if (!event) return '';
+      if (event.actor === 'user') return 'user';
+      if (event.actor === 'codex') return 'codex';
+      if (event.actor === 'claude') return 'claude';
+      return 'session';
+    }
+
+    function summarizeEvent(event) {
+      var compact = String(event.text || '').replace(/\\s+/g, ' ').trim();
+      var clipped = compact.length > 80 ? compact.slice(0, 77) + '...' : compact;
+      if (event.eventType === 'input') return '[' + (event.actor || 'agent') + '] ' + (clipped || '<newline>');
+      if (event.eventType === 'control') return '[' + (event.actor || 'agent') + '] <' + clipped + '>';
+      return '[session] ' + clipped;
+    }
+
+    function connect() {
+      if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+      if (ws) { try { ws.onclose = null; ws.close(); } catch(e) {} ws = null; }
+      var loc = window.location;
+      var wsUrl = (loc.protocol === 'https:' ? 'wss:' : 'ws:') + '//' + loc.host + wsPath;
+      if (!isFirstConnect && knownRawEnd > 0) {
+        wsUrl += (wsUrl.indexOf('?') === -1 ? '?' : '&') + 'rawOffset=' + knownRawEnd;
+      }
+      ws = new WebSocket(wsUrl);
+      ws.binaryType = 'arraybuffer';
+
+      ws.onopen = function() {
+        connDot.className = 'conn-dot';
+        if (isFirstConnect) { isFirstConnect = false; }
+        currentLine = '';
+        setStatus('Connected as ' + getActor(), '');
+      };
+
+      ws.onmessage = function(evt) {
+        if (evt.data instanceof ArrayBuffer) {
+          terminal.write(new Uint8Array(evt.data));
+          knownRawEnd += evt.data.byteLength;
+          return;
+        }
+        try {
+          var msg = JSON.parse(evt.data);
+          if (msg.type === 'init' && msg.summary) {
+            var s = msg.summary;
+            headerTitle.textContent = (s.sessionName || s.sessionId || 'SSH') + ' ' + s.user + '@' + s.host + ':' + s.port;
+            document.title = headerTitle.textContent + ' \\u2022 SSH Terminal';
+            if (typeof msg.rawBufferEnd === 'number' && knownRawEnd === 0) {
+              knownRawEnd = msg.rawBufferEnd;
+            }
+            if (s.inputLock) { updateLockUI(s.inputLock); }
+          }
+          if (msg.type === 'event') {
+            var time = String(msg.at || '').slice(11, 19);
+            setStatus((time ? time + ' ' : '') + summarizeEvent(msg), eventTheme(msg));
+          }
+          if (msg.type === 'lock') {
+            updateLockUI(msg.lock);
+          }
+          if (msg.type === 'lock_rejected') {
+            setStatus('Input blocked: AI is active. Switch to "user" to type.', 'locked');
+          }
+        } catch(e) {}
+      };
+
+      ws.onclose = function() {
+        connDot.className = 'conn-dot disconnected';
+        setStatus('Disconnected. Reconnecting...', 'error');
+        reconnectTimer = setTimeout(connect, 2000);
+      };
+
+      ws.onerror = function() {};
+    }
+
+    function sendJson(obj) {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify(obj));
+      }
+    }
+
+    terminal.onData(function(data) {
+      if (isUserBlocked()) {
+        setStatus('Input blocked: AI is active. Switch to "user" to type.', 'locked');
+        return;
+      }
+      var records = [];
+      var normalized = data.replace(/\\r\\n/g, '\\n').replace(/\\r/g, '\\n');
+      for (var i = 0; i < normalized.length; i++) {
+        var ch = normalized[i];
+        if (ch === '\\n') {
+          records.push({ actor: getActor(), text: currentLine.length > 0 ? currentLine : '<newline>', type: 'input' });
+          currentLine = '';
+        } else if (ch === '\\u007f' || ch === '\\b') {
+          currentLine = currentLine.slice(0, -1);
+        } else if (ch === '\\u0003') {
+          currentLine = '';
+          records.push({ actor: getActor(), text: 'ctrl_c', type: 'control' });
+        } else if (ch === '\\u0004') {
+          records.push({ actor: getActor(), text: 'ctrl_d', type: 'control' });
+        } else if (ch >= ' ') {
+          currentLine += ch;
+        }
+      }
+      var transportData = data.replace(/\\r\\n/g, '\\r').replace(/\\n/g, '\\r');
+      sendJson({ type: 'input', data: transportData, records: records });
+    });
+
+    terminal.onBinary(function(data) {
+      if (isUserBlocked()) return;
+      sendJson({ type: 'input', data: data, records: [] });
+    });
+
+    window.addEventListener('resize', function() {
+      fitAddon.fit();
+    });
+
+    terminal.onResize(function(size) {
+      sendJson({ type: 'resize', cols: size.cols, rows: size.rows });
+    });
+
+    actorSelect.addEventListener('change', function() {
+      var actor = getActor();
+      if (actor === 'user') {
+        sendJson({ type: 'lock', lock: 'none' });
+        updateLockUI('none');
+        setStatus('Switched to user mode. You can type now.', 'user');
+      } else {
+        sendJson({ type: 'lock', lock: 'agent' });
+        updateLockUI('agent');
+        setStatus('Switched to ' + actor + ' mode. AI controls the terminal. Your input is blocked.', 'claude');
+      }
+      terminal.focus();
+    });
+
+    connect();
+    terminal.focus();
+  })();
+  </script>
+</body>
+</html>`;
+}
+
+function renderXtermSessionPage(sessionRef: string) {
+  const baseUrl = getViewerBaseUrl() || '';
+  const session = sessions.get(sessionRef) || [...sessions.values()].find(s => s.sessionName === sessionRef);
+  const sessionData = session ? session.summary() : null;
+
+  if (!sessionData) {
+    return renderViewerErrorPage({
+      baseUrl,
+      detail: `Session reference: ${sessionRef}`,
+      footerLabel: 'Session ID',
+      footerValue: sessionRef,
+      title: 'Session not found',
+    });
+  }
+
+  return renderXtermTerminalPage({
+    attachKind: 'session',
+    attachRef: sessionRef,
+    baseUrl,
+    footerLabel: 'Session ID',
+    footerValue: sessionRef,
+    meta: `${sessionData.user}@${sessionData.host}:${sessionData.port}`,
+    subtitle: 'Shared SSH Terminal',
+    title: sessionData.sessionName || sessionData.sessionId,
+  });
+}
+
+function renderXtermBindingPage(bindingKey: string) {
+  const baseUrl = getViewerBaseUrl() || '';
+  const binding = viewerBindings.get(bindingKey);
+  const session = binding ? sessions.get(binding.sessionId) : null;
+  const sessionData = session ? session.summary() : null;
+
+  if (!binding || !sessionData) {
+    return renderViewerErrorPage({
+      baseUrl,
+      detail: `Binding key: ${bindingKey}`,
+      footerLabel: 'Binding key',
+      footerValue: bindingKey,
+      title: 'Binding not found',
+    });
+  }
+
+  return renderXtermTerminalPage({
+    attachKind: 'binding',
+    attachRef: bindingKey,
+    baseUrl,
+    footerLabel: 'Binding key',
+    footerValue: bindingKey,
+    meta: `${sessionData.user}@${sessionData.host}:${sessionData.port}`,
+    subtitle: 'Shared SSH Terminal',
+    title: sessionData.sessionName || sessionData.sessionId,
+  });
+}
+
 async function startViewerServer() {
   if (DEFAULT_VIEWER_PORT <= 0 || viewerServer) {
     return;
@@ -2060,6 +2567,18 @@ async function startViewerServer() {
         return;
       }
 
+      if (url.pathname.startsWith('/terminal/session/')) {
+        const sessionRef = decodeURIComponent(url.pathname.slice('/terminal/session/'.length));
+        writeHtml(200, renderXtermSessionPage(sessionRef));
+        return;
+      }
+
+      if (url.pathname.startsWith('/terminal/binding/')) {
+        const bindingKey = decodeURIComponent(url.pathname.slice('/terminal/binding/'.length));
+        writeHtml(200, renderXtermBindingPage(bindingKey));
+        return;
+      }
+
       if (url.pathname.startsWith('/session/')) {
         const sessionRef = decodeURIComponent(url.pathname.slice('/session/'.length));
         writeHtml(200, renderViewerSessionPage(sessionRef));
@@ -2097,6 +2616,29 @@ async function startViewerServer() {
       resolve();
     });
   });
+
+  const wss = new WebSocketServer({ noServer: true });
+  viewerWss = wss;
+
+  viewerServer!.on('upgrade', (request, socket, head) => {
+    const url = new URL(request.url || '/', 'http://127.0.0.1');
+    const sessionMatch = url.pathname.match(/^\/ws\/attach\/session\/(.+)$/);
+    const bindingMatch = url.pathname.match(/^\/ws\/attach\/binding\/(.+)$/);
+
+    if (!sessionMatch && !bindingMatch) {
+      socket.destroy();
+      return;
+    }
+
+    const kind: 'session' | 'binding' = sessionMatch ? 'session' : 'binding';
+    const ref = decodeURIComponent((sessionMatch || bindingMatch)![1]);
+    const rawOffsetParam = url.searchParams.get('rawOffset');
+    const rawOffset = rawOffsetParam !== null ? parseInt(rawOffsetParam, 10) : undefined;
+
+    wss.handleUpgrade(request, socket as any, head, (ws) => {
+      handleWsAttach(ws, kind, ref, Number.isFinite(rawOffset) ? rawOffset : undefined);
+    });
+  });
 }
 
 function closeAllSessions(reason: string) {
@@ -2112,7 +2654,7 @@ function closeAllSessions(reason: string) {
 
 const server = new McpServer({
   name: 'ssh-session-mcp',
-  version: '1.0.2',
+  version: '2.0.0',
   capabilities: {
     resources: {},
     tools: {},
@@ -2274,6 +2816,17 @@ server.tool(
         viewerAutoOpenError = error instanceof Error ? error.message : String(error);
       }
     }
+    let autoOpenTerminalUrl: string | undefined;
+    let autoOpenTerminalError: string | undefined;
+    if (AUTO_OPEN_TERMINAL && DEFAULT_VIEWER_PORT > 0) {
+      try {
+        const termUrl = `http://${viewerHostForUrl(DEFAULT_VIEWER_HOST)}:${DEFAULT_VIEWER_PORT}/terminal/session/${encodeURIComponent(session.sessionId)}`;
+        await launchBrowserViewer(termUrl);
+        autoOpenTerminalUrl = termUrl;
+      } catch (error) {
+        autoOpenTerminalError = error instanceof Error ? error.message : String(error);
+      }
+    }
     const dashboard = buildDashboard(session, {
       width: resolvedDashboardWidth,
       height: resolvedDashboardHeight,
@@ -2300,6 +2853,8 @@ server.tool(
       viewerSingletonScope: resolvedViewerScope,
       viewerState,
       viewerAutoOpenError,
+      autoOpenTerminalUrl,
+      autoOpenTerminalError,
     }, null, 2), resolvedIncludeDashboard ? [dashboard] : []);
   },
 );
@@ -2594,6 +3149,162 @@ server.tool(
   },
 );
 
+// ── Simplified tools for AI agents ──────────────────────────────────────────
+
+server.tool(
+  'ssh-quick-connect',
+  'One-step: open SSH session using .env defaults, auto-open browser terminal, return terminal URL. If a session already exists, reuse it. AI agents should call this once at the start of a conversation.',
+  {
+    sessionName: z.string().optional().describe('Optional session name. Defaults to "default"'),
+  },
+  async ({ sessionName }) => {
+    sweepSessions();
+    const name = sanitizeOptionalText(sessionName) || 'default';
+
+    // Reuse existing active session with same name
+    const existing = [...sessions.values()].find(s => !s.closed && s.sessionName === name);
+    if (existing) {
+      const terminalUrl = DEFAULT_VIEWER_PORT > 0
+        ? `http://${viewerHostForUrl(DEFAULT_VIEWER_HOST)}:${DEFAULT_VIEWER_PORT}/terminal/session/${encodeURIComponent(existing.sessionId)}`
+        : undefined;
+      return createToolResponse(JSON.stringify({
+        reused: true,
+        sessionId: existing.sessionId,
+        sessionName: existing.sessionName,
+        host: existing.host,
+        user: existing.user,
+        terminalUrl,
+        hint: 'Session already exists. Use ssh-run to execute commands.',
+      }, null, 2));
+    }
+
+    // Open new session
+    const resolvedHost = DEFAULT_HOST;
+    const resolvedUser = DEFAULT_USER;
+    if (!resolvedHost) throw new McpError(ErrorCode.InvalidParams, 'SSH_HOST not configured. Set it in .env or pass --host');
+    if (!resolvedUser) throw new McpError(ErrorCode.InvalidParams, 'SSH_USER not configured. Set it in .env or pass --user');
+
+    const sshConfig: SSHConfig = { host: resolvedHost, port: DEFAULT_PORT, username: resolvedUser };
+    if (DEFAULT_PASSWORD) sshConfig.password = DEFAULT_PASSWORD;
+    else if (DEFAULT_KEY) sshConfig.privateKey = await readPrivateKey(DEFAULT_KEY);
+
+    const connection = new SSHConnection(sshConfig, SSH_CONNECT_TIMEOUT_MS);
+    await connection.connect();
+
+    const sessionId = randomUUID();
+    const client = connection.getClient();
+    const session = await new Promise<SSHSession>((resolve, reject) => {
+      client.shell({ term: DEFAULT_TERM, cols: DEFAULT_COLS, rows: DEFAULT_ROWS }, (err, stream) => {
+        if (err) { connection.close(); reject(new McpError(ErrorCode.InternalError, `SSH shell failed: ${err.message}`)); return; }
+        resolve(new SSHSession(sessionId, name, resolvedHost, DEFAULT_PORT, resolvedUser, DEFAULT_COLS, DEFAULT_ROWS, DEFAULT_TERM, DEFAULT_TIMEOUT, DEFAULT_CLOSED_RETENTION_MS, tuning, connection, stream));
+      });
+    });
+    sessions.set(sessionId, session);
+
+    // Auto open terminal
+    let terminalUrl: string | undefined;
+    if (DEFAULT_VIEWER_PORT > 0) {
+      terminalUrl = `http://${viewerHostForUrl(DEFAULT_VIEWER_HOST)}:${DEFAULT_VIEWER_PORT}/terminal/session/${encodeURIComponent(sessionId)}`;
+      if (AUTO_OPEN_TERMINAL) {
+        try { await launchBrowserViewer(terminalUrl); } catch { /* ignore */ }
+      }
+    }
+
+    await delay(300);
+
+    return createToolResponse(JSON.stringify({
+      reused: false,
+      sessionId,
+      sessionName: name,
+      host: resolvedHost,
+      user: resolvedUser,
+      terminalUrl,
+      hint: 'Session opened. Use ssh-run to execute commands. The user can also type in the browser terminal.',
+    }, null, 2));
+  },
+);
+
+server.tool(
+  'ssh-run',
+  'Execute a command in the SSH session and return the output. This is the primary tool for AI agents to interact with the remote machine. Appends newline automatically. Automatically acquires agent lock before sending and releases after reading output.',
+  {
+    command: z.string().describe('Shell command to execute'),
+    session: z.string().optional().describe('Session name or id. Defaults to "default"'),
+    waitMs: z.number().int().nonnegative().optional().describe('How long to wait for output after sending the command (default 2000ms)'),
+    maxChars: z.number().int().positive().optional().describe('Max chars to read from output (default 8000)'),
+  },
+  async ({ command, session, waitMs, maxChars }) => {
+    sweepSessions();
+    const ref = sanitizeOptionalText(session) || 'default';
+    const target = resolveSession(ref);
+
+    if (target.inputLock === 'user') {
+      return createToolResponse(JSON.stringify({
+        error: 'INPUT_LOCKED',
+        lock: 'user',
+        message: 'Terminal is locked by user. The user must switch to agent mode (claude/codex) in the browser terminal before AI can send commands.',
+      }, null, 2));
+    }
+
+    // Acquire agent lock
+    target.inputLock = 'agent';
+    broadcastLock(target);
+
+    const resolvedWaitMs = sanitizeNonNegativeInt(waitMs, 'waitMs', 2000);
+    const resolvedMaxChars = sanitizePositiveInt(maxChars, 'maxChars', 8000);
+
+    const beforeOffset = target.currentBufferEnd();
+    target.write(`${command}\n`, 'agent');
+
+    if (resolvedWaitMs > 0) {
+      await target.waitForChange({ outputOffset: beforeOffset, waitMs: resolvedWaitMs });
+    }
+
+    await delay(Math.min(resolvedWaitMs, 300));
+
+    const snapshot = target.read(beforeOffset, resolvedMaxChars);
+
+    // Release lock
+    target.inputLock = 'none';
+    broadcastLock(target);
+
+    return createToolResponse(JSON.stringify({
+      command,
+      sessionName: target.sessionName,
+      host: target.host,
+      exitHint: 'Check output for command result. Use ssh-run again for next command.',
+    }, null, 2), [snapshot.output.length > 0 ? snapshot.output : '(no output yet)']);
+  },
+);
+
+server.tool(
+  'ssh-status',
+  'Quick status check: list active sessions, viewer URL, connection state. Use this to check if a session is already running.',
+  {},
+  async () => {
+    sweepSessions();
+    const active = [...sessions.values()].filter(s => !s.closed).map(s => ({
+      sessionId: s.sessionId,
+      sessionName: s.sessionName,
+      host: s.host,
+      user: s.user,
+      terminalUrl: DEFAULT_VIEWER_PORT > 0
+        ? `http://${viewerHostForUrl(DEFAULT_VIEWER_HOST)}:${DEFAULT_VIEWER_PORT}/terminal/session/${encodeURIComponent(s.sessionId)}`
+        : undefined,
+      idleMinutes: Math.round((Date.now() - Date.parse(s.lastActivityAt)) / 60000),
+    }));
+
+    return createToolResponse(JSON.stringify({
+      activeSessions: active.length,
+      sessions: active,
+      viewerBaseUrl: getViewerBaseUrl(),
+      hint: active.length === 0
+        ? 'No active sessions. Use ssh-quick-connect to start one.'
+        : 'Sessions are running. Use ssh-run to execute commands.',
+    }, null, 2));
+  },
+);
+
 async function main() {
   await loadViewerProcessState();
   await startViewerServer();
@@ -2612,6 +3323,12 @@ async function main() {
 
   const cleanup = () => {
     clearInterval(sweepTimer);
+    if (viewerWss) {
+      for (const client of viewerWss.clients) {
+        try { client.close(1001, 'server shutdown'); } catch { /* ignore */ }
+      }
+      viewerWss.close();
+    }
     viewerServer?.close();
     closeAllSessions('mcp server shutdown');
     process.exit(0);
@@ -2621,6 +3338,12 @@ async function main() {
   process.on('SIGTERM', cleanup);
   process.on('exit', () => {
     clearInterval(sweepTimer);
+    if (viewerWss) {
+      for (const client of viewerWss.clients) {
+        try { client.close(1001, 'process exit'); } catch { /* ignore */ }
+      }
+      viewerWss.close();
+    }
     viewerServer?.close();
     closeAllSessions('process exit');
   });

@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 
+import WebSocket from 'ws';
+
 interface ViewerCliConfig {
   actor: string;
   binding: string;
@@ -7,6 +9,7 @@ interface ViewerCliConfig {
   exitOnUnavailableMs: number;
   helpFooter: boolean;
   host: string;
+  interactive: boolean;
   intervalMs: number;
   leftChars: number;
   port: number;
@@ -61,6 +64,7 @@ function parseArgv(argv: string[]): ViewerCliConfig {
     exitOnUnavailableMs: 3000,
     helpFooter: true,
     host: '127.0.0.1',
+    interactive: false,
     intervalMs: 250,
     leftChars: 12000,
     port: 8765,
@@ -117,6 +121,9 @@ function parseArgv(argv: string[]): ViewerCliConfig {
         break;
       case 'syncWindowSize':
         config.syncWindowSize = value !== 'false' && value !== '0';
+        break;
+      case 'interactive':
+        config.interactive = value !== 'false' && value !== '0';
         break;
       default:
         break;
@@ -419,8 +426,143 @@ function formatStatusEvent(event: AttachEvent | undefined, fallback: string) {
   return `${time} ${summarizeEvent(event)}`;
 }
 
+function wsAttachUrl(config: ViewerCliConfig) {
+  const encoded = encodeURIComponent(targetLabel(config));
+  const wsPath = config.binding.trim()
+    ? `/ws/attach/binding/${encoded}`
+    : `/ws/attach/session/${encoded}`;
+  return `ws://${config.host}:${config.port}${wsPath}`;
+}
+
+async function mainInteractive() {
+  const config = parseArgv(process.argv.slice(2));
+  let stopping = false;
+  let resizeTimer: NodeJS.Timeout | undefined;
+  let reconnectTimer: NodeJS.Timeout | undefined;
+  let ws: WebSocket | null = null;
+
+  const cleanupAndExit = (code: number) => {
+    if (stopping) return;
+    stopping = true;
+    if (resizeTimer) clearTimeout(resizeTimer);
+    if (reconnectTimer) clearTimeout(reconnectTimer);
+    if (ws) { try { ws.close(); } catch { /* ignore */ } }
+
+    if (process.stdin.isTTY) {
+      try { process.stdin.setRawMode(false); } catch { /* ignore */ }
+    }
+
+    leaveAttachScreen(config);
+    process.stdout.write('\n[attach] detached\n');
+    process.exit(code);
+  };
+
+  const currentLine = { value: '' };
+
+  function connectWs() {
+    const url = wsAttachUrl(config);
+    ws = new WebSocket(url);
+
+    ws.on('open', () => {
+      renderStatusBar(config, { lastEventSummary: `[attach] connected as ${config.actor}; Ctrl+] detaches` }, `[attach] connected as ${config.actor}`);
+      const { cols, remoteRows } = currentTerminalSize(config);
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'resize', cols, rows: remoteRows }));
+      }
+    });
+
+    ws.on('message', (data, isBinary) => {
+      if (isBinary) {
+        const buf = Buffer.isBuffer(data) ? data : Buffer.from(data as ArrayBuffer);
+        process.stdout.write(buf);
+        return;
+      }
+
+      try {
+        const msg = JSON.parse(data.toString());
+        if (msg.type === 'init' && msg.summary) {
+          const s = msg.summary;
+          const title = `SSH ${s.sessionName || s.sessionId} ${s.user}@${s.host}:${s.port}`;
+          setWindowTitle(title);
+        }
+        if (msg.type === 'event') {
+          const event: AttachEvent = { seq: msg.seq, at: msg.at, type: msg.eventType, text: msg.text, actor: msg.actor };
+          const summary = formatStatusEvent(event, '');
+          renderStatusBar(config, { lastEvent: event, lastEventSummary: summary }, summary);
+        }
+      } catch { /* ignore */ }
+    });
+
+    ws.on('close', () => {
+      if (!stopping) {
+        renderStatusBar(config, { lastEventSummary: '[attach] disconnected, reconnecting...' }, '[attach] disconnected');
+        reconnectTimer = setTimeout(connectWs, 2000);
+      }
+    });
+
+    ws.on('error', () => {});
+  }
+
+  if (process.stdin.isTTY) {
+    process.stdin.setRawMode(true);
+    process.stdin.resume();
+    process.stdin.on('data', (chunk) => {
+      const rawData = chunk.toString('utf8');
+      if (rawData === '\u001d') {
+        cleanupAndExit(0);
+        return;
+      }
+
+      const state: LocalInputState = { currentLine: currentLine.value };
+      const records = buildWriteRecords(rawData, config.actor, state);
+      currentLine.value = state.currentLine;
+
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({
+          type: 'input',
+          data: normalizeTransportData(rawData),
+          records,
+        }));
+      }
+    });
+  }
+
+  if (process.stdout.isTTY) {
+    process.stdout.on('resize', () => {
+      if (resizeTimer) clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(() => {
+        const { cols, remoteRows } = currentTerminalSize(config);
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'resize', cols, rows: remoteRows }));
+        }
+        applyLocalLayout(config);
+      }, 80);
+    });
+  }
+
+  process.on('SIGINT', () => cleanupAndExit(0));
+  process.on('SIGTERM', () => cleanupAndExit(0));
+  process.on('exit', () => {
+    if (process.stdin.isTTY) {
+      try { process.stdin.setRawMode(false); } catch { /* ignore */ }
+    }
+    leaveAttachScreen(config);
+  });
+
+  enterAttachScreen(config);
+  if (config.helpFooter) {
+    process.stdout.write('[attach] interactive SSH terminal ready. Ctrl+] detaches this window.\n\n');
+  }
+
+  renderStatusBar(config, { lastEventSummary: `[attach] connecting as ${config.actor}...` }, `[attach] connecting as ${config.actor}...`);
+  connectWs();
+}
+
 async function main() {
   const config = parseArgv(process.argv.slice(2));
+  if (config.interactive) {
+    return mainInteractive();
+  }
   const attachState: {
     currentLine: string;
     eventSeq?: number;
