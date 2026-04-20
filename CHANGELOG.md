@@ -35,6 +35,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `OPERATION_MODE` is now mutable via WebSocket (browser UI control)
  - Added `SSH_MCP_USE_MARKER` env var to disable sentinel markers (default: enabled)
 
+## [2.2.2] - 2026-04-20
+
+### Added
+- **Sentinel echo detection**: New `findSentinelOutput` method distinguishes between command echo and actual sentinel output to prevent false matches
+- **ANSI-aware matching**: Prompt detection and sentinel matching now strip ANSI escape sequences before pattern matching
+
+### Changed
+- **Sentinel stripping logic**: `stripSentinelFromOutput` now filters out lines containing sentinel markers or `__MCP_EC=$?` instead of line-based removal
+- **Buffer tail size**: Increased from 2000 to 4000 characters for more reliable sentinel detection in long outputs
+- **Output reading**: `SSHSession.read` now returns raw buffer with ANSI sequences preserved for downstream processing
+
+### Fixed
+- **False sentinel detection**: Fixed issue where command echo `echo "___MCP_DONE_xxx_$__MCP_EC___"` was incorrectly detected as completion marker
+- **Prompt matching with ANSI**: Shell prompt detection now works correctly even when prompts contain ANSI color codes
+- **Sentinel line removal**: Both occurrences of sentinel markers (command echo and actual output) are now properly removed from command output
+
+### Technical
+- Enhanced `waitForCompletion` logic with improved sentinel detection algorithm
+- Added `findSentinelOutput` method to `SSHSession` class for precise sentinel matching
+- Updated buffer processing to handle ANSI escape sequences at the appropriate stage
+
 ## [2.2.1] - 2026-04-20
 
 ### Added

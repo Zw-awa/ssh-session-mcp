@@ -538,12 +538,13 @@ function createToolResponse(primaryText: string, extraTexts: string[] = []) {
 }
 
 function stripSentinelFromOutput(output: string, sentinelMarker: string): string {
-  const idx = output.indexOf(sentinelMarker);
-  if (idx === -1) return output;
-  const lineStart = output.lastIndexOf('\n', idx);
-  const lineEnd = output.indexOf('\n', idx);
-  return output.slice(0, lineStart === -1 ? 0 : lineStart) +
-         (lineEnd === -1 ? '' : output.slice(lineEnd));
+  // The sentinel marker appears TWICE in the buffer:
+  // 1. In the command echo: `__MCP_EC=$?; echo "___MCP_DONE_xxx_$__MCP_EC___"`
+  // 2. In the actual echo output: `___MCP_DONE_xxx_0___`
+  // We need to remove BOTH occurrences and their surrounding lines.
+  const lines = output.split('\n');
+  const filtered = lines.filter(line => !line.includes(sentinelMarker) && !line.includes('__MCP_EC=$?'));
+  return filtered.join('\n');
 }
 
 function stripCommandEcho(output: string, _command: string): string {

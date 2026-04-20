@@ -528,14 +528,44 @@ export class SSHSession {
     const start = end - Math.min(available, maxChars);
     const sliceStart = start - this.bufferStart;
     const sliceEnd = end - this.bufferStart;
-    return stripAnsi(this.buffer.slice(Math.max(0, sliceStart), sliceEnd));
+    return this.buffer.slice(Math.max(0, sliceStart), sliceEnd);
   }
 
   private matchesPrompt(tail: string, patterns: RegExp[]): boolean {
-    const lines = tail.split('\n').filter(l => l.trim().length > 0);
+    const cleaned = stripAnsi(tail);
+    const lines = cleaned.split('\n').filter(l => l.trim().length > 0);
     if (lines.length === 0) return false;
     const lastLine = lines[lines.length - 1];
     return patterns.some(p => p.test(lastLine));
+  }
+
+  /**
+   * Check if sentinel marker appears in the echo OUTPUT (not the command echo).
+   * The sentinel appears twice in the buffer:
+   * 1. Command echo: `...; echo "___MCP_DONE_xxx_$__MCP_EC___"`  (this is the INPUT echo)
+   * 2. Echo output:  `___MCP_DONE_xxx_0___`  (this is the ACTUAL sentinel)
+   *
+   * We need to match only #2. The key difference: #2 starts at the beginning of a line
+   * (or after a newline) and is NOT preceded by `echo "` on the same line.
+   */
+  private findSentinelOutput(tail: string, sentinel: string): number {
+    const cleaned = stripAnsi(tail);
+    let searchFrom = 0;
+    while (true) {
+      const idx = cleaned.indexOf(sentinel, searchFrom);
+      if (idx === -1) return -1;
+
+      // Check if this occurrence is inside a command echo (has `echo "` before it on the same line)
+      const lineStart = cleaned.lastIndexOf('\n', idx);
+      const lineContent = cleaned.slice(lineStart === -1 ? 0 : lineStart + 1, idx);
+      if (lineContent.includes('echo "') || lineContent.includes("echo '") || lineContent.includes('__MCP_EC=')) {
+        // This is the command echo, skip it
+        searchFrom = idx + sentinel.length;
+        continue;
+      }
+
+      return idx;
+    }
   }
 
   async waitForCompletion(options: {
@@ -557,8 +587,8 @@ export class SSHSession {
 
     // Check if sentinel or prompt already present
     if (this.currentBufferEnd() > startOffset) {
-      const tail = this.getBufferTail(startOffset, 2000);
-      if (sentinel && tail.includes(sentinel)) {
+      const tail = this.getBufferTail(startOffset, 4000);
+      if (sentinel && this.findSentinelOutput(tail, sentinel) !== -1) {
         const exitCode = this.extractExitCode(tail, sentinel);
         return { completed: true, reason: 'sentinel', elapsedMs: Date.now() - startTime, exitCode };
       }
@@ -596,10 +626,10 @@ export class SSHSession {
           return;
         }
 
-        const tail = this.getBufferTail(startOffset, 2000);
+        const tail = this.getBufferTail(startOffset, 4000);
 
-        // Sentinel detection (highest priority)
-        if (sentinel && tail.includes(sentinel)) {
+        // Sentinel detection (highest priority) — only match the echo OUTPUT, not the command echo
+        if (sentinel && this.findSentinelOutput(tail, sentinel) !== -1) {
           const exitCode = this.extractExitCode(tail, sentinel);
           setTimeout(() => finish('sentinel', exitCode), 50);
           return;
