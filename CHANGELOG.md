@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.0] - 2026-04-20
+
+### Added
+- **Bilingual README**: Added `README.zh-CN.md`, and both English/Chinese READMEs now link to each other for easier navigation
+
+### Changed
+- **Architecture direction clarified**: Terminal viewer now defaults to the interactive raw-PTY path, while browser mode remains the richer collaborative control surface
+- **Terminal viewer defaults**: Auto-launched terminal viewer now starts with `--interactive=true`, `--statusBar=false`, and `--helpFooter=false` for a cleaner SSH-like experience
+- **Browser terminal stability**: Improved xterm browser reconnect behavior, line ending handling, scrollback, and auto-scroll behavior
+- **Community docs cleanup**: Updated `CODE_OF_CONDUCT.md` enforcement wording to remove placeholder contact text and make the sentence read naturally
+
+### Deprecated
+- **Legacy polling browser pages**: `/session/*` and `/binding/*` compatibility pages are now marked as pending removal in favor of the newer terminal/browser entry paths
+- **Legacy polling terminal viewer path**: The non-interactive HTTP polling branch in `ssh-session-mcp-view` is now marked as pending removal; the interactive WebSocket attach path is the default
+
 ## [2.2.0] - 2026-04-20
 
 ### Added

@@ -1,5 +1,7 @@
 # ssh-session-mcp
 
+中文文档: [简体中文](README.zh-CN.md)
+
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Node.js Version](https://img.shields.io/badge/node-%3E%3D18-brightgreen)](https://nodejs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.9.2-blue)](https://www.typescriptlang.org/)
@@ -10,6 +12,7 @@ Persistent SSH PTY session manager for MCP clients. Users and AI agents share on
 ## Features
 
 - **Shared SSH Terminal**: One PTY, shared by user and AI, with input lock to prevent conflicts
+- **Terminal / Browser split**: Terminal mode is raw PTY passthrough; browser mode provides richer controls and status UI
 - **xterm.js Browser Terminal**: Real terminal emulator in the browser with WebSocket streaming
 - **Intelligent Command Completion**: Prompt detection + idle timeout + deterministic sentinel markers for reliable output capture
 - **Safety Modes**: Safe/Full operation modes with dangerous command blocking and terminal state awareness
@@ -200,6 +203,18 @@ npm run build     # Compile TypeScript
 npm run test      # Run unit tests
 npm run inspect   # Open MCP inspector
 ```
+
+## Viewer Modes
+
+- **Terminal mode**
+  - Designed to behave like a normal SSH terminal window
+  - Uses raw PTY passthrough and leaves rendering to your local terminal emulator
+  - Best when you want stable scrolling, shell-native behavior, and fewer local UI overlays
+
+- **Browser mode**
+  - Keeps the richer UI layer
+  - Supports lock switching, safe/full mode switching, and more session-oriented controls
+  - Best when user and AI need to observe and coordinate in the same page
 
 ## Security
 

@@ -62,15 +62,15 @@ function parseArgv(argv: string[]): ViewerCliConfig {
     binding: '',
     exitOnClosed: true,
     exitOnUnavailableMs: 3000,
-    helpFooter: true,
+    helpFooter: false,
     host: '127.0.0.1',
-    interactive: false,
+    interactive: true,
     intervalMs: 250,
     leftChars: 12000,
     port: 8765,
     rightEvents: 80,
     session: '',
-    statusBar: true,
+    statusBar: false,
     syncWindowSize: true,
   };
 
@@ -563,6 +563,9 @@ async function main() {
   if (config.interactive) {
     return mainInteractive();
   }
+
+  // PREPARE_DEPRECATION: Legacy HTTP polling viewer path retained as a compatibility fallback.
+  // Default terminal attach should stay on mainInteractive() with WebSocket + raw PTY passthrough.
   const attachState: {
     currentLine: string;
     eventSeq?: number;

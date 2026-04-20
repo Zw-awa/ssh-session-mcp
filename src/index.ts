@@ -229,6 +229,8 @@ function buildViewerBindingUrl(bindingKey: string) {
     return undefined;
   }
 
+  // PREPARE_DEPRECATION: This still returns the legacy /binding/* browser entry for compatibility.
+  // New code that wants the primary browser terminal should move toward /terminal/binding/*.
   return `${baseUrl}/binding/${encodeURIComponent(bindingKey)}`;
 }
 
@@ -913,6 +915,9 @@ async function launchTerminalViewer(binding: ViewerBindingState) {
     `'--host=${escapePowerShellText(viewerHostForUrl(DEFAULT_VIEWER_HOST))}'`,
     `'--port=${DEFAULT_VIEWER_PORT}'`,
     `'--intervalMs=${DEFAULT_VIEWER_REFRESH_MS}'`,
+    '\'--interactive=true\'',
+    '\'--statusBar=false\'',
+    '\'--helpFooter=false\'',
   ].join(' ');
   const innerCommand = `$Host.UI.RawUI.WindowTitle = '${escapePowerShellText(title)}'; & '${escapePowerShellText(process.execPath)}' ${viewerArgs}`;
   const script = [
@@ -1178,6 +1183,7 @@ function renderViewerHomePage() {
         }
         
         return sessionList.map(session => {
+          // PREPARE_DEPRECATION: Session View / Binding View keep old polling pages reachable during transition.
           const sessionUrl = `${baseUrl}/session/${encodeURIComponent(session.sessionId)}`;
           const terminalUrl = `${baseUrl}/terminal/session/${encodeURIComponent(session.sessionId)}`;
           const bindingKey = buildViewerBindingKeyForSession(session as any, 'connection');
@@ -1312,6 +1318,8 @@ function renderViewerErrorPage(options: {
 </html>`;
 }
 
+// PREPARE_DEPRECATION: Legacy browser attach page based on HTTP polling + normalized text rendering.
+// Keep it for compatibility with older links for now; preferred browser entrypoints are the xterm-based /terminal/* routes.
 function renderInteractiveAttachPage(options: {
   actor: string;
   attachPath: string;
@@ -1890,6 +1898,7 @@ function renderInteractiveAttachPage(options: {
 </html>`;
 }
 
+// PREPARE_DEPRECATION: Compatibility wrapper for the legacy /session/* browser page.
 function renderViewerSessionPage(sessionRef: string) {
   const baseUrl = getViewerBaseUrl() || '';
   const session = sessions.get(sessionRef) || [...sessions.values()].find(s => s.sessionName === sessionRef);
@@ -1917,6 +1926,7 @@ function renderViewerSessionPage(sessionRef: string) {
   });
 }
 
+// PREPARE_DEPRECATION: Compatibility wrapper for the legacy /binding/* browser page.
 function renderViewerBindingPage(bindingKey: string) {
   const baseUrl = getViewerBaseUrl() || '';
   const binding = viewerBindings.get(bindingKey);
@@ -2198,8 +2208,10 @@ function renderXtermTerminalPage(options: {
     var wsPath = ${JSON.stringify(wsPath)};
     var terminal = new window.Terminal({
       cursorBlink: true,
+      convertEol: true,
       fontSize: 14,
       fontFamily: 'Consolas, "SFMono-Regular", "Courier New", monospace',
+      scrollback: 10000,
       theme: {
         background: '#0d1117',
         foreground: '#e6edf3',
@@ -2221,9 +2233,11 @@ function renderXtermTerminalPage(options: {
     var ws = null;
     var currentLine = '';
     var reconnectTimer = null;
-    var knownRawEnd = 0;
+    var knownRawChars = 0;
     var isFirstConnect = true;
     var currentLock = 'none';
+    var scrollTimer = null;
+    var offsetDecoder = null;
 
     function getActor() { var v = actorSelect.value; return (v && v !== 'common') ? v : 'user'; }
 
@@ -2256,6 +2270,14 @@ function renderXtermTerminalPage(options: {
       statusBar.className = 'status-bar' + (theme ? ' ' + theme : '');
     }
 
+    function scheduleScrollToBottom() {
+      if (scrollTimer !== null) return;
+      scrollTimer = window.requestAnimationFrame(function() {
+        scrollTimer = null;
+        terminal.scrollToBottom();
+      });
+    }
+
     function eventTheme(event) {
       if (!event) return '';
       if (event.actor === 'user') return 'user';
@@ -2275,10 +2297,11 @@ function renderXtermTerminalPage(options: {
     function connect() {
       if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
       if (ws) { try { ws.onclose = null; ws.close(); } catch(e) {} ws = null; }
+      offsetDecoder = new window.TextDecoder('utf-8');
       var loc = window.location;
       var wsUrl = (loc.protocol === 'https:' ? 'wss:' : 'ws:') + '//' + loc.host + wsPath;
-      if (!isFirstConnect && knownRawEnd > 0) {
-        wsUrl += (wsUrl.indexOf('?') === -1 ? '?' : '&') + 'rawOffset=' + knownRawEnd;
+      if (!isFirstConnect && knownRawChars > 0) {
+        wsUrl += (wsUrl.indexOf('?') === -1 ? '?' : '&') + 'rawOffset=' + knownRawChars;
       }
       ws = new WebSocket(wsUrl);
       ws.binaryType = 'arraybuffer';
@@ -2288,12 +2311,18 @@ function renderXtermTerminalPage(options: {
         if (isFirstConnect) { isFirstConnect = false; }
         currentLine = '';
         setStatus('Connected as ' + getActor(), '');
+        scheduleScrollToBottom();
       };
 
       ws.onmessage = function(evt) {
         if (evt.data instanceof ArrayBuffer) {
-          terminal.write(new Uint8Array(evt.data));
-          knownRawEnd += evt.data.byteLength;
+          var chunk = new Uint8Array(evt.data);
+          terminal.write(chunk, function() {
+            scheduleScrollToBottom();
+          });
+          if (offsetDecoder) {
+            knownRawChars += offsetDecoder.decode(chunk, { stream: true }).length;
+          }
           return;
         }
         try {
@@ -2302,10 +2331,8 @@ function renderXtermTerminalPage(options: {
             var s = msg.summary;
             headerTitle.textContent = (s.sessionName || s.sessionId || 'SSH') + ' ' + s.user + '@' + s.host + ':' + s.port;
             document.title = headerTitle.textContent + ' \\u2022 SSH Terminal';
-            if (typeof msg.rawBufferEnd === 'number' && knownRawEnd === 0) {
-              knownRawEnd = msg.rawBufferEnd;
-            }
             if (s.inputLock) { updateLockUI(s.inputLock); }
+            scheduleScrollToBottom();
           }
           if (msg.type === 'event') {
             var time = String(msg.at || '').slice(11, 19);
@@ -2372,10 +2399,12 @@ function renderXtermTerminalPage(options: {
 
     window.addEventListener('resize', function() {
       fitAddon.fit();
+      scheduleScrollToBottom();
     });
 
     terminal.onResize(function(size) {
       sendJson({ type: 'resize', cols: size.cols, rows: size.rows });
+      scheduleScrollToBottom();
     });
 
     actorSelect.addEventListener('change', function() {
@@ -2413,6 +2442,7 @@ function renderXtermTerminalPage(options: {
 
     connect();
     terminal.focus();
+    scheduleScrollToBottom();
   })();
   </script>
 </body>
@@ -2720,6 +2750,8 @@ async function startViewerServer() {
         return;
       }
 
+      // PREPARE_DEPRECATION: Keep legacy polling browser routes reachable during migration.
+      // New browser entrypoints should prefer /terminal/session/* and /terminal/binding/*.
       if (url.pathname.startsWith('/session/')) {
         const sessionRef = decodeURIComponent(url.pathname.slice('/session/'.length));
         writeHtml(200, renderViewerSessionPage(sessionRef));
