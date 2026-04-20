@@ -29,10 +29,19 @@ import {
 import {
   SSHConnection,
   SSHSession,
+  DEFAULT_PROMPT_PATTERNS,
   type SSHConfig,
   type SessionTuning,
   type SessionWriteRecord,
+  type CompletionResult,
 } from './session.js';
+
+import {
+  type OperationMode,
+  validateCommand,
+  detectTerminalMode,
+  isKnownSlowCommand,
+} from './validation.js';
 
 function loadDotEnv() {
   try {
@@ -102,6 +111,7 @@ const DEFAULT_VIEWER_PORT = argvConfig.viewerPort ? parseInt(argvConfig.viewerPo
 const DEFAULT_VIEWER_REFRESH_MS = argvConfig.viewerRefreshMs ? parseInt(argvConfig.viewerRefreshMs, 10) : 1000;
 const SSH_CONNECT_TIMEOUT_MS = 30000;
 const AUTO_OPEN_TERMINAL = argvConfig.autoOpenTerminal === 'true' || argvConfig.autoOpenTerminal === '1' || process.env.AUTO_OPEN_TERMINAL === 'true' || process.env.AUTO_OPEN_TERMINAL === '1';
+const OPERATION_MODE: OperationMode = (argvConfig.mode || process.env.SSH_MCP_MODE || 'safe') as OperationMode;
 const VIEWER_STATE_FILE = new URL('../.viewer-processes.json', import.meta.url);
 const VIEWER_CLI_ENTRY_PATH = fileURLToPath(new URL('./viewer-cli.js', import.meta.url));
 
@@ -369,6 +379,45 @@ const tuning: SessionTuning = {
 
 const sessions = new Map<string, SSHSession>();
 
+// --- Async command tracking (Phase D) ---
+
+interface RunningCommand {
+  commandId: string;
+  sessionId: string;
+  command: string;
+  startOffset: number;
+  startTime: number;
+  status: 'running' | 'completed' | 'interrupted';
+  output?: string;
+  completedAt?: number;
+  completionReason?: 'prompt' | 'idle' | 'timeout';
+}
+
+const runningCommands = new Map<string, RunningCommand>();
+
+function startBackgroundMonitor(entry: RunningCommand, session: SSHSession): void {
+  session.waitForCompletion({
+    startOffset: entry.startOffset,
+    maxWaitMs: 5 * 60 * 1000,
+    idleMs: 3000,
+    promptPatterns: DEFAULT_PROMPT_PATTERNS,
+  }).then((result) => {
+    const stored = runningCommands.get(entry.commandId);
+    if (!stored || stored.status !== 'running') return;
+    const snapshot = session.read(entry.startOffset, 32000);
+    stored.status = 'completed';
+    stored.output = snapshot.output;
+    stored.completedAt = Date.now();
+    stored.completionReason = result.reason;
+  }).catch(() => {
+    const stored = runningCommands.get(entry.commandId);
+    if (stored && stored.status === 'running') {
+      stored.status = 'interrupted';
+      stored.completedAt = Date.now();
+    }
+  });
+}
+
 function sweepSessions(nowMs = Date.now()) {
   for (const [sessionId, session] of sessions.entries()) {
     if (session.shouldCloseForIdle(nowMs)) {
@@ -378,6 +427,17 @@ function sweepSessions(nowMs = Date.now()) {
 
     if (session.shouldPrune(nowMs)) {
       sessions.delete(sessionId);
+    }
+  }
+
+  // Clean up stale running commands
+  for (const [cmdId, entry] of runningCommands.entries()) {
+    if (!sessions.has(entry.sessionId)) {
+      runningCommands.delete(cmdId);
+      continue;
+    }
+    if (entry.status !== 'running' && entry.completedAt && nowMs - entry.completedAt > 10 * 60 * 1000) {
+      runningCommands.delete(cmdId);
     }
   }
 }
@@ -3254,14 +3314,15 @@ server.tool(
 
 server.tool(
   'ssh-run',
-  'Execute a command in the SSH session and return the output. This is the primary tool for AI agents to interact with the remote machine. Appends newline automatically. Automatically acquires agent lock before sending and releases after reading output.',
+  'Execute a command in the SSH session and return the output. Uses intelligent completion detection (prompt matching + idle timeout). In safe mode, dangerous/interactive commands are blocked. Long-running commands automatically transition to async mode.',
   {
     command: z.string().describe('Shell command to execute'),
     session: z.string().optional().describe('Session name or id. Defaults to "default"'),
-    waitMs: z.number().int().nonnegative().optional().describe('How long to wait for output after sending the command (default 2000ms)'),
+    waitMs: z.number().int().nonnegative().optional().describe('Maximum wait time in ms (default 30000). Command may return earlier if prompt detected or idle timeout reached.'),
+    idleMs: z.number().int().positive().optional().describe('Idle timeout in ms - if no new output for this duration, consider command done (default 2000)'),
     maxChars: z.number().int().positive().optional().describe('Max chars to read from output (default 16000). When output exceeds this limit, head (30%) and tail (70%) are returned with the middle omitted.'),
   },
-  async ({ command, session, waitMs, maxChars }) => {
+  async ({ command, session, waitMs, idleMs, maxChars }) => {
     sweepSessions();
     const ref = sanitizeOptionalText(session) || 'default';
     const target = resolveSession(ref);
@@ -3274,47 +3335,119 @@ server.tool(
       }, null, 2));
     }
 
+    // Command validation
+    const validation = validateCommand(command, OPERATION_MODE);
+    if (!validation.allowed) {
+      return createToolResponse(JSON.stringify({
+        error: 'COMMAND_BLOCKED',
+        category: validation.category,
+        message: validation.message,
+        suggestion: validation.suggestion,
+        operationMode: OPERATION_MODE,
+      }, null, 2));
+    }
+
+    // Terminal mode check
+    const bufferTail = target.buffer.slice(-2000);
+    const terminalMode = detectTerminalMode(bufferTail);
+    if (OPERATION_MODE === 'safe' && (terminalMode === 'editor' || terminalMode === 'pager' || terminalMode === 'password_prompt')) {
+      return createToolResponse(JSON.stringify({
+        error: 'WRONG_TERMINAL_MODE',
+        terminalMode,
+        message: `Terminal is in ${terminalMode} mode. Cannot execute commands in this state.`,
+        suggestion: terminalMode === 'editor' ? 'Send ctrl_c or ctrl_d via ssh-session-control to exit the editor first.'
+          : terminalMode === 'pager' ? 'Send "q" via ssh-session-control to exit the pager first.'
+          : 'The terminal is waiting for a password. Ask the user to handle this in the browser terminal.',
+        operationMode: OPERATION_MODE,
+      }, null, 2));
+    }
+
     // Acquire agent lock
     target.inputLock = 'agent';
     broadcastLock(target);
 
-    const resolvedWaitMs = sanitizeNonNegativeInt(waitMs, 'waitMs', 2000);
+    const resolvedWaitMs = sanitizeNonNegativeInt(waitMs, 'waitMs', 30000);
+    const resolvedIdleMs = sanitizePositiveInt(idleMs, 'idleMs', 2000);
     const resolvedMaxChars = sanitizePositiveInt(maxChars, 'maxChars', 16000);
+    const immediateAsync = isKnownSlowCommand(command);
 
     const beforeOffset = target.currentBufferEnd();
     target.write(`${command}\n`, 'agent');
 
-    if (resolvedWaitMs > 0) {
-      const waitStart = Date.now();
-
-      // Phase 1: Wait for first output change (usually just the command echo)
-      await target.waitForChange({ outputOffset: beforeOffset, waitMs: resolvedWaitMs });
-
-      // Phase 2: Use remaining time to wait for actual command output
-      const elapsed = Date.now() - waitStart;
-      const remaining = resolvedWaitMs - elapsed;
-      if (remaining > 100) {
-        const afterEcho = target.currentBufferEnd();
-        await target.waitForChange({ outputOffset: afterEcho, waitMs: remaining });
-      }
-
-      // Grace period for trailing output flush
-      const graceMs = Math.min(300, Math.max(0, resolvedWaitMs - (Date.now() - waitStart)));
-      if (graceMs > 0) await delay(graceMs);
+    // Wait for command completion using intelligent detection
+    let completion: CompletionResult;
+    if (immediateAsync) {
+      // Known slow command: short wait just to capture initial output
+      completion = await target.waitForCompletion({
+        startOffset: beforeOffset,
+        maxWaitMs: 3000,
+        idleMs: resolvedIdleMs,
+        promptPatterns: DEFAULT_PROMPT_PATTERNS,
+      });
+    } else if (resolvedWaitMs > 0) {
+      completion = await target.waitForCompletion({
+        startOffset: beforeOffset,
+        maxWaitMs: resolvedWaitMs,
+        idleMs: resolvedIdleMs,
+        promptPatterns: DEFAULT_PROMPT_PATTERNS,
+      });
+    } else {
+      completion = { completed: false, reason: 'timeout', elapsedMs: 0 };
     }
 
+    // Async transition for long-running commands
+    if (completion.reason === 'timeout' || (immediateAsync && !completion.completed)) {
+      const commandId = randomUUID();
+      const entry: RunningCommand = {
+        commandId,
+        sessionId: target.sessionId,
+        command,
+        startOffset: beforeOffset,
+        startTime: Date.now(),
+        status: 'running',
+      };
+      runningCommands.set(commandId, entry);
+
+      // Release lock
+      target.inputLock = 'none';
+      broadcastLock(target);
+
+      // Start background monitor
+      startBackgroundMonitor(entry, target);
+
+      const partialSnapshot = target.read(beforeOffset, resolvedMaxChars);
+      return createToolResponse(JSON.stringify({
+        command,
+        async: true,
+        commandId,
+        status: 'running',
+        elapsedMs: completion.elapsedMs,
+        sessionName: target.sessionName,
+        host: target.host,
+        terminalMode,
+        operationMode: OPERATION_MODE,
+        warning: validation.category !== 'safe' ? validation.message : undefined,
+        hint: `Command is still running. Use ssh-command-status with commandId="${commandId}" to check progress.`,
+      }, null, 2), [partialSnapshot.output.length > 0 ? partialSnapshot.output : '(no output yet)']);
+    }
+
+    // Command completed - read output
     const snapshot = target.read(beforeOffset, resolvedMaxChars);
 
-    // Release lock (subsequent reads are stateless buffer operations)
+    // Release lock
     target.inputLock = 'none';
     broadcastLock(target);
 
     if (!snapshot.truncatedAfter) {
-      // Output fits within maxChars -- return as-is
       return createToolResponse(JSON.stringify({
         command,
         sessionName: target.sessionName,
         host: target.host,
+        completionReason: completion.reason,
+        elapsedMs: completion.elapsedMs,
+        terminalMode,
+        operationMode: OPERATION_MODE,
+        warning: validation.category !== 'safe' ? validation.message : undefined,
         exitHint: 'Check output for command result. Use ssh-run again for next command.',
       }, null, 2), [snapshot.output.length > 0 ? snapshot.output : '(no output yet)']);
     }
@@ -3329,12 +3462,15 @@ server.tool(
     const headSnapshot = target.read(beforeOffset, headChars);
     const tailSnapshot = target.read(undefined, tailChars);
 
-    // If tail overlaps head, no real gap -- return the original full read
     if (tailSnapshot.effectiveOffset <= headSnapshot.nextOffset) {
       return createToolResponse(JSON.stringify({
         command,
         sessionName: target.sessionName,
         host: target.host,
+        completionReason: completion.reason,
+        elapsedMs: completion.elapsedMs,
+        terminalMode,
+        operationMode: OPERATION_MODE,
         exitHint: 'Check output for command result. Use ssh-run again for next command.',
       }, null, 2), [snapshot.output.length > 0 ? snapshot.output : '(no output yet)']);
     }
@@ -3354,6 +3490,10 @@ server.tool(
       outputTruncated: true,
       totalOutputChars,
       omittedRange: { start: omittedStart, end: omittedEnd, chars: omittedChars },
+      completionReason: completion.reason,
+      elapsedMs: completion.elapsedMs,
+      terminalMode,
+      operationMode: OPERATION_MODE,
       exitHint: `Output was truncated (${totalOutputChars} total chars). Head and tail are shown. Use ssh-session-read with offset=${omittedStart} to read the omitted middle section.`,
     }, null, 2), [combinedOutput]);
   },
@@ -3374,16 +3514,77 @@ server.tool(
         ? `http://${viewerHostForUrl(DEFAULT_VIEWER_HOST)}:${DEFAULT_VIEWER_PORT}/terminal/session/${encodeURIComponent(s.sessionId)}`
         : undefined,
       idleMinutes: Math.round((Date.now() - Date.parse(s.lastActivityAt)) / 60000),
+      terminalMode: detectTerminalMode(s.buffer.slice(-2000)),
     }));
 
     return createToolResponse(JSON.stringify({
       activeSessions: active.length,
       sessions: active,
       viewerBaseUrl: getViewerBaseUrl(),
+      operationMode: OPERATION_MODE,
       hint: active.length === 0
         ? 'No active sessions. Use ssh-quick-connect to start one.'
         : 'Sessions are running. Use ssh-run to execute commands.',
     }, null, 2));
+  },
+);
+
+// --- ssh-command-status tool ---
+
+server.tool(
+  'ssh-command-status',
+  'Check the status of a long-running async command. Returns current output if completed, or partial output if still running.',
+  {
+    commandId: z.string().describe('The async command ID returned by ssh-run'),
+    maxChars: z.number().int().positive().optional().describe('Max chars to read from output (default 16000)'),
+  },
+  async ({ commandId, maxChars }) => {
+    const entry = runningCommands.get(commandId);
+    if (!entry) {
+      return createToolResponse(JSON.stringify({
+        error: 'UNKNOWN_COMMAND',
+        message: `No tracked command with id "${commandId}". It may have been cleaned up or already retrieved.`,
+      }, null, 2));
+    }
+
+    const resolvedMaxChars = sanitizePositiveInt(maxChars, 'maxChars', 16000);
+
+    if (entry.status === 'completed' || entry.status === 'interrupted') {
+      const output = entry.output || '';
+      runningCommands.delete(commandId);
+      return createToolResponse(JSON.stringify({
+        commandId,
+        command: entry.command,
+        status: entry.status,
+        completionReason: entry.completionReason,
+        elapsedMs: (entry.completedAt || Date.now()) - entry.startTime,
+        hint: 'Command has finished. Output is included below.',
+      }, null, 2), [output.length > 0 ? output : '(no output captured)']);
+    }
+
+    // Still running - read current partial output from session
+    const session = sessions.get(entry.sessionId);
+    if (!session) {
+      entry.status = 'interrupted';
+      entry.completedAt = Date.now();
+      runningCommands.delete(commandId);
+      return createToolResponse(JSON.stringify({
+        commandId,
+        command: entry.command,
+        status: 'interrupted',
+        message: 'Session no longer exists.',
+        elapsedMs: Date.now() - entry.startTime,
+      }, null, 2));
+    }
+
+    const snapshot = session.read(entry.startOffset, resolvedMaxChars);
+    return createToolResponse(JSON.stringify({
+      commandId,
+      command: entry.command,
+      status: 'running',
+      elapsedMs: Date.now() - entry.startTime,
+      hint: 'Command is still running. Call ssh-command-status again later to check. Partial output is included below.',
+    }, null, 2), [snapshot.output.length > 0 ? snapshot.output : '(no output yet)']);
   },
 );
 

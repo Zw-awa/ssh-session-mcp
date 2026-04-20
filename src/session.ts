@@ -8,6 +8,7 @@ import {
   normalizeTerminalInput,
   nowIso,
   optionalIso,
+  stripAnsi,
   type BufferSnapshot,
   type ControlKey,
   type EventSnapshot,
@@ -177,6 +178,7 @@ export class SSHSession {
   private readonly waiters = new Set<ChangeWaiter>();
   private readonly rawOutputListeners = new Set<(chunk: Buffer) => void>();
   private readonly eventListeners = new Set<(event: TranscriptEvent) => void>();
+  private readonly outputNotifyListeners = new Set<() => void>();
   private lastActivityMs = Date.now();
 
   constructor(
@@ -319,6 +321,10 @@ export class SSHSession {
       try { listener(buf); } catch { /* ignore */ }
     }
 
+    for (const listener of this.outputNotifyListeners) {
+      try { listener(); } catch { /* ignore */ }
+    }
+
     this.pushEvent('output', text, undefined, nowIso(), true);
   }
 
@@ -458,6 +464,11 @@ export class SSHSession {
 
     this.connection.close();
     this.flushWaiters();
+
+    // Notify output listeners so waitForCompletion resolves on session close
+    for (const listener of this.outputNotifyListeners) {
+      try { listener(); } catch { /* ignore */ }
+    }
   }
 
   close(reason = 'closed by client') {
@@ -499,4 +510,119 @@ export class SSHSession {
       inputLock: this.inputLock,
     };
   }
+
+  // --- waitForCompletion ---
+
+  addOutputNotifyListener(fn: () => void): void {
+    this.outputNotifyListeners.add(fn);
+  }
+
+  removeOutputNotifyListener(fn: () => void): void {
+    this.outputNotifyListeners.delete(fn);
+  }
+
+  private getBufferTail(fromOffset: number, maxChars: number): string {
+    const end = this.currentBufferEnd();
+    if (end <= fromOffset) return '';
+    const available = end - fromOffset;
+    const start = end - Math.min(available, maxChars);
+    const sliceStart = start - this.bufferStart;
+    const sliceEnd = end - this.bufferStart;
+    return stripAnsi(this.buffer.slice(Math.max(0, sliceStart), sliceEnd));
+  }
+
+  private matchesPrompt(tail: string, patterns: RegExp[]): boolean {
+    const lines = tail.split('\n').filter(l => l.trim().length > 0);
+    if (lines.length === 0) return false;
+    const lastLine = lines[lines.length - 1];
+    return patterns.some(p => p.test(lastLine));
+  }
+
+  async waitForCompletion(options: {
+    startOffset: number;
+    maxWaitMs: number;
+    idleMs?: number;
+    promptPatterns?: RegExp[];
+  }): Promise<CompletionResult> {
+    const { startOffset, maxWaitMs } = options;
+    const idleMs = options.idleMs ?? 2000;
+    const promptPatterns = options.promptPatterns ?? DEFAULT_PROMPT_PATTERNS;
+    const startTime = Date.now();
+
+    // Already closed
+    if (this.closed) {
+      return { completed: true, reason: 'idle', elapsedMs: Date.now() - startTime };
+    }
+
+    // Check if prompt already present
+    if (this.currentBufferEnd() > startOffset) {
+      const tail = this.getBufferTail(startOffset, 500);
+      if (this.matchesPrompt(tail, promptPatterns)) {
+        return { completed: true, reason: 'prompt', elapsedMs: Date.now() - startTime };
+      }
+    }
+
+    return new Promise<CompletionResult>((resolve) => {
+      let idleTimer: NodeJS.Timeout | null = null;
+      let resolved = false;
+
+      const finish = (reason: CompletionResult['reason']) => {
+        if (resolved) return;
+        resolved = true;
+        if (idleTimer) clearTimeout(idleTimer);
+        clearTimeout(maxTimer);
+        this.outputNotifyListeners.delete(onOutput);
+        resolve({ completed: reason !== 'timeout', reason, elapsedMs: Date.now() - startTime });
+      };
+
+      const maxTimer = setTimeout(() => finish('timeout'), maxWaitMs);
+
+      const resetIdleTimer = () => {
+        if (idleTimer) clearTimeout(idleTimer);
+        idleTimer = setTimeout(() => finish('idle'), idleMs);
+      };
+
+      const onOutput = () => {
+        if (resolved) return;
+
+        // Session closed
+        if (this.closed) {
+          finish('idle');
+          return;
+        }
+
+        // Check prompt
+        const tail = this.getBufferTail(startOffset, 500);
+        if (this.matchesPrompt(tail, promptPatterns)) {
+          // Small delay to let trailing output flush
+          setTimeout(() => finish('prompt'), 50);
+          return;
+        }
+
+        resetIdleTimer();
+      };
+
+      this.outputNotifyListeners.add(onOutput);
+
+      // If output already arrived, check immediately
+      if (this.currentBufferEnd() > startOffset) {
+        onOutput();
+      }
+    });
+  }
 }
+
+// --- Exported types and constants for waitForCompletion ---
+
+export interface CompletionResult {
+  completed: boolean;
+  reason: 'prompt' | 'idle' | 'timeout';
+  elapsedMs: number;
+}
+
+export const DEFAULT_PROMPT_PATTERNS: RegExp[] = [
+  /[$#%>]\s*$/,
+  /\w+@[\w.-]+[:#~].*[$#%>]\s*$/,
+  /\(.*\)\s*[$#%>]\s*$/,
+  /^\[\w+@[\w.-]+\s+[^\]]*\][$#%>]\s*$/,
+];

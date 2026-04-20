@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.0] - 2026-04-19
+
+### Added
+- **Intelligent command completion detection**: `ssh-run` now uses prompt pattern matching and idle timeout to detect when commands finish, replacing fixed wait times
+- **Async command tracking**: Long-running commands automatically transition to async mode with `ssh-command-status` tool for progress checking
+- **Command validation and safety modes**: New `SSH_MCP_MODE` environment variable (`safe` or `full`) with blocked command detection for dangerous/interactive operations
+- **Terminal mode detection**: Automatic detection of shell, editor, pager, and password prompt states to prevent command execution in wrong contexts
+- **New tool**: `ssh-command-status` - check status and output of async commands
+
+### Changed
+- **`ssh-run` overhaul**: Complete rewrite with intelligent completion detection, async support, and safety checks
+- **Default wait time**: Increased from 2000ms to 30000ms with smarter early completion
+- **Operation mode**: New `SSH_MCP_MODE` environment variable (default: `safe`)
+- **Session info**: `ssh-status` now includes terminal mode detection
+
+### Technical
+- **New module**: `src/validation.ts` for command validation and terminal mode detection
+- **Enhanced session class**: Added `waitForCompletion` method with prompt matching
+- **Async tracking**: Background monitoring for long-running commands
+- **Safety patterns**: Regex-based detection of dangerous, interactive, and streaming commands
+
 ## [2.0.2] - 2026-04-19
 
 ### Added
