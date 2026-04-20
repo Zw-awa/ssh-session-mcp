@@ -542,23 +542,22 @@ export class SSHSession {
   /**
    * Check if sentinel marker appears in the echo OUTPUT (not the command echo).
    * The sentinel appears twice in the buffer:
-   * 1. Command echo: `...; echo "___MCP_DONE_xxx_$__MCP_EC___"`  (this is the INPUT echo)
+   * 1. Command echo: `...; printf "%s%s___\n" "___MCP_DONE_xxx_" "${__MCP_EC}"` (this is the INPUT echo)
    * 2. Echo output:  `___MCP_DONE_xxx_0___`  (this is the ACTUAL sentinel)
    *
    * We need to match only #2. The key difference: #2 starts at the beginning of a line
-   * (or after a newline) and is NOT preceded by `echo "` on the same line.
+   * (or after a newline) and is NOT preceded by the injected trailer on the same line.
    */
-  private findSentinelOutput(tail: string, sentinel: string): number {
-    const cleaned = stripAnsi(tail);
+  private findSentinelOutputInCleanTail(cleaned: string, sentinel: string): number {
     let searchFrom = 0;
     while (true) {
       const idx = cleaned.indexOf(sentinel, searchFrom);
       if (idx === -1) return -1;
 
-      // Check if this occurrence is inside a command echo (has `echo "` before it on the same line)
+      // Check if this occurrence is inside the command echo/trailer rather than the emitted sentinel line.
       const lineStart = cleaned.lastIndexOf('\n', idx);
       const lineContent = cleaned.slice(lineStart === -1 ? 0 : lineStart + 1, idx);
-      if (lineContent.includes('echo "') || lineContent.includes("echo '") || lineContent.includes('__MCP_EC=')) {
+      if (lineContent.includes('__MCP_EC=') || lineContent.includes('printf ')) {
         // This is the command echo, skip it
         searchFrom = idx + sentinel.length;
         continue;
@@ -566,6 +565,10 @@ export class SSHSession {
 
       return idx;
     }
+  }
+
+  private findSentinelOutput(tail: string, sentinel: string): number {
+    return this.findSentinelOutputInCleanTail(stripAnsi(tail), sentinel);
   }
 
   async waitForCompletion(options: {
@@ -655,10 +658,11 @@ export class SSHSession {
   }
 
   private extractExitCode(tail: string, sentinel: string): number | undefined {
-    const idx = tail.indexOf(sentinel);
+    const cleaned = stripAnsi(tail);
+    const idx = this.findSentinelOutputInCleanTail(cleaned, sentinel);
     if (idx === -1) return undefined;
     // Sentinel format: ___MCP_DONE_<uuid>_<exitcode>___
-    const afterSentinel = tail.slice(idx + sentinel.length);
+    const afterSentinel = cleaned.slice(idx + sentinel.length);
     const match = afterSentinel.match(/^(\d+)___/);
     return match ? parseInt(match[1], 10) : undefined;
   }

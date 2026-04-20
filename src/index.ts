@@ -539,14 +539,29 @@ function createToolResponse(primaryText: string, extraTexts: string[] = []) {
   };
 }
 
-function stripSentinelFromOutput(output: string, sentinelMarker: string): string {
-  // The sentinel marker appears TWICE in the buffer:
-  // 1. In the command echo: `__MCP_EC=$?; echo "___MCP_DONE_xxx_$__MCP_EC___"`
-  // 2. In the actual echo output: `___MCP_DONE_xxx_0___`
-  // We need to remove BOTH occurrences and their surrounding lines.
-  const lines = output.split('\n');
-  const filtered = lines.filter(line => !line.includes(sentinelMarker) && !line.includes('__MCP_EC=$?'));
-  return filtered.join('\n');
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function buildSentinelCommandSuffix(sentinelMarker: string): string {
+  // Use braces so the shell expands __MCP_EC rather than looking up __MCP_EC___.
+  return `; __MCP_EC=$?; printf "%s%s___\\n" "${sentinelMarker}" "\${__MCP_EC}"`;
+}
+
+function stripSentinelFromOutput(output: string, sentinelMarker: string, sentinelSuffix?: string): string {
+  let cleaned = output;
+
+  // Remove only the injected command suffix from the echoed command, not the whole line.
+  if (sentinelSuffix) {
+    cleaned = cleaned.replaceAll(sentinelSuffix, '');
+  }
+
+  // Remove the actual sentinel output token. Keep everything else untouched even if PTY output
+  // is packed into a single \r-delimited line, otherwise we can accidentally drop real logs.
+  const sentinelPattern = new RegExp(`${escapeRegExp(sentinelMarker)}(?:\\d+___)?`, 'g');
+  cleaned = cleaned.replace(sentinelPattern, '');
+
+  return cleaned;
 }
 
 function stripCommandEcho(output: string, _command: string): string {
@@ -3514,9 +3529,10 @@ server.tool(
     const useMarker = USE_SENTINEL_MARKER && !immediateAsync && validation.category !== 'interactive';
 
     const beforeOffset = target.currentBufferEnd();
+    const sentinelSuffix = useMarker ? buildSentinelCommandSuffix(sentinelMarker) : undefined;
     if (useMarker) {
       // Use __MCP_EC to capture exit code reliably even with pipes
-      target.write(`${command}; __MCP_EC=$?; echo "${sentinelMarker}$__MCP_EC___"\n`, 'agent');
+      target.write(`${command}${sentinelSuffix}\n`, 'agent');
     } else {
       target.write(`${command}\n`, 'agent');
     }
@@ -3586,7 +3602,7 @@ server.tool(
     outputText = stripAnsi(outputText);
     outputText = stripCommandEcho(outputText, command);
     if (useMarker) {
-      outputText = stripSentinelFromOutput(outputText, sentinelMarker);
+      outputText = stripSentinelFromOutput(outputText, sentinelMarker, sentinelSuffix);
     }
 
     // Post-execution terminal mode check: detect password prompt
@@ -3844,8 +3860,10 @@ server.tool(
       const sentinelMarker = `___MCP_DONE_${sentinelId}_`;
       const beforeOffset = target.currentBufferEnd();
 
+      const sentinelSuffix = USE_SENTINEL_MARKER ? buildSentinelCommandSuffix(sentinelMarker) : undefined;
+
       if (USE_SENTINEL_MARKER) {
-        target.write(`${command}; __MCP_EC=$?; echo "${sentinelMarker}$__MCP_EC___"\n`, 'agent');
+        target.write(`${command}${sentinelSuffix}\n`, 'agent');
       } else {
         target.write(`${command}\n`, 'agent');
       }
@@ -3866,7 +3884,7 @@ server.tool(
       output = stripAnsi(output);
       output = stripCommandEcho(output, command);
       if (USE_SENTINEL_MARKER) {
-        output = stripSentinelFromOutput(output, sentinelMarker);
+        output = stripSentinelFromOutput(output, sentinelMarker, sentinelSuffix);
       }
 
       lastOutput = output;
@@ -3978,7 +3996,7 @@ if (isCliEnabled) {
   });
 }
 
-export { parseArgv, validateConfig };
+export { buildSentinelCommandSuffix, parseArgv, stripSentinelFromOutput, validateConfig };
 export {
   createBufferSnapshot,
   createEventSnapshot,

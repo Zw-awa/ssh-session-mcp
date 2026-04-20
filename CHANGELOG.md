@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.1] - 2026-04-20
+
+### Fixed
+- **Sentinel exit code expansion**: Fixed the injected shell trailer so `${__MCP_EC}` is expanded correctly, restoring reliable exit code capture for `ssh-run` and `ssh-retry`
+- **Output loss after command completion**: Fixed sentinel cleanup logic so PTY output using `\r`/mixed line endings no longer has real command output removed together with the sentinel
+- **Sentinel exit code parsing**: Fixed exit code extraction to read from the actual emitted sentinel output instead of the echoed command text
+
 ## [2.3.0] - 2026-04-20
 
 ### Added

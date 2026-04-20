@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  buildSentinelCommandSuffix,
   createBufferSnapshot,
   createEventSnapshot,
   getControlSequence,
@@ -8,6 +9,7 @@ import {
   parseArgv,
   renderTerminalDashboard,
   renderViewerTranscript,
+  stripSentinelFromOutput,
   stripAnsi,
   type TranscriptEvent,
 } from '../src/index';
@@ -121,6 +123,35 @@ describe('dashboard rendering', () => {
     expect(transcript).toContain('[codex] ls');
     expect(transcript).toContain('file1');
     expect(transcript).toContain('[user] pwd');
+  });
+});
+
+describe('sentinel helpers', () => {
+  it('builds a shell-safe sentinel suffix', () => {
+    const suffix = buildSentinelCommandSuffix('___MCP_DONE_deadbeef_');
+
+    expect(suffix).toContain('printf');
+    expect(suffix).toContain('${__MCP_EC}');
+    expect(suffix).not.toContain('$__MCP_EC___');
+  });
+
+  it('removes sentinel artifacts without dropping real PTY output', () => {
+    const marker = '___MCP_DONE_deadbeef_';
+    const suffix = buildSentinelCommandSuffix(marker);
+    const output = [
+      `timeout 3 python main.py${suffix}\r`,
+      'single detector ready\r',
+      'fps=2.4 target=none rpm=(0.0,0.0)\r',
+      `${marker}124___`,
+    ].join('');
+
+    const cleaned = stripSentinelFromOutput(output, marker, suffix);
+
+    expect(cleaned).toContain('timeout 3 python main.py');
+    expect(cleaned).toContain('single detector ready');
+    expect(cleaned).toContain('fps=2.4 target=none rpm=(0.0,0.0)');
+    expect(cleaned).not.toContain(marker);
+    expect(cleaned).not.toContain('__MCP_EC=');
   });
 });
 
