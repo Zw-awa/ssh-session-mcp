@@ -25,6 +25,7 @@ import {
   sanitizePort,
   sanitizePositiveInt,
   sanitizeRequiredText,
+  stripAnsi,
 } from './shared.js';
 import {
   SSHConnection,
@@ -113,6 +114,7 @@ const DEFAULT_VIEWER_PORT = argvConfig.viewerPort ? parseInt(argvConfig.viewerPo
 const DEFAULT_VIEWER_REFRESH_MS = argvConfig.viewerRefreshMs ? parseInt(argvConfig.viewerRefreshMs, 10) : 1000;
 const SSH_CONNECT_TIMEOUT_MS = 30000;
 const AUTO_OPEN_TERMINAL = argvConfig.autoOpenTerminal === 'true' || argvConfig.autoOpenTerminal === '1' || process.env.AUTO_OPEN_TERMINAL === 'true' || process.env.AUTO_OPEN_TERMINAL === '1';
+const VIEWER_LAUNCH_MODE: ViewerLaunchMode = (argvConfig.viewerLaunchMode || process.env.VIEWER_LAUNCH_MODE || 'browser') as ViewerLaunchMode;
 let OPERATION_MODE: OperationMode = (argvConfig.mode || process.env.SSH_MCP_MODE || 'safe') as OperationMode;
 const USE_SENTINEL_MARKER = (argvConfig.useMarker || process.env.SSH_MCP_USE_MARKER || 'true') !== 'false';
 const VIEWER_STATE_FILE = new URL('../.viewer-processes.json', import.meta.url);
@@ -533,6 +535,23 @@ function createToolResponse(primaryText: string, extraTexts: string[] = []) {
         .map(text => ({ type: 'text' as const, text })),
     ],
   };
+}
+
+function stripSentinelFromOutput(output: string, sentinelMarker: string): string {
+  const idx = output.indexOf(sentinelMarker);
+  if (idx === -1) return output;
+  const lineStart = output.lastIndexOf('\n', idx);
+  const lineEnd = output.indexOf('\n', idx);
+  return output.slice(0, lineStart === -1 ? 0 : lineStart) +
+         (lineEnd === -1 ? '' : output.slice(lineEnd));
+}
+
+function stripCommandEcho(output: string, _command: string): string {
+  // Disabled: automatic echo stripping is too risky for multi-line commands.
+  // The PTY echoes back the entire command (including multi-line Python scripts),
+  // and fuzzy matching can accidentally strip real output.
+  // AI agents can handle seeing the command echo — it's better than losing output.
+  return output;
 }
 
 function buildDashboard(session: SSHSession, options: {
@@ -2942,7 +2961,12 @@ server.tool(
     if (AUTO_OPEN_TERMINAL && DEFAULT_VIEWER_PORT > 0) {
       try {
         const termUrl = `http://${viewerHostForUrl(DEFAULT_VIEWER_HOST)}:${DEFAULT_VIEWER_PORT}/terminal/session/${encodeURIComponent(session.sessionId)}`;
-        await launchBrowserViewer(termUrl);
+        if (VIEWER_LAUNCH_MODE === 'terminal') {
+          const binding = upsertViewerBinding(session, 'session');
+          await launchTerminalViewer(binding);
+        } else {
+          await launchBrowserViewer(termUrl);
+        }
         autoOpenTerminalUrl = termUrl;
       } catch (error) {
         autoOpenTerminalError = error instanceof Error ? error.message : String(error);
@@ -3344,7 +3368,14 @@ server.tool(
     if (DEFAULT_VIEWER_PORT > 0) {
       terminalUrl = `http://${viewerHostForUrl(DEFAULT_VIEWER_HOST)}:${DEFAULT_VIEWER_PORT}/terminal/session/${encodeURIComponent(sessionId)}`;
       if (AUTO_OPEN_TERMINAL) {
-        try { await launchBrowserViewer(terminalUrl); } catch { /* ignore */ }
+        try {
+          if (VIEWER_LAUNCH_MODE === 'terminal') {
+            const binding = upsertViewerBinding(session, 'session');
+            await launchTerminalViewer(binding);
+          } else {
+            await launchBrowserViewer(terminalUrl);
+          }
+        } catch { /* ignore */ }
       }
     }
 
@@ -3409,14 +3440,26 @@ server.tool(
     // Terminal mode check
     const bufferTail = target.buffer.slice(-2000);
     const terminalMode = detectTerminalMode(bufferTail);
-    if (OPERATION_MODE === 'safe' && (terminalMode === 'editor' || terminalMode === 'pager' || terminalMode === 'password_prompt')) {
+
+    // Password prompt blocks in ALL modes — sending a command here would type it as password
+    if (terminalMode === 'password_prompt') {
+      return createToolResponse(JSON.stringify({
+        error: 'PASSWORD_REQUIRED',
+        terminalMode: 'password_prompt',
+        message: 'Terminal is at a password prompt. DO NOT send commands — they will be typed as the password.',
+        suggestion: 'Options: (1) Ask the user to enter the password in the browser terminal. (2) Use ssh-session-control to send ctrl_c to cancel. (3) If you know the password, use ssh-session-send to type it directly.',
+        operationMode: OPERATION_MODE,
+      }, null, 2));
+    }
+
+    // Editor/pager check — only blocks in safe mode
+    if (OPERATION_MODE === 'safe' && (terminalMode === 'editor' || terminalMode === 'pager')) {
       return createToolResponse(JSON.stringify({
         error: 'WRONG_TERMINAL_MODE',
         terminalMode,
         message: `Terminal is in ${terminalMode} mode. Cannot execute commands in this state.`,
         suggestion: terminalMode === 'editor' ? 'Send ctrl_c or ctrl_d via ssh-session-control to exit the editor first.'
-          : terminalMode === 'pager' ? 'Send "q" via ssh-session-control to exit the pager first.'
-          : 'The terminal is waiting for a password. Ask the user to handle this in the browser terminal.',
+          : 'Send "q" via ssh-session-control to exit the pager first.',
         operationMode: OPERATION_MODE,
       }, null, 2));
     }
@@ -3424,6 +3467,8 @@ server.tool(
     // Acquire agent lock
     target.inputLock = 'agent';
     broadcastLock(target);
+
+    try {
 
     const resolvedWaitMs = sanitizeNonNegativeInt(waitMs, 'waitMs', 30000);
     const resolvedIdleMs = sanitizePositiveInt(idleMs, 'idleMs', 2000);
@@ -3438,7 +3483,7 @@ server.tool(
     const beforeOffset = target.currentBufferEnd();
     if (useMarker) {
       // Use __MCP_EC to capture exit code reliably even with pipes
-      target.write(`${command}\n__MCP_EC=$?; echo "${sentinelMarker}$__MCP_EC___"\n`, 'agent');
+      target.write(`${command}; __MCP_EC=$?; echo "${sentinelMarker}$__MCP_EC___"\n`, 'agent');
     } else {
       target.write(`${command}\n`, 'agent');
     }
@@ -3504,14 +3549,30 @@ server.tool(
     // Command completed - read output
     let outputText = target.read(beforeOffset, resolvedMaxChars).output;
 
-    // Strip sentinel marker from output if present
-    if (useMarker && sentinelMarker) {
-      const sentinelIdx = outputText.indexOf(sentinelMarker);
-      if (sentinelIdx !== -1) {
-        // Remove the entire sentinel echo line
-        const lineStart = outputText.lastIndexOf('\n', sentinelIdx);
-        outputText = outputText.slice(0, lineStart === -1 ? sentinelIdx : lineStart);
-      }
+    // Clean output: ANSI → echo → sentinel
+    outputText = stripAnsi(outputText);
+    outputText = stripCommandEcho(outputText, command);
+    if (useMarker) {
+      outputText = stripSentinelFromOutput(outputText, sentinelMarker);
+    }
+
+    // Post-execution terminal mode check: detect password prompt
+    const postTerminalMode = detectTerminalMode(target.buffer.slice(-2000));
+    if (postTerminalMode === 'password_prompt') {
+      // Release lock
+      target.inputLock = 'none';
+      broadcastLock(target);
+
+      return createToolResponse(JSON.stringify({
+        command,
+        sessionName: target.sessionName,
+        host: target.host,
+        error: 'PASSWORD_REQUIRED',
+        terminalMode: 'password_prompt',
+        operationMode: OPERATION_MODE,
+        message: 'The command is waiting for a password input. The terminal is now at a password prompt.',
+        suggestion: 'DO NOT send another ssh-run command — it will be typed into the password field. Options: (1) Ask the user to enter the password in the browser terminal. (2) Use ssh-session-control to send ctrl_c to cancel the command. (3) If you know the password, use ssh-session-send to send it (not recommended for security).',
+      }, null, 2), [outputText.length > 0 ? outputText : '(password prompt detected)']);
     }
 
     // Release lock
@@ -3584,6 +3645,14 @@ server.tool(
       operationMode: OPERATION_MODE,
       exitHint: `Output was truncated (${totalOutputChars} total chars). Head and tail are shown. Use ssh-session-read with offset=${omittedStart} to read the omitted middle section.`,
     }, null, 2), [combinedOutput]);
+
+    } finally {
+      // Ensure lock is always released even if an error occurs
+      if (target.inputLock === 'agent') {
+        target.inputLock = 'none';
+        broadcastLock(target);
+      }
+    }
   },
 );
 
@@ -3698,8 +3767,18 @@ server.tool(
     const resolvedMaxRetries = maxRetries ?? 3;
     const resolvedBackoff = backoff ?? 'exponential';
     const resolvedDelayMs = delayMs ?? 1000;
-    const successRe = successPattern ? new RegExp(successPattern) : null;
-    const failRe = failPattern ? new RegExp(failPattern) : null;
+
+    let successRe: RegExp | null = null;
+    let failRe: RegExp | null = null;
+    try {
+      if (successPattern) successRe = new RegExp(successPattern);
+      if (failPattern) failRe = new RegExp(failPattern);
+    } catch (e) {
+      return createToolResponse(JSON.stringify({
+        error: 'INVALID_PATTERN',
+        message: `Invalid regex pattern: ${(e as Error).message}`,
+      }, null, 2));
+    }
 
     let lastOutput = '';
     let lastExitCode: number | undefined;
@@ -3733,7 +3812,7 @@ server.tool(
       const beforeOffset = target.currentBufferEnd();
 
       if (USE_SENTINEL_MARKER) {
-        target.write(`${command}; echo "${sentinelMarker}$?___"\n`, 'agent');
+        target.write(`${command}; __MCP_EC=$?; echo "${sentinelMarker}$__MCP_EC___"\n`, 'agent');
       } else {
         target.write(`${command}\n`, 'agent');
       }
@@ -3750,13 +3829,11 @@ server.tool(
       broadcastLock(target);
 
       let output = target.read(beforeOffset, 16000).output;
-      // Strip sentinel
+      // Clean output: ANSI → echo → sentinel
+      output = stripAnsi(output);
+      output = stripCommandEcho(output, command);
       if (USE_SENTINEL_MARKER) {
-        const sentinelIdx = output.indexOf(sentinelMarker);
-        if (sentinelIdx !== -1) {
-          const lineStart = output.lastIndexOf('\n', sentinelIdx);
-          output = output.slice(0, lineStart === -1 ? sentinelIdx : lineStart);
-        }
+        output = stripSentinelFromOutput(output, sentinelMarker);
       }
 
       lastOutput = output;

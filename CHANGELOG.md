@@ -33,7 +33,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `waitForCompletion` now accepts `sentinel` parameter for deterministic detection
 - `CompletionResult` type extended with `'sentinel'` reason and `exitCode` field
 - `OPERATION_MODE` is now mutable via WebSocket (browser UI control)
-- Added `SSH_MCP_USE_MARKER` env var to disable sentinel markers (default: enabled)
+ - Added `SSH_MCP_USE_MARKER` env var to disable sentinel markers (default: enabled)
+
+## [2.2.1] - 2026-04-20
+
+### Added
+- **Password prompt protection**: All SSH tools now detect password prompts and block command execution in ALL operation modes to prevent accidental password entry
+- **ANSI stripping**: Command output is automatically stripped of ANSI escape sequences before parsing and display
+- **Command echo handling**: New `stripCommandEcho` function (disabled by default) provides framework for future echo removal
+- **Regex validation**: `ssh-retry` tool now validates user-provided regex patterns and returns clear error messages for invalid patterns
+- **Viewer launch mode**: New `VIEWER_LAUNCH_MODE` environment variable (`browser` or `terminal`) controls whether auto‑open launches browser or terminal viewer
+
+### Changed
+- **Password prompt handling**: Moved from terminal mode detection to dedicated password prompt check that blocks execution in all modes (safe/full/common)
+- **Sentinel marker syntax**: Fixed to `; __MCP_EC=$?; echo` for reliable exit code capture even with command chaining
+- **Output cleaning pipeline**: Command output now passes through: ANSI stripping → echo removal → sentinel removal (when enabled)
+- **Terminal mode detection**: Safe mode now only blocks editor/pager modes; password prompts are handled separately with clearer error messages
+- **Prompt pattern matching**: Updated `DEFAULT_PROMPT_PATTERNS` to match more shell prompt variations reliably
+
+### Fixed
+- **Command echo stripping risk**: Disabled automatic echo removal to prevent accidental stripping of multi‑line command output (e.g., Python scripts)
+- **Lock release guarantee**: `ssh-run` and `ssh-retry` now use `try...finally` blocks to ensure agent locks are always released even on errors
+- **Post‑execution password detection**: Added check after command completion to detect if command left terminal at password prompt
+- **Pattern regex errors**: Invalid regex patterns in `ssh-retry` now return user‑friendly error instead of crashing
+
+### Technical
+- New helper functions: `stripAnsi`, `stripCommandEcho`, `stripSentinelFromOutput` in `src/index.ts`
+- `ssh-run` tool restructured with proper error handling and lock management
+- Enhanced terminal mode validation with distinct handling for password prompts vs. editor/pager modes
+- `VIEWER_LAUNCH_MODE` configuration added to support both browser and terminal viewer auto‑launch
 
 ## [2.0.2] - 2026-04-19
 

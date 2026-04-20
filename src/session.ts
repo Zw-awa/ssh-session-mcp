@@ -644,8 +644,8 @@ export interface CompletionResult {
 }
 
 export const DEFAULT_PROMPT_PATTERNS: RegExp[] = [
-  /[$#%>]\s*$/,
   /\w+@[\w.-]+[:#~].*[$#%>]\s*$/,
   /\(.*\)\s*[$#%>]\s*$/,
-  /^\[\w+@[\w.-]+\s+[^\]]*\][$#%>]\s*$/,
+  /^\[?\w+@[\w.-]+\s+[^\]]*\]?[$#%>]\s*$/,
+  /^\s*[$#%>]\s*$/,
 ];
