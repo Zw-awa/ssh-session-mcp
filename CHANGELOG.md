@@ -5,26 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [2.1.0] - 2026-04-19
+## [2.2.0] - 2026-04-20
 
 ### Added
-- **Intelligent command completion detection**: `ssh-run` now uses prompt pattern matching and idle timeout to detect when commands finish, replacing fixed wait times
-- **Async command tracking**: Long-running commands automatically transition to async mode with `ssh-command-status` tool for progress checking
-- **Command validation and safety modes**: New `SSH_MCP_MODE` environment variable (`safe` or `full`) with blocked command detection for dangerous/interactive operations
-- **Terminal mode detection**: Automatic detection of shell, editor, pager, and password prompt states to prevent command execution in wrong contexts
-- **New tool**: `ssh-command-status` - check status and output of async commands
+- **Deterministic completion markers**: Commands now use unique sentinel markers (`___MCP_DONE_<id>_<exitcode>___`) for reliable completion detection and exit code capture
+- **Browser mode switching**: Safe/Full operation mode can be toggled directly from the browser terminal UI with confirmation dialog for Full mode
+- **Structured command parsers**: `ssh-run` automatically parses output of common commands (git status, git log, ls -la) into structured JSON in the `parsed` field
+- **New tool `ssh-retry`**: Automatic retry with configurable backoff (fixed/exponential) for flaky commands, with success/fail pattern matching
+- **New tool `ssh-command-status`**: Poll status and output of long-running async commands
+- **Exit code in response**: `ssh-run` now returns the command's exit code when sentinel markers are enabled
 
 ### Changed
-- **`ssh-run` overhaul**: Complete rewrite with intelligent completion detection, async support, and safety checks
-- **Default wait time**: Increased from 2000ms to 30000ms with smarter early completion
-- **Operation mode**: New `SSH_MCP_MODE` environment variable (default: `safe`)
-- **Session info**: `ssh-status` now includes terminal mode detection
+- **Default wait time**: Increased to 30 seconds (from 2s) with intelligent early completion via prompt/sentinel/idle detection
+- **Sentinel-first detection**: Completion detection now prioritizes sentinel markers over prompt patterns and idle timeout
+- **Improved password prompt detection**: Regex now handles `[sudo] password for user:` and similar formats
+- **Concurrent command protection**: `ssh-run` returns `AGENT_BUSY` error if another command is already running on the same session
+- **Faster cleanup**: Running commands cleaned up after 5 minutes (down from 10), stuck commands auto-interrupted after 10 minutes
+
+### Fixed
+- **Race condition in waitForCompletion**: Output listener now registered before initial buffer check to prevent missed output
+- **Shell compatibility**: Sentinel uses `__MCP_EC=$?` variable capture on separate line to correctly handle pipes and subshells
+- **Password detection false negatives**: Fixed regex to match `[sudo] password for user:` format
 
 ### Technical
-- **New module**: `src/validation.ts` for command validation and terminal mode detection
-- **Enhanced session class**: Added `waitForCompletion` method with prompt matching
-- **Async tracking**: Background monitoring for long-running commands
-- **Safety patterns**: Regex-based detection of dangerous, interactive, and streaming commands
+- New module: `src/parsers.ts` for structured output parsing
+- New module: `src/validation.ts` for command validation and terminal mode detection
+- `waitForCompletion` now accepts `sentinel` parameter for deterministic detection
+- `CompletionResult` type extended with `'sentinel'` reason and `exitCode` field
+- `OPERATION_MODE` is now mutable via WebSocket (browser UI control)
+- Added `SSH_MCP_USE_MARKER` env var to disable sentinel markers (default: enabled)
 
 ## [2.0.2] - 2026-04-19
 

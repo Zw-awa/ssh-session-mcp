@@ -543,8 +543,9 @@ export class SSHSession {
     maxWaitMs: number;
     idleMs?: number;
     promptPatterns?: RegExp[];
+    sentinel?: string;
   }): Promise<CompletionResult> {
-    const { startOffset, maxWaitMs } = options;
+    const { startOffset, maxWaitMs, sentinel } = options;
     const idleMs = options.idleMs ?? 2000;
     const promptPatterns = options.promptPatterns ?? DEFAULT_PROMPT_PATTERNS;
     const startTime = Date.now();
@@ -554,9 +555,13 @@ export class SSHSession {
       return { completed: true, reason: 'idle', elapsedMs: Date.now() - startTime };
     }
 
-    // Check if prompt already present
+    // Check if sentinel or prompt already present
     if (this.currentBufferEnd() > startOffset) {
-      const tail = this.getBufferTail(startOffset, 500);
+      const tail = this.getBufferTail(startOffset, 2000);
+      if (sentinel && tail.includes(sentinel)) {
+        const exitCode = this.extractExitCode(tail, sentinel);
+        return { completed: true, reason: 'sentinel', elapsedMs: Date.now() - startTime, exitCode };
+      }
       if (this.matchesPrompt(tail, promptPatterns)) {
         return { completed: true, reason: 'prompt', elapsedMs: Date.now() - startTime };
       }
@@ -566,13 +571,13 @@ export class SSHSession {
       let idleTimer: NodeJS.Timeout | null = null;
       let resolved = false;
 
-      const finish = (reason: CompletionResult['reason']) => {
+      const finish = (reason: CompletionResult['reason'], exitCode?: number) => {
         if (resolved) return;
         resolved = true;
         if (idleTimer) clearTimeout(idleTimer);
         clearTimeout(maxTimer);
         this.outputNotifyListeners.delete(onOutput);
-        resolve({ completed: reason !== 'timeout', reason, elapsedMs: Date.now() - startTime });
+        resolve({ completed: reason !== 'timeout', reason, elapsedMs: Date.now() - startTime, exitCode });
       };
 
       const maxTimer = setTimeout(() => finish('timeout'), maxWaitMs);
@@ -591,10 +596,17 @@ export class SSHSession {
           return;
         }
 
-        // Check prompt
-        const tail = this.getBufferTail(startOffset, 500);
+        const tail = this.getBufferTail(startOffset, 2000);
+
+        // Sentinel detection (highest priority)
+        if (sentinel && tail.includes(sentinel)) {
+          const exitCode = this.extractExitCode(tail, sentinel);
+          setTimeout(() => finish('sentinel', exitCode), 50);
+          return;
+        }
+
+        // Prompt detection
         if (this.matchesPrompt(tail, promptPatterns)) {
-          // Small delay to let trailing output flush
           setTimeout(() => finish('prompt'), 50);
           return;
         }
@@ -602,6 +614,7 @@ export class SSHSession {
         resetIdleTimer();
       };
 
+      // Register listener BEFORE initial check to avoid race condition
       this.outputNotifyListeners.add(onOutput);
 
       // If output already arrived, check immediately
@@ -610,14 +623,24 @@ export class SSHSession {
       }
     });
   }
+
+  private extractExitCode(tail: string, sentinel: string): number | undefined {
+    const idx = tail.indexOf(sentinel);
+    if (idx === -1) return undefined;
+    // Sentinel format: ___MCP_DONE_<uuid>_<exitcode>___
+    const afterSentinel = tail.slice(idx + sentinel.length);
+    const match = afterSentinel.match(/^(\d+)___/);
+    return match ? parseInt(match[1], 10) : undefined;
+  }
 }
 
 // --- Exported types and constants for waitForCompletion ---
 
 export interface CompletionResult {
   completed: boolean;
-  reason: 'prompt' | 'idle' | 'timeout';
+  reason: 'prompt' | 'idle' | 'timeout' | 'sentinel';
   elapsedMs: number;
+  exitCode?: number;
 }
 
 export const DEFAULT_PROMPT_PATTERNS: RegExp[] = [

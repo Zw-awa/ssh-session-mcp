@@ -17,8 +17,8 @@ export function detectTerminalMode(bufferTail: string): TerminalMode {
   const screenText = lines.join('\n');
 
   // Password prompt (highest priority)
-  if (/password\s*:?\s*$/i.test(lastLine)) return 'password_prompt';
-  if (/passphrase\s*:?\s*$/i.test(lastLine)) return 'password_prompt';
+  if (/password[^:=\n"']*:?\s*$/i.test(lastLine)) return 'password_prompt';
+  if (/passphrase[^:=\n"']*:?\s*$/i.test(lastLine)) return 'password_prompt';
 
   // Editor detection
   if (/-- (INSERT|VISUAL|REPLACE|NORMAL) --/.test(screenText)) return 'editor';
@@ -53,6 +53,7 @@ const ALWAYS_BLOCKED: PatternEntry[] = [
   { pattern: /:\(\)\{.*:\|:.*\};:/, category: 'blocked', message: 'Fork bomb detected' },
   { pattern: /\bdd\b.*\bof=\/dev\/[sh]d/, category: 'blocked', message: 'Direct disk write via dd' },
   { pattern: /\brm\s+-[a-zA-Z]*r[a-zA-Z]*f[a-zA-Z]*\s+\/\s*$/, category: 'blocked', message: 'rm -rf / (root filesystem)' },
+  { pattern: /\brm\s+-[a-zA-Z]*r[a-zA-Z]*f[a-zA-Z]*\s+\/[a-z]*\s*$/, category: 'blocked', message: 'rm -rf on system root directory' },
   { pattern: /\bmkfs\b.*\/dev\/[sh]d/, category: 'blocked', message: 'Filesystem format on disk device' },
 ];
 

@@ -3,18 +3,21 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Node.js Version](https://img.shields.io/badge/node-%3E%3D18-brightgreen)](https://nodejs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.9.2-blue)](https://www.typescriptlang.org/)
+[![npm version](https://img.shields.io/npm/v/ssh-session-mcp)](https://www.npmjs.com/package/ssh-session-mcp)
 
 Persistent SSH PTY session manager for MCP clients. Users and AI agents share one SSH terminal — AI sends commands via MCP tools, users type in the browser terminal, input sources are visually distinguished.
 
 ## Features
 
 - **Shared SSH Terminal**: One PTY, shared by user and AI, with input lock to prevent conflicts
-- **xterm.js Browser Terminal**: Real terminal emulator in the browser (not a text dashboard)
-- **WebSocket Real-time**: Binary PTY output streamed via WebSocket, no polling
-- **Input Lock**: User/AI mode switch prevents simultaneous input conflicts
+- **xterm.js Browser Terminal**: Real terminal emulator in the browser with WebSocket streaming
+- **Intelligent Command Completion**: Prompt detection + idle timeout + deterministic sentinel markers for reliable output capture
+- **Safety Modes**: Safe/Full operation modes with dangerous command blocking and terminal state awareness
+- **Async Command Tracking**: Long-running commands auto-transition to async with polling support
+- **Structured Output Parsing**: Automatic JSON parsing for common commands (git status, git log, ls -la)
+- **Retry with Backoff**: Built-in `ssh-retry` tool for flaky commands with exponential/fixed backoff
+- **Input Lock**: User/AI/Common mode switch prevents simultaneous input conflicts
 - **Actor Tracking**: Color-coded input source markers (user/codex/claude) in the status bar
-- **Simplified AI Tools**: `ssh-quick-connect` + `ssh-run` — two tools cover most use cases
-- **Auto Session Reuse**: AI calls `ssh-quick-connect` once, subsequent calls reuse the session
 - **Auto Cleanup**: Idle timeout, graceful shutdown, no orphan processes
 
 ## Quick Start
@@ -22,15 +25,15 @@ Persistent SSH PTY session manager for MCP clients. Users and AI agents share on
 ### 1. Install
 
 ```bash
+npm install -g ssh-session-mcp
+```
+
+Or from source:
+
+```bash
 git clone https://github.com/Zw-awa/ssh-session-mcp.git
 cd ssh-session-mcp
 npm install && npm run build
-```
-
-Or from npm:
-
-```bash
-npm install -g ssh-session-mcp
 ```
 
 ### 2. Configure
@@ -48,6 +51,7 @@ SSH_PASSWORD=your-password
 # Or use SSH_KEY=/path/to/private/key (recommended)
 VIEWER_PORT=8793
 AUTO_OPEN_TERMINAL=true
+SSH_MCP_MODE=safe
 ```
 
 ### 3. Launch (for users)
@@ -86,30 +90,52 @@ ssh-quick-connect → ssh-run → read output → decide → ssh-run → ...
 | Tool | Purpose |
 |------|---------|
 | `ssh-quick-connect` | Connect SSH + open browser terminal (once per conversation) |
-| `ssh-run` | Execute command, return output (repeat as needed) |
-| `ssh-status` | Check if sessions are running |
+| `ssh-run` | Execute command, return output with exit code (repeat as needed) |
+| `ssh-status` | Check sessions, terminal mode, and operation mode |
+| `ssh-command-status` | Poll async command progress |
+| `ssh-retry` | Retry flaky commands with backoff |
 
 ### Example
 
 ```
 AI: ssh-quick-connect()
-AI: "Connected. Terminal at http://127.0.0.1:8793/terminal/session/..."
+→ "Connected. Terminal at http://127.0.0.1:8793/terminal/session/..."
 
 AI: ssh-run({ command: "uname -a" })
-AI: "Linux board 5.10.160-rockchip-rk3588 aarch64"
+→ { exitCode: 0, completionReason: "sentinel" }
+   "Linux board 5.10.160-rockchip-rk3588 aarch64"
 
-AI: ssh-run({ command: "df -h /" })
-AI: "34% used (19G of 56G)"
+AI: ssh-run({ command: "apt update" })
+→ { async: true, commandId: "abc123", hint: "Use ssh-command-status to check" }
+
+AI: ssh-command-status({ commandId: "abc123" })
+→ { status: "completed", exitCode: 0 }
 ```
+
+## Operation Modes
+
+The browser terminal has a **safe/full** mode selector (top-right):
+
+| Mode | Behavior |
+|------|----------|
+| **safe** (default) | Blocks dangerous commands (rm -rf, mkfs), interactive programs (vim, htop), and streaming commands (tail -f). Returns suggestions for alternatives. |
+| **full** | AI has full control. Only blocks extreme threats (fork bombs, dd to disk). Other dangerous commands execute with warnings. |
+
+Switching to Full mode requires confirmation via browser dialog.
+
+Configure via `SSH_MCP_MODE=safe|full` env var or `--mode=safe|full` flag.
 
 ## Input Lock
 
 The browser terminal has a mode selector (top-right dropdown):
 
-- **user**: You can type. AI's `ssh-run` is blocked and returns an error.
-- **claude/codex**: AI can send commands. Your keyboard input is blocked, status bar shows "AI active".
+| Mode | Who can type |
+|------|-------------|
+| **common** (default) | Both user and AI |
+| **user** | Only user. AI's `ssh-run` returns `INPUT_LOCKED` error. |
+| **claude/codex** | Only AI. User keyboard input is blocked. |
 
-The AI automatically acquires/releases the lock when calling `ssh-run`. Only the user can switch modes via the browser UI.
+The AI automatically acquires/releases the lock when calling `ssh-run`.
 
 ## All MCP Tools
 
@@ -118,8 +144,10 @@ The AI automatically acquires/releases the lock when calling `ssh-run`. Only the
 | Tool | Description |
 |------|-------------|
 | `ssh-quick-connect` | One-step connect + open terminal. Reuses existing sessions. |
-| `ssh-run` | Execute command, wait for output, return it. Auto-locks. |
-| `ssh-status` | List active sessions and terminal URLs. |
+| `ssh-run` | Execute command with intelligent completion detection. Returns exit code. |
+| `ssh-status` | List active sessions, terminal mode, and operation mode. |
+| `ssh-command-status` | Check status of async long-running commands. |
+| `ssh-retry` | Execute command with automatic retry and backoff on failure. |
 
 ### Full control
 
@@ -127,7 +155,7 @@ The AI automatically acquires/releases the lock when calling `ssh-run`. Only the
 |------|-------------|
 | `ssh-session-open` | Open session with custom parameters |
 | `ssh-session-send` | Send raw input without waiting |
-| `ssh-session-read` | Read output without sending |
+| `ssh-session-read` | Read output with offset-based pagination |
 | `ssh-session-watch` | Long-poll for changes, render dashboard |
 | `ssh-session-control` | Send control keys (Ctrl+C, arrows, etc.) |
 | `ssh-session-resize` | Resize PTY window |
@@ -140,23 +168,25 @@ The AI automatically acquires/releases the lock when calling `ssh-run`. Only the
 
 ### Environment variables (.env)
 
-| Variable | Description |
-|----------|-------------|
-| `SSH_HOST` | SSH host address |
-| `SSH_PORT` | SSH port (default: 22) |
-| `SSH_USER` | SSH username |
-| `SSH_PASSWORD` | SSH password |
-| `SSH_KEY` | Path to SSH private key (recommended over password) |
-| `VIEWER_HOST` | Viewer server bind address (default: 127.0.0.1) |
-| `VIEWER_PORT` | Viewer server port (default: 0 = disabled) |
-| `AUTO_OPEN_TERMINAL` | Auto-open browser terminal on session open (default: false) |
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `SSH_HOST` | SSH host address | (required) |
+| `SSH_PORT` | SSH port | 22 |
+| `SSH_USER` | SSH username | (required) |
+| `SSH_PASSWORD` | SSH password | - |
+| `SSH_KEY` | Path to SSH private key | - |
+| `VIEWER_HOST` | Viewer server bind address | 127.0.0.1 |
+| `VIEWER_PORT` | Viewer server port (0 = disabled) | 0 |
+| `AUTO_OPEN_TERMINAL` | Auto-open browser on connect | false |
+| `SSH_MCP_MODE` | Operation mode: safe or full | safe |
+| `SSH_MCP_USE_MARKER` | Enable sentinel completion markers | true |
 
 ### Command-line parameters
 
-All `.env` variables can be overridden with `--` flags:
+All env variables can be overridden with `--` flags:
 
 ```bash
-node build/index.js -- --host=192.168.1.100 --user=username --viewerPort=8793
+node build/index.js --host=192.168.1.100 --user=username --viewerPort=8793 --mode=full
 ```
 
 ## CLI Commands
@@ -171,20 +201,11 @@ npm run test      # Run unit tests
 npm run inspect   # Open MCP inspector
 ```
 
-## Development
-
-```bash
-npm run build          # Compile
-npm test               # Unit tests
-npm run test:watch     # Watch mode
-npm run coverage       # Coverage report
-npm run inspect        # MCP inspector
-```
-
 ## Security
 
 - SSH credentials are stored in `.env` only, excluded from git and npm
 - Viewer server binds to `127.0.0.1` by default (local only)
+- Safe mode blocks dangerous commands by default
 - No data is uploaded to external servers
 - Use `SSH_KEY` instead of `SSH_PASSWORD` when possible
 

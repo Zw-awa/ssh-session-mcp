@@ -43,6 +43,8 @@ import {
   isKnownSlowCommand,
 } from './validation.js';
 
+import { tryParseCommandOutput } from './parsers.js';
+
 function loadDotEnv() {
   try {
     const envPath = pathResolve(fileURLToPath(import.meta.url), '../../.env');
@@ -111,7 +113,8 @@ const DEFAULT_VIEWER_PORT = argvConfig.viewerPort ? parseInt(argvConfig.viewerPo
 const DEFAULT_VIEWER_REFRESH_MS = argvConfig.viewerRefreshMs ? parseInt(argvConfig.viewerRefreshMs, 10) : 1000;
 const SSH_CONNECT_TIMEOUT_MS = 30000;
 const AUTO_OPEN_TERMINAL = argvConfig.autoOpenTerminal === 'true' || argvConfig.autoOpenTerminal === '1' || process.env.AUTO_OPEN_TERMINAL === 'true' || process.env.AUTO_OPEN_TERMINAL === '1';
-const OPERATION_MODE: OperationMode = (argvConfig.mode || process.env.SSH_MCP_MODE || 'safe') as OperationMode;
+let OPERATION_MODE: OperationMode = (argvConfig.mode || process.env.SSH_MCP_MODE || 'safe') as OperationMode;
+const USE_SENTINEL_MARKER = (argvConfig.useMarker || process.env.SSH_MCP_USE_MARKER || 'true') !== 'false';
 const VIEWER_STATE_FILE = new URL('../.viewer-processes.json', import.meta.url);
 const VIEWER_CLI_ENTRY_PATH = fileURLToPath(new URL('./viewer-cli.js', import.meta.url));
 
@@ -390,7 +393,7 @@ interface RunningCommand {
   status: 'running' | 'completed' | 'interrupted';
   output?: string;
   completedAt?: number;
-  completionReason?: 'prompt' | 'idle' | 'timeout';
+  completionReason?: 'prompt' | 'idle' | 'timeout' | 'sentinel';
 }
 
 const runningCommands = new Map<string, RunningCommand>();
@@ -436,7 +439,15 @@ function sweepSessions(nowMs = Date.now()) {
       runningCommands.delete(cmdId);
       continue;
     }
-    if (entry.status !== 'running' && entry.completedAt && nowMs - entry.completedAt > 10 * 60 * 1000) {
+    // Clean completed entries after 5 minutes (reduced from 10)
+    if (entry.status !== 'running' && entry.completedAt && nowMs - entry.completedAt > 5 * 60 * 1000) {
+      runningCommands.delete(cmdId);
+      continue;
+    }
+    // Clean stuck running entries after 10 minutes (safety net)
+    if (entry.status === 'running' && nowMs - entry.startTime > 10 * 60 * 1000) {
+      entry.status = 'interrupted';
+      entry.completedAt = nowMs;
       runningCommands.delete(cmdId);
     }
   }
@@ -1997,6 +2008,23 @@ function handleWsAttach(ws: WebSocket, kind: 'session' | 'binding', ref: string,
         return;
       }
 
+      if (msg.type === 'mode' && typeof msg.mode === 'string') {
+        const validModes = ['safe', 'full'];
+        if (validModes.includes(msg.mode)) {
+          OPERATION_MODE = msg.mode as OperationMode;
+          // Broadcast mode change to all WS clients
+          if (viewerWss) {
+            const modeMsg = JSON.stringify({ type: 'mode', mode: OPERATION_MODE });
+            for (const client of viewerWss.clients) {
+              if (client.readyState === WebSocket.OPEN) {
+                try { client.send(modeMsg); } catch { /* ignore */ }
+              }
+            }
+          }
+        }
+        return;
+      }
+
       if (msg.type === 'input' && typeof msg.data === 'string' && msg.data.length > 0) {
         // Check lock: browser input is always 'user' source
         if (session.inputLock === 'agent') {
@@ -2133,6 +2161,10 @@ function renderXtermTerminalPage(options: {
         <option value="codex">codex</option>
         <option value="claude">claude</option>
       </select>
+      <select id="modeSelect" class="btn" title="Operation mode: safe = blocks dangerous commands, full = AI has full control">
+        <option value="safe"${OPERATION_MODE === 'safe' ? ' selected' : ''}>safe</option>
+        <option value="full"${OPERATION_MODE === 'full' ? ' selected' : ''}>full</option>
+      </select>
       <span id="lockBadge" class="lock-badge none">unlocked</span>
     </div>
   </div>
@@ -2262,6 +2294,9 @@ function renderXtermTerminalPage(options: {
           if (msg.type === 'lock') {
             updateLockUI(msg.lock);
           }
+          if (msg.type === 'mode') {
+            modeSelect.value = msg.mode;
+          }
           if (msg.type === 'lock_rejected') {
             setStatus('Input blocked: AI is active. Switch to "common" or "user" to type.', 'locked');
           }
@@ -2338,6 +2373,21 @@ function renderXtermTerminalPage(options: {
         updateLockUI('agent');
         setStatus('Switched to ' + actor + ' mode. AI controls the terminal. Your input is blocked.', 'claude');
       }
+      terminal.focus();
+    });
+
+    var modeSelect = document.getElementById('modeSelect');
+    modeSelect.addEventListener('change', function() {
+      var newMode = modeSelect.value;
+      if (newMode === 'full') {
+        var confirmed = confirm('Warning: Full mode allows AI to execute dangerous commands (rm -rf, mkfs, etc.) without blocking.\\n\\nAre you sure you want to switch to full mode?');
+        if (!confirmed) {
+          modeSelect.value = 'safe';
+          return;
+        }
+      }
+      sendJson({ type: 'mode', mode: newMode });
+      setStatus('Operation mode switched to: ' + newMode, newMode === 'full' ? 'error' : 'user');
       terminal.focus();
     });
 
@@ -3335,6 +3385,15 @@ server.tool(
       }, null, 2));
     }
 
+    // Mutual exclusion: reject if another agent command is already running
+    if (target.inputLock === 'agent') {
+      return createToolResponse(JSON.stringify({
+        error: 'AGENT_BUSY',
+        lock: 'agent',
+        message: 'Another agent command is already running on this session. Wait for it to complete or use ssh-command-status to check progress.',
+      }, null, 2));
+    }
+
     // Command validation
     const validation = validateCommand(command, OPERATION_MODE);
     if (!validation.allowed) {
@@ -3371,8 +3430,18 @@ server.tool(
     const resolvedMaxChars = sanitizePositiveInt(maxChars, 'maxChars', 16000);
     const immediateAsync = isKnownSlowCommand(command);
 
+    // Construct sentinel marker for deterministic completion detection
+    const sentinelId = randomUUID().slice(0, 8);
+    const sentinelMarker = `___MCP_DONE_${sentinelId}_`;
+    const useMarker = USE_SENTINEL_MARKER && !immediateAsync && validation.category !== 'interactive';
+
     const beforeOffset = target.currentBufferEnd();
-    target.write(`${command}\n`, 'agent');
+    if (useMarker) {
+      // Use __MCP_EC to capture exit code reliably even with pipes
+      target.write(`${command}\n__MCP_EC=$?; echo "${sentinelMarker}$__MCP_EC___"\n`, 'agent');
+    } else {
+      target.write(`${command}\n`, 'agent');
+    }
 
     // Wait for command completion using intelligent detection
     let completion: CompletionResult;
@@ -3390,6 +3459,7 @@ server.tool(
         maxWaitMs: resolvedWaitMs,
         idleMs: resolvedIdleMs,
         promptPatterns: DEFAULT_PROMPT_PATTERNS,
+        sentinel: useMarker ? sentinelMarker : undefined,
       });
     } else {
       completion = { completed: false, reason: 'timeout', elapsedMs: 0 };
@@ -3432,24 +3502,42 @@ server.tool(
     }
 
     // Command completed - read output
-    const snapshot = target.read(beforeOffset, resolvedMaxChars);
+    let outputText = target.read(beforeOffset, resolvedMaxChars).output;
+
+    // Strip sentinel marker from output if present
+    if (useMarker && sentinelMarker) {
+      const sentinelIdx = outputText.indexOf(sentinelMarker);
+      if (sentinelIdx !== -1) {
+        // Remove the entire sentinel echo line
+        const lineStart = outputText.lastIndexOf('\n', sentinelIdx);
+        outputText = outputText.slice(0, lineStart === -1 ? sentinelIdx : lineStart);
+      }
+    }
 
     // Release lock
     target.inputLock = 'none';
     broadcastLock(target);
 
-    if (!snapshot.truncatedAfter) {
+    const snapshot = target.read(beforeOffset, resolvedMaxChars);
+    const exitCode = completion.exitCode;
+
+    // Try structured parsing
+    const parsed = tryParseCommandOutput(command, outputText);
+
+    if (outputText.length <= resolvedMaxChars) {
       return createToolResponse(JSON.stringify({
         command,
         sessionName: target.sessionName,
         host: target.host,
         completionReason: completion.reason,
         elapsedMs: completion.elapsedMs,
+        exitCode,
         terminalMode,
         operationMode: OPERATION_MODE,
         warning: validation.category !== 'safe' ? validation.message : undefined,
+        parsed: parsed ? { type: parsed.type, data: parsed.data } : undefined,
         exitHint: 'Check output for command result. Use ssh-run again for next command.',
-      }, null, 2), [snapshot.output.length > 0 ? snapshot.output : '(no output yet)']);
+      }, null, 2), [outputText.length > 0 ? outputText : '(no output yet)']);
     }
 
     // Output exceeds maxChars -- apply head+tail truncation (30% head, 70% tail)
@@ -3585,6 +3673,146 @@ server.tool(
       elapsedMs: Date.now() - entry.startTime,
       hint: 'Command is still running. Call ssh-command-status again later to check. Partial output is included below.',
     }, null, 2), [snapshot.output.length > 0 ? snapshot.output : '(no output yet)']);
+  },
+);
+
+// --- ssh-retry tool ---
+
+server.tool(
+  'ssh-retry',
+  'Execute a command with automatic retry and backoff on failure. Useful for flaky network commands or services that need time to start.',
+  {
+    command: z.string().describe('Shell command to execute'),
+    session: z.string().optional().describe('Session name or id. Defaults to "default"'),
+    maxRetries: z.number().int().positive().optional().describe('Maximum number of retries (default 3)'),
+    backoff: z.enum(['fixed', 'exponential']).optional().describe('Backoff strategy (default "exponential")'),
+    delayMs: z.number().int().positive().optional().describe('Base delay between retries in ms (default 1000)'),
+    successPattern: z.string().optional().describe('Regex pattern - if output matches this, consider command successful regardless of exit code'),
+    failPattern: z.string().optional().describe('Regex pattern - if output matches this, consider command failed regardless of exit code'),
+  },
+  async ({ command, session, maxRetries, backoff, delayMs, successPattern, failPattern }) => {
+    sweepSessions();
+    const ref = sanitizeOptionalText(session) || 'default';
+    const target = resolveSession(ref);
+
+    const resolvedMaxRetries = maxRetries ?? 3;
+    const resolvedBackoff = backoff ?? 'exponential';
+    const resolvedDelayMs = delayMs ?? 1000;
+    const successRe = successPattern ? new RegExp(successPattern) : null;
+    const failRe = failPattern ? new RegExp(failPattern) : null;
+
+    let lastOutput = '';
+    let lastExitCode: number | undefined;
+    let attempts = 0;
+
+    for (let attempt = 0; attempt <= resolvedMaxRetries; attempt++) {
+      attempts = attempt + 1;
+
+      // Wait before retry (not on first attempt)
+      if (attempt > 0) {
+        const waitTime = resolvedBackoff === 'exponential'
+          ? resolvedDelayMs * Math.pow(2, attempt - 1)
+          : resolvedDelayMs;
+        await delay(Math.min(waitTime, 30000));
+      }
+
+      // Execute command
+      if (target.inputLock === 'user') {
+        return createToolResponse(JSON.stringify({
+          error: 'INPUT_LOCKED',
+          lock: 'user',
+          message: 'Terminal is locked by user.',
+        }, null, 2));
+      }
+
+      target.inputLock = 'agent';
+      broadcastLock(target);
+
+      const sentinelId = randomUUID().slice(0, 8);
+      const sentinelMarker = `___MCP_DONE_${sentinelId}_`;
+      const beforeOffset = target.currentBufferEnd();
+
+      if (USE_SENTINEL_MARKER) {
+        target.write(`${command}; echo "${sentinelMarker}$?___"\n`, 'agent');
+      } else {
+        target.write(`${command}\n`, 'agent');
+      }
+
+      const completion = await target.waitForCompletion({
+        startOffset: beforeOffset,
+        maxWaitMs: 30000,
+        idleMs: 2000,
+        promptPatterns: DEFAULT_PROMPT_PATTERNS,
+        sentinel: USE_SENTINEL_MARKER ? sentinelMarker : undefined,
+      });
+
+      target.inputLock = 'none';
+      broadcastLock(target);
+
+      let output = target.read(beforeOffset, 16000).output;
+      // Strip sentinel
+      if (USE_SENTINEL_MARKER) {
+        const sentinelIdx = output.indexOf(sentinelMarker);
+        if (sentinelIdx !== -1) {
+          const lineStart = output.lastIndexOf('\n', sentinelIdx);
+          output = output.slice(0, lineStart === -1 ? sentinelIdx : lineStart);
+        }
+      }
+
+      lastOutput = output;
+      lastExitCode = completion.exitCode;
+
+      // Check success/fail patterns
+      if (successRe && successRe.test(output)) {
+        return createToolResponse(JSON.stringify({
+          command,
+          status: 'success',
+          attempts,
+          exitCode: lastExitCode,
+          sessionName: target.sessionName,
+          hint: `Command succeeded on attempt ${attempts}.`,
+        }, null, 2), [output]);
+      }
+
+      if (failRe && failRe.test(output)) {
+        continue; // Retry
+      }
+
+      // If sentinel gave us exit code 0, success
+      if (lastExitCode === 0) {
+        return createToolResponse(JSON.stringify({
+          command,
+          status: 'success',
+          attempts,
+          exitCode: 0,
+          sessionName: target.sessionName,
+          hint: `Command succeeded on attempt ${attempts}.`,
+        }, null, 2), [output]);
+      }
+
+      // If no exit code info and completed normally, assume success
+      if (lastExitCode === undefined && completion.completed) {
+        return createToolResponse(JSON.stringify({
+          command,
+          status: 'success',
+          attempts,
+          sessionName: target.sessionName,
+          hint: `Command completed on attempt ${attempts} (no exit code available).`,
+        }, null, 2), [output]);
+      }
+
+      // Otherwise retry
+    }
+
+    // All retries exhausted
+    return createToolResponse(JSON.stringify({
+      command,
+      status: 'failed',
+      attempts,
+      exitCode: lastExitCode,
+      sessionName: target.sessionName,
+      hint: `Command failed after ${attempts} attempts.`,
+    }, null, 2), [lastOutput.length > 0 ? lastOutput : '(no output)']);
   },
 );
 
