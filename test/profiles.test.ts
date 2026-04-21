@@ -1,5 +1,5 @@
-import { mkdtempSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 
 import { describe, expect, it } from 'vitest';
@@ -70,6 +70,7 @@ describe('profile config helpers', () => {
     try {
       const paths = resolveConfigFiles({ cwd: dir });
 
+      mkdirSync(dirname(paths.globalPath), { recursive: true });
       writeFileSync(paths.globalPath, JSON.stringify({
         defaults: {
           viewerHost: '127.0.0.1',
@@ -150,6 +151,7 @@ describe('profile config helpers', () => {
     try {
       const paths = resolveConfigFiles({ cwd: dir });
 
+      mkdirSync(dirname(paths.globalPath), { recursive: true });
       writeFileSync(paths.globalPath, JSON.stringify({
         defaultDevice: 'ignored-global',
         devices: [{ id: 'ignored-global', host: '10.0.0.1', user: 'global' }],
