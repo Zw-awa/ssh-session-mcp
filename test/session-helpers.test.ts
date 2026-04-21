@@ -1,21 +1,70 @@
-import { describe, expect, it } from 'vitest';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import {
-  buildSentinelCommandSuffix,
   createBufferSnapshot,
   createEventSnapshot,
-  extractExitCodeFromText,
-  findSentinelOutputInText,
   getControlSequence,
   normalizeTerminalInput,
-  parseArgv,
-  normalizeCompletionText,
   renderTerminalDashboard,
   renderViewerTranscript,
-  stripSentinelFromOutput,
   stripAnsi,
   type TranscriptEvent,
-} from '../src/index';
+} from '../src/shared';
+import {
+  extractExitCodeFromText,
+  findSentinelOutputInText,
+  normalizeCompletionText,
+} from '../src/session';
+
+let buildSentinelCommandSuffix: typeof import('../src/index').buildSentinelCommandSuffix;
+let parseArgv: typeof import('../src/index').parseArgv;
+let stripSentinelFromOutput: typeof import('../src/index').stripSentinelFromOutput;
+
+const previousEnv = {
+  SSH_MCP_DISABLE_MAIN: process.env.SSH_MCP_DISABLE_MAIN,
+  SSH_MCP_CONFIG: process.env.SSH_MCP_CONFIG,
+  BOARD_A_PASSWORD: process.env.BOARD_A_PASSWORD,
+};
+
+beforeAll(async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'ssh-mcp-session-helpers-'));
+  const configPath = join(dir, 'ssh-session-mcp.config.json');
+
+  writeFileSync(configPath, JSON.stringify({
+    defaultDevice: 'board-a',
+    devices: [
+      {
+        id: 'board-a',
+        host: '192.168.10.58',
+        user: 'orangepi',
+        auth: { passwordEnv: 'BOARD_A_PASSWORD' },
+      },
+    ],
+  }, null, 2), 'utf8');
+
+  process.env.SSH_MCP_DISABLE_MAIN = '1';
+  process.env.SSH_MCP_CONFIG = configPath;
+  process.env.BOARD_A_PASSWORD = 'dummy-password';
+
+  const indexModule = await import('../src/index');
+  buildSentinelCommandSuffix = indexModule.buildSentinelCommandSuffix;
+  parseArgv = indexModule.parseArgv;
+  stripSentinelFromOutput = indexModule.stripSentinelFromOutput;
+});
+
+afterAll(() => {
+  for (const [key, value] of Object.entries(previousEnv)) {
+    if (value === undefined) {
+      delete process.env[key];
+    } else {
+      process.env[key] = value;
+    }
+  }
+});
 
 describe('buffer snapshots', () => {
   it('returns the latest tail when offset is omitted', () => {

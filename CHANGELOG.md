@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.3] - 2026-04-21
+
+### Fixed
+- **Test module imports**: Fixed `test/session-helpers.test.ts` imports to work with modularized source code, using dynamic imports for index-only functions and proper environment isolation
+
 ## [2.6.2] - 2026-04-21
 
 ### Added
