@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.5.0] - 2026-04-21
+
+### Added
+- **Multi-device / multi-connection management**: One MCP instance can manage multiple device profiles, each with configurable defaults and authentication
+- **Per-AI instance isolation**: Run separate stdio MCP processes with different `SSH_MCP_INSTANCE` values to prevent interference between AI agents
+- **Device configuration files**: JSON config files (`ssh-session-mcp.config.json`) replace environment variables for multi-device setups
+- **New CLI command**: `npm run devices` / `node scripts/ctl.mjs devices` lists configured device profiles and defaults
+- **New MCP tools**: 
+  - `ssh-device-list`: List configured device profiles and defaults
+  - `ssh-session-set-active`: Set or clear the active session used when `session` parameter is omitted
+- **Automatic viewer port allocation**: `VIEWER_PORT=auto` selects a random free port when `0` (disabled) or fixed port is not desired
+
+### Changed
+- **Environment variable defaults**: `AUTO_OPEN_TERMINAL` now defaults to `false`, `VIEWER_PORT` defaults to `0` (disabled)
+- **Legacy single-device mode**: Environment variables (`SSH_HOST`, `SSH_USER`, etc.) remain supported but are now labeled "legacy" in `.env.example`
+- **Runtime directory structure**: Logs and state files now use per-instance directories under system-appropriate locations (XDG/AppData)
+- **CLI launch behavior**: `scripts/ctl.mjs launch` now accepts `--instance`, `--device`, and `--connection` flags for precise control
+
+### Technical
+- New modules: `src/profiles.ts` (device profile loading), `src/runtime.ts` (instance-aware path resolution)
+- Enhanced configuration resolution with fallback: config file → legacy env vars → defaults
+- Updated unit tests for profiles and runtime helpers
+- JSON schema validation for device config files using Zod
+
 ## [2.4.0] - 2026-04-21
 
 ### Added

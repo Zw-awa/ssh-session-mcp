@@ -40,9 +40,24 @@ export interface SessionTuning {
   maxHistoryLines: number;
 }
 
+export type SessionProfileSource = 'legacy-env' | 'manual' | 'profile';
+
+export interface SessionMetadata {
+  instanceId: string;
+  deviceId?: string;
+  connectionName?: string;
+  sessionRef: string;
+  profileSource: SessionProfileSource;
+}
+
 export interface SessionSummary {
   sessionId: string;
   sessionName?: string;
+  sessionRef: string;
+  instanceId: string;
+  deviceId?: string;
+  connectionName?: string;
+  profileSource: SessionProfileSource;
   host: string;
   port: number;
   user: string;
@@ -226,6 +241,7 @@ export class SSHSession {
   constructor(
     public readonly sessionId: string,
     public readonly sessionName: string | undefined,
+    public readonly metadata: SessionMetadata,
     public readonly host: string,
     public readonly port: number,
     public readonly user: string,
@@ -545,6 +561,11 @@ export class SSHSession {
     return {
       sessionId: this.sessionId,
       sessionName: this.sessionName,
+      sessionRef: this.metadata.sessionRef,
+      instanceId: this.metadata.instanceId,
+      deviceId: this.metadata.deviceId,
+      connectionName: this.metadata.connectionName,
+      profileSource: this.metadata.profileSource,
       host: this.host,
       port: this.port,
       user: this.user,

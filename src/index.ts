@@ -32,6 +32,8 @@ import {
   SSHSession,
   DEFAULT_PROMPT_PATTERNS,
   type SSHConfig,
+  type SessionMetadata,
+  type SessionProfileSource,
   type SessionTuning,
   type SessionWriteRecord,
   type CompletionResult,
@@ -39,6 +41,20 @@ import {
 import { buildDiagnosticsOverview, buildSessionDiagnosticReport } from './diagnostics.js';
 import { resolveLoggerConfig, SessionLogger, summarizeCommandMeta } from './logger.js';
 import { buildReadMoreHint, buildReadProgress, buildSnapshotReadMore } from './paging.js';
+import {
+  loadProfiles,
+  resolveDefaultDeviceId,
+  resolveDeviceProfile,
+  summarizeAuth,
+  type DeviceProfile,
+  type LoadedProfiles,
+} from './profiles.js';
+import {
+  resolveInstanceId,
+  resolveRuntimePaths,
+  resolveViewerPortSetting,
+  type ViewerPortSetting,
+} from './runtime.js';
 
 import {
   type OperationMode,
@@ -113,16 +129,27 @@ const DEFAULT_DASHBOARD_HEIGHT = argvConfig.defaultDashboardHeight ? parseInt(ar
 const DEFAULT_DASHBOARD_LEFT_CHARS = argvConfig.defaultDashboardLeftChars ? parseInt(argvConfig.defaultDashboardLeftChars, 10) : 12000;
 const DEFAULT_DASHBOARD_RIGHT_EVENTS = argvConfig.defaultDashboardRightEvents ? parseInt(argvConfig.defaultDashboardRightEvents, 10) : 40;
 const MAX_HISTORY_LINES = argvConfig.maxHistoryLines ? parseInt(argvConfig.maxHistoryLines, 10) : 4000;
+const INSTANCE_ID = resolveInstanceId(argvConfig.instance || process.env.SSH_MCP_INSTANCE);
+const RUNTIME_PATHS = resolveRuntimePaths(INSTANCE_ID);
+const PROFILES: LoadedProfiles = loadProfiles({
+  argvPath: argvConfig.config,
+  cwd: process.cwd(),
+  envPath: process.env.SSH_MCP_CONFIG,
+});
 const DEFAULT_VIEWER_HOST = argvConfig.viewerHost || process.env.VIEWER_HOST || '127.0.0.1';
-const DEFAULT_VIEWER_PORT = argvConfig.viewerPort ? parseInt(argvConfig.viewerPort, 10) : (process.env.VIEWER_PORT ? parseInt(process.env.VIEWER_PORT, 10) : 0);
+const VIEWER_PORT_SETTING: ViewerPortSetting = resolveViewerPortSetting(argvConfig.viewerPort || process.env.VIEWER_PORT);
 const DEFAULT_VIEWER_REFRESH_MS = argvConfig.viewerRefreshMs ? parseInt(argvConfig.viewerRefreshMs, 10) : 1000;
-const LOG_CONFIG = resolveLoggerConfig(argvConfig.logMode || process.env.SSH_MCP_LOG_MODE, argvConfig.logDir || process.env.SSH_MCP_LOG_DIR);
+const LOG_CONFIG = resolveLoggerConfig(
+  argvConfig.logMode || process.env.SSH_MCP_LOG_MODE,
+  argvConfig.logDir || process.env.SSH_MCP_LOG_DIR,
+  RUNTIME_PATHS.logDir,
+);
 const SSH_CONNECT_TIMEOUT_MS = 30000;
 const AUTO_OPEN_TERMINAL = argvConfig.autoOpenTerminal === 'true' || argvConfig.autoOpenTerminal === '1' || process.env.AUTO_OPEN_TERMINAL === 'true' || process.env.AUTO_OPEN_TERMINAL === '1';
 const VIEWER_LAUNCH_MODE: ViewerLaunchMode = (argvConfig.viewerLaunchMode || process.env.VIEWER_LAUNCH_MODE || 'browser') as ViewerLaunchMode;
 let OPERATION_MODE: OperationMode = (argvConfig.mode || process.env.SSH_MCP_MODE || 'safe') as OperationMode;
 const USE_SENTINEL_MARKER = (argvConfig.useMarker || process.env.SSH_MCP_USE_MARKER || 'true') !== 'false';
-const VIEWER_STATE_FILE = new URL('../.viewer-processes.json', import.meta.url);
+const VIEWER_STATE_FILE = RUNTIME_PATHS.viewerStateFile;
 const VIEWER_CLI_ENTRY_PATH = fileURLToPath(new URL('./viewer-cli.js', import.meta.url));
 
 type ViewerLaunchMode = 'terminal' | 'browser';
@@ -159,6 +186,8 @@ const viewerBindings = new Map<string, ViewerBindingState>();
 let viewerServer: HttpServer | undefined;
 let viewerWss: WebSocketServer | undefined;
 let viewerStateLoaded = false;
+let activeSessionId: string | undefined;
+let actualViewerPort = VIEWER_PORT_SETTING.mode === 'fixed' ? VIEWER_PORT_SETTING.port || 0 : 0;
 const logger = new SessionLogger(LOG_CONFIG);
 
 function validateConfig(config: Record<string, string | null>) {
@@ -187,7 +216,7 @@ function validateConfig(config: Record<string, string | null>) {
     .filter(field => config[field] && Number.isNaN(Number(config[field])))
     .map(field => `Invalid --${field}`);
 
-  if (config.viewerPort) {
+  if (config.viewerPort && config.viewerPort !== 'auto') {
     const viewerPort = Number(config.viewerPort);
     if (!Number.isInteger(viewerPort) || viewerPort < 0 || viewerPort > 65535) {
       errors.push('Invalid --viewerPort');
@@ -214,20 +243,27 @@ function viewerModeValue(value: string | undefined): ViewerLaunchMode {
   return value === 'browser' ? 'browser' : 'terminal';
 }
 
-function buildConnectionKey(host: string, port: number, user: string) {
-  return `${user}@${host}:${port}`;
+function buildConnectionKey(host: string, port: number, user: string, connectionName?: string) {
+  const base = `${user}@${host}:${port}`;
+  return connectionName ? `${base}/${connectionName}` : base;
 }
 
-function buildViewerBindingKeyForSession(session: SSHSession, scope: ViewerSingletonScope) {
+function sessionConnectionName(session: SSHSession | ReturnType<SSHSession['summary']>) {
+  return session instanceof SSHSession
+    ? session.metadata.connectionName
+    : session.connectionName;
+}
+
+function buildViewerBindingKeyForSession(session: SSHSession | ReturnType<SSHSession['summary']>, scope: ViewerSingletonScope) {
   if (scope === 'session') {
     return `session:${session.sessionId}`;
   }
 
-  return `connection:${buildConnectionKey(session.host, session.port, session.user)}`;
+  return `connection:${buildConnectionKey(session.host, session.port, session.user, sessionConnectionName(session))}`;
 }
 
 function buildViewerBindingTitle(host: string, port: number, user: string) {
-  return `SSH Session MCP Viewer - ${user}@${host}:${port}`;
+  return `SSH Session MCP Viewer - ${INSTANCE_ID} - ${user}@${host}:${port}`;
 }
 
 function buildViewerBindingUrl(bindingKey: string) {
@@ -298,7 +334,29 @@ function normalizeViewerProcessState(value: unknown): ViewerProcessState | undef
 
 async function saveViewerProcessState() {
   const records = [...viewerProcesses.values()];
+  await fs.mkdir(RUNTIME_PATHS.instanceDir, { recursive: true });
   await fs.writeFile(VIEWER_STATE_FILE, JSON.stringify(records, null, 2), 'utf8');
+}
+
+async function saveServerInfoState() {
+  await fs.mkdir(RUNTIME_PATHS.instanceDir, { recursive: true });
+  await fs.writeFile(RUNTIME_PATHS.serverInfoFile, JSON.stringify({
+    instanceId: INSTANCE_ID,
+    pid: process.pid,
+    startedAt: new Date().toISOString(),
+    viewerHost: DEFAULT_VIEWER_HOST,
+    viewerPort: actualViewerPort,
+    viewerBaseUrl: getViewerBaseUrl(),
+    configPath: PROFILES.path,
+  }, null, 2), 'utf8');
+}
+
+async function removeServerInfoState() {
+  try {
+    await fs.unlink(RUNTIME_PATHS.serverInfoFile);
+  } catch {
+    // ignore
+  }
 }
 
 async function loadViewerProcessState() {
@@ -358,7 +416,7 @@ async function refreshViewerProcessState(bindingKey: string) {
 }
 
 function upsertViewerBinding(session: SSHSession, scope: ViewerSingletonScope) {
-  const connectionKey = buildConnectionKey(session.host, session.port, session.user);
+  const connectionKey = buildConnectionKey(session.host, session.port, session.user, session.metadata.connectionName);
   const bindingKey = buildViewerBindingKeyForSession(session, scope);
   const updatedAt = new Date().toISOString();
 
@@ -416,11 +474,148 @@ interface RunningCommand {
 const runningCommands = new Map<string, RunningCommand>();
 
 function logServerEvent(event: string, data?: Record<string, unknown>) {
-  void logger.logServer(event, data);
+  void logger.logServer(event, {
+    instanceId: INSTANCE_ID,
+    ...data,
+  });
 }
 
 function logSessionEvent(sessionId: string, event: string, data?: Record<string, unknown>) {
-  void logger.logSession(sessionId, event, data);
+  void logger.logSession(sessionId, event, {
+    instanceId: INSTANCE_ID,
+    ...data,
+  });
+}
+
+function sessionDisplayName(session: SSHSession | ReturnType<SSHSession['summary']>) {
+  return session instanceof SSHSession
+    ? session.metadata.sessionRef || session.sessionName || session.sessionId
+    : session.sessionRef || session.sessionName || session.sessionId;
+}
+
+function sessionReadRef(session: SSHSession) {
+  return session.metadata.sessionRef || session.sessionName || session.sessionId;
+}
+
+function pickMostRecentOpenSession() {
+  return [...sessions.values()]
+    .filter(session => !session.closed)
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0];
+}
+
+function setActiveSession(session: SSHSession | undefined) {
+  activeSessionId = session?.sessionId;
+}
+
+function refreshActiveSession() {
+  if (activeSessionId) {
+    const active = sessions.get(activeSessionId);
+    if (active && !active.closed) {
+      return active;
+    }
+  }
+
+  const next = pickMostRecentOpenSession();
+  activeSessionId = next?.sessionId;
+  return next;
+}
+
+function allocateConnectionName(deviceId: string, requested: string | undefined) {
+  const normalizedRequested = sanitizeOptionalText(requested);
+  const activeDeviceSessions = [...sessions.values()]
+    .filter(session => !session.closed && session.metadata.deviceId === deviceId)
+    .map(session => session.metadata.connectionName)
+    .filter((value): value is string => typeof value === 'string');
+
+  if (normalizedRequested) {
+    if (activeDeviceSessions.includes(normalizedRequested)) {
+      throw new McpError(ErrorCode.InvalidParams, `Connection name already exists on device "${deviceId}": ${normalizedRequested}`);
+    }
+    return normalizedRequested;
+  }
+
+  if (!activeDeviceSessions.includes('main')) {
+    return 'main';
+  }
+
+  let index = 2;
+  while (activeDeviceSessions.includes(`main-${index}`)) {
+    index += 1;
+  }
+
+  return `main-${index}`;
+}
+
+function buildSessionMetadata(options: {
+  connectionName?: string;
+  deviceId?: string;
+  profileSource: SessionProfileSource;
+  sessionId: string;
+  sessionName?: string;
+}): SessionMetadata {
+  const sessionName = sanitizeOptionalText(options.sessionName);
+  const connectionName = sanitizeOptionalText(options.connectionName);
+  const deviceId = sanitizeOptionalText(options.deviceId);
+  const sessionRef = deviceId && connectionName
+    ? `${deviceId}/${connectionName}`
+    : (sessionName || options.sessionId);
+
+  return {
+    instanceId: INSTANCE_ID,
+    deviceId,
+    connectionName,
+    sessionRef,
+    profileSource: options.profileSource,
+  };
+}
+
+function resolveConfiguredDefaultDeviceId() {
+  return resolveDefaultDeviceId(PROFILES);
+}
+
+function resolveProfileOrThrow(deviceId: string) {
+  const profile = resolveDeviceProfile(PROFILES, deviceId);
+  if (!profile) {
+    throw new McpError(ErrorCode.InvalidParams, `Unknown device profile: ${deviceId}`);
+  }
+  return profile;
+}
+
+function findOpenSessionByName(sessionName: string) {
+  return [...sessions.values()].find(session => !session.closed && session.sessionName === sessionName);
+}
+
+function findOpenProfileSession(deviceId: string, connectionName: string) {
+  return [...sessions.values()].find(session =>
+    !session.closed
+    && session.metadata.deviceId === deviceId
+    && session.metadata.connectionName === connectionName,
+  );
+}
+
+function inferProfileSource(options: {
+  deviceId?: string;
+  host?: string;
+  port?: number;
+  user?: string;
+  password?: string;
+  key?: string;
+}): SessionProfileSource {
+  if (sanitizeOptionalText(options.deviceId)) {
+    return 'profile';
+  }
+
+  if (
+    sanitizeOptionalText(options.host)
+    || sanitizeOptionalText(options.user)
+    || sanitizeOptionalText(options.password)
+    || sanitizeOptionalText(options.key)
+    || typeof options.port === 'number'
+  ) {
+    return 'manual';
+  }
+
+  return 'legacy-env';
 }
 
 function findRunningCommandForSession(sessionId: string) {
@@ -541,6 +736,9 @@ function sweepSessions(nowMs = Date.now()) {
       logSessionEvent(sessionId, 'session.pruned', {});
       logServerEvent('session.pruned', { sessionId });
       sessions.delete(sessionId);
+      if (activeSessionId === sessionId) {
+        setActiveSession(undefined);
+      }
     }
   }
 
@@ -574,14 +772,35 @@ function sweepSessions(nowMs = Date.now()) {
   }
 }
 
-function resolveSession(sessionRef: string): SSHSession {
+function resolveSession(sessionRef?: string): SSHSession {
   sweepSessions();
 
-  if (sessions.has(sessionRef)) {
-    return sessions.get(sessionRef)!;
+  const explicitRef = sanitizeOptionalText(sessionRef);
+  if (!explicitRef) {
+    const active = refreshActiveSession();
+    if (active) {
+      return active;
+    }
+
+    const openSessions = [...sessions.values()].filter(session => !session.closed);
+    if (openSessions.length === 1) {
+      return openSessions[0];
+    }
+
+    if (openSessions.length > 1) {
+      throw new McpError(ErrorCode.InvalidParams, 'Multiple active sessions exist. Pass session explicitly or set an active session first.');
+    }
+
+    throw new McpError(ErrorCode.InvalidParams, 'No active session available.');
   }
 
-  const allMatches = [...sessions.values()].filter(session => session.sessionName === sessionRef);
+  if (sessions.has(explicitRef)) {
+    return sessions.get(explicitRef)!;
+  }
+
+  const allMatches = [...sessions.values()].filter(session =>
+    session.metadata.sessionRef === explicitRef || session.sessionName === explicitRef,
+  );
   const activeMatches = allMatches.filter(session => !session.closed);
 
   if (activeMatches.length === 1) {
@@ -589,7 +808,7 @@ function resolveSession(sessionRef: string): SSHSession {
   }
 
   if (activeMatches.length > 1) {
-    throw new McpError(ErrorCode.InvalidParams, `Multiple active sessions share the name "${sessionRef}". Use the sessionId instead.`);
+    throw new McpError(ErrorCode.InvalidParams, `Multiple active sessions match "${explicitRef}". Use the sessionId instead.`);
   }
 
   if (allMatches.length === 1) {
@@ -597,10 +816,10 @@ function resolveSession(sessionRef: string): SSHSession {
   }
 
   if (allMatches.length > 1) {
-    throw new McpError(ErrorCode.InvalidParams, `Multiple retained sessions share the name "${sessionRef}". Use the sessionId instead.`);
+    throw new McpError(ErrorCode.InvalidParams, `Multiple retained sessions match "${explicitRef}". Use the sessionId instead.`);
   }
 
-  throw new McpError(ErrorCode.InvalidParams, `Unknown session: ${sessionRef}`);
+  throw new McpError(ErrorCode.InvalidParams, `Unknown session: ${explicitRef}`);
 }
 
 function resolveSessionForBinding(bindingKey: string) {
@@ -645,6 +864,110 @@ async function readPrivateKey(keyPath: string | undefined): Promise<string | und
   return fs.readFile(safePath, 'utf8');
 }
 
+function resolvePassword(options: {
+  explicitPassword?: string;
+  profile?: DeviceProfile;
+}) {
+  const explicitPassword = sanitizeOptionalText(options.explicitPassword);
+  if (explicitPassword) {
+    return explicitPassword;
+  }
+
+  const passwordEnv = options.profile?.auth?.passwordEnv;
+  if (passwordEnv && process.env[passwordEnv]) {
+    return process.env[passwordEnv];
+  }
+
+  return DEFAULT_PASSWORD;
+}
+
+async function resolvePrivateKey(options: {
+  explicitKeyPath?: string;
+  profile?: DeviceProfile;
+}) {
+  const explicitKeyPath = sanitizeOptionalText(options.explicitKeyPath);
+  if (explicitKeyPath) {
+    return readPrivateKey(explicitKeyPath);
+  }
+
+  const profileKeyPath = sanitizeOptionalText(options.profile?.auth?.keyPath);
+  if (profileKeyPath) {
+    return readPrivateKey(profileKeyPath);
+  }
+
+  return readPrivateKey(DEFAULT_KEY);
+}
+
+async function openSSHSession(options: {
+  cols: number;
+  closedRetentionMs: number;
+  host: string;
+  idleTimeoutMs: number;
+  keyPath?: string;
+  metadata: SessionMetadata;
+  password?: string;
+  profile?: DeviceProfile;
+  port: number;
+  rows: number;
+  sessionId: string;
+  sessionName?: string;
+  term: string;
+  user: string;
+}) {
+  const sshConfig: SSHConfig = {
+    host: options.host,
+    port: options.port,
+    username: options.user,
+  };
+
+  const resolvedPassword = resolvePassword({
+    explicitPassword: options.password,
+    profile: options.profile,
+  });
+  if (resolvedPassword) {
+    sshConfig.password = resolvedPassword;
+  } else {
+    const privateKey = await resolvePrivateKey({
+      explicitKeyPath: options.keyPath,
+      profile: options.profile,
+    });
+    if (privateKey) {
+      sshConfig.privateKey = privateKey;
+    }
+  }
+
+  const connection = new SSHConnection(sshConfig, SSH_CONNECT_TIMEOUT_MS);
+  await connection.connect();
+
+  const client = connection.getClient();
+  return new Promise<SSHSession>((resolve, reject) => {
+    client.shell({ term: options.term, cols: options.cols, rows: options.rows }, (err, stream) => {
+      if (err) {
+        connection.close();
+        reject(new McpError(ErrorCode.InternalError, `Failed to open SSH shell: ${err.message}`));
+        return;
+      }
+
+      resolve(new SSHSession(
+        options.sessionId,
+        options.sessionName,
+        options.metadata,
+        options.host,
+        options.port,
+        options.user,
+        options.cols,
+        options.rows,
+        options.term,
+        options.idleTimeoutMs,
+        options.closedRetentionMs,
+        tuning,
+        connection,
+        stream,
+      ));
+    });
+  });
+}
+
 function createToolResponse(primaryText: string, extraTexts: string[] = []) {
   return {
     content: [
@@ -654,10 +977,6 @@ function createToolResponse(primaryText: string, extraTexts: string[] = []) {
         .map(text => ({ type: 'text' as const, text })),
     ],
   };
-}
-
-function sessionReadRef(session: SSHSession) {
-  return session.sessionName || session.sessionId;
 }
 
 function escapeRegExp(value: string): string {
@@ -720,9 +1039,7 @@ function buildDashboardState(session: SSHSession, options: {
     Math.max(options.leftChars, options.width * options.height * 2),
   );
   const transcriptText = renderViewerTranscript(transcriptSnapshot.events, options.stripAnsiFromLeft);
-  const titleBase = session.sessionName
-    ? `SSH ${session.sessionName} ${session.user}@${session.host}:${session.port}`
-    : `SSH ${session.user}@${session.host}:${session.port}`;
+  const titleBase = `SSH ${sessionDisplayName(session)} ${session.user}@${session.host}:${session.port}`;
   const title = session.closed ? `${titleBase} [closed]` : titleBase;
 
   return {
@@ -748,11 +1065,11 @@ function viewerHostForUrl(host: string) {
 }
 
 function getViewerBaseUrl() {
-  if (DEFAULT_VIEWER_PORT <= 0) {
+  if (actualViewerPort <= 0) {
     return undefined;
   }
 
-  return `http://${viewerHostForUrl(DEFAULT_VIEWER_HOST)}:${DEFAULT_VIEWER_PORT}`;
+  return `http://${viewerHostForUrl(DEFAULT_VIEWER_HOST)}:${actualViewerPort}`;
 }
 
 function buildViewerSessionUrl(session: SSHSession) {
@@ -1035,7 +1352,7 @@ async function terminateViewerProcess(pid: number | undefined) {
 }
 
 async function launchTerminalViewer(binding: ViewerBindingState) {
-  if (DEFAULT_VIEWER_PORT <= 0) {
+  if (!getViewerBaseUrl() || actualViewerPort <= 0) {
     throw new McpError(ErrorCode.InvalidRequest, 'viewerPort is disabled. Restart the MCP server with --viewerPort=<port> before launching a viewer terminal.');
   }
 
@@ -1049,7 +1366,7 @@ async function launchTerminalViewer(binding: ViewerBindingState) {
     `'${escapePowerShellText(VIEWER_CLI_ENTRY_PATH)}'`,
     `'--binding=${escapePowerShellText(binding.bindingKey)}'`,
     `'--host=${escapePowerShellText(viewerHostForUrl(DEFAULT_VIEWER_HOST))}'`,
-    `'--port=${DEFAULT_VIEWER_PORT}'`,
+    `'--port=${actualViewerPort}'`,
     `'--intervalMs=${DEFAULT_VIEWER_REFRESH_MS}'`,
     '\'--interactive=true\'',
     '\'--statusBar=false\'',
@@ -1339,14 +1656,14 @@ function renderViewerHomePage() {
           // PREPARE_DEPRECATION: Session View / Binding View keep old polling pages reachable during transition.
           const sessionUrl = `${baseUrl}/session/${encodeURIComponent(session.sessionId)}`;
           const terminalUrl = `${baseUrl}/terminal/session/${encodeURIComponent(session.sessionId)}`;
-          const bindingKey = buildViewerBindingKeyForSession(session as any, 'connection');
+          const bindingKey = buildViewerBindingKeyForSession(session, 'connection');
           const bindingUrl = `${baseUrl}/binding/${encodeURIComponent(bindingKey)}`;
           return `
             <div class="session-card">
               <div class="session-header">
                 <div>
-                  <div class="session-title">${escapeHtml(session.sessionName || session.sessionId)}</div>
-                  <div class="session-meta">${session.user}@${session.host}:${session.port}</div>
+                  <div class="session-title">${escapeHtml(sessionDisplayName(session))}</div>
+                  <div class="session-meta">${session.user}@${session.host}:${session.port}${session.deviceId ? ` • device=${escapeHtml(session.deviceId)}` : ''}${session.connectionName ? ` • connection=${escapeHtml(session.connectionName)}` : ''}</div>
                 </div>
                 <div class="session-actions">
                   <a href="${terminalUrl}" class="btn btn-primary" target="_blank">Terminal</a>
@@ -2054,8 +2371,13 @@ function renderInteractiveAttachPage(options: {
 // PREPARE_DEPRECATION: Compatibility wrapper for the legacy /session/* browser page.
 function renderViewerSessionPage(sessionRef: string) {
   const baseUrl = getViewerBaseUrl() || '';
-  const session = sessions.get(sessionRef) || [...sessions.values()].find(s => s.sessionName === sessionRef);
-  const sessionData = session ? session.summary() : null;
+  let sessionData: ReturnType<SSHSession['summary']> | null = null;
+
+  try {
+    sessionData = resolveSession(sessionRef).summary();
+  } catch {
+    sessionData = null;
+  }
 
   if (!sessionData) {
     return renderViewerErrorPage({
@@ -2075,7 +2397,7 @@ function renderViewerSessionPage(sessionRef: string) {
     footerValue: sessionRef,
     meta: `${sessionData.user}@${sessionData.host}:${sessionData.port}\nCreated: ${new Date(sessionData.createdAt).toLocaleString()}\nLast activity: ${new Date(sessionData.updatedAt).toLocaleString()}`,
     subtitle: 'Interactive browser attach view',
-    title: sessionData.sessionName || sessionData.sessionId,
+    title: sessionDisplayName(sessionData),
   });
 }
 
@@ -2104,7 +2426,7 @@ function renderViewerBindingPage(bindingKey: string) {
     footerValue: bindingKey,
     meta: `${sessionData.user}@${sessionData.host}:${sessionData.port}\nBinding: ${bindingKey}\nCreated: ${new Date(sessionData.createdAt).toLocaleString()}\nLast activity: ${new Date(sessionData.updatedAt).toLocaleString()}`,
     subtitle: 'Interactive browser attach view',
-    title: sessionData.sessionName || sessionData.sessionId,
+    title: sessionDisplayName(sessionData),
   });
 }
 
@@ -2606,8 +2928,13 @@ function renderXtermTerminalPage(options: {
 
 function renderXtermSessionPage(sessionRef: string) {
   const baseUrl = getViewerBaseUrl() || '';
-  const session = sessions.get(sessionRef) || [...sessions.values()].find(s => s.sessionName === sessionRef);
-  const sessionData = session ? session.summary() : null;
+  let sessionData: ReturnType<SSHSession['summary']> | null = null;
+
+  try {
+    sessionData = resolveSession(sessionRef).summary();
+  } catch {
+    sessionData = null;
+  }
 
   if (!sessionData) {
     return renderViewerErrorPage({
@@ -2627,7 +2954,7 @@ function renderXtermSessionPage(sessionRef: string) {
     footerValue: sessionRef,
     meta: `${sessionData.user}@${sessionData.host}:${sessionData.port}`,
     subtitle: 'Shared SSH Terminal',
-    title: sessionData.sessionName || sessionData.sessionId,
+    title: sessionDisplayName(sessionData),
   });
 }
 
@@ -2655,12 +2982,12 @@ function renderXtermBindingPage(bindingKey: string) {
     footerValue: bindingKey,
     meta: `${sessionData.user}@${sessionData.host}:${sessionData.port}`,
     subtitle: 'Shared SSH Terminal',
-    title: sessionData.sessionName || sessionData.sessionId,
+    title: sessionDisplayName(sessionData),
   });
 }
 
 async function startViewerServer() {
-  if (DEFAULT_VIEWER_PORT <= 0 || viewerServer) {
+  if (!VIEWER_PORT_SETTING.enabled || viewerServer) {
     return;
   }
 
@@ -2718,7 +3045,10 @@ async function startViewerServer() {
       if (url.pathname === '/health') {
         writeJson(200, {
           ok: true,
+          instanceId: INSTANCE_ID,
+          configPath: PROFILES.path,
           viewerBaseUrl: getViewerBaseUrl(),
+          viewerPort: actualViewerPort || undefined,
           sessions: sessions.size,
         });
         return;
@@ -2727,7 +3057,10 @@ async function startViewerServer() {
       if (url.pathname === '/api/sessions') {
         sweepSessions();
         writeJson(200, {
+          instanceId: INSTANCE_ID,
+          activeSessionRef: refreshActiveSession()?.metadata.sessionRef || null,
           viewerBaseUrl: getViewerBaseUrl(),
+          viewerPort: actualViewerPort || undefined,
           sessions: [...sessions.values()]
             .map(session => ({
               ...session.summary(),
@@ -2939,15 +3272,21 @@ async function startViewerServer() {
 
   await new Promise<void>((resolve, reject) => {
     viewerServer!.once('error', reject);
-    viewerServer!.listen(DEFAULT_VIEWER_PORT, DEFAULT_VIEWER_HOST, () => {
+    viewerServer!.listen(VIEWER_PORT_SETTING.mode === 'fixed' ? VIEWER_PORT_SETTING.port : 0, DEFAULT_VIEWER_HOST, () => {
       viewerServer!.off('error', reject);
+      const address = viewerServer!.address();
+      if (address && typeof address === 'object') {
+        actualViewerPort = address.port;
+      }
       resolve();
     });
   });
   logServerEvent('viewer_server.started', {
     host: DEFAULT_VIEWER_HOST,
-    port: DEFAULT_VIEWER_PORT,
+    port: actualViewerPort,
+    mode: VIEWER_PORT_SETTING.mode,
   });
+  await saveServerInfoState();
 
   const wss = new WebSocketServer({ noServer: true });
   viewerWss = wss;
@@ -2983,6 +3322,7 @@ function closeAllSessions(reason: string) {
     }
   }
   sessions.clear();
+  setActiveSession(undefined);
   logServerEvent('server.close_all_sessions', { reason });
 }
 
@@ -3000,6 +3340,8 @@ server.tool(
   'Open a persistent interactive SSH PTY session with automatic idle cleanup and a terminal-style dashboard view.',
   {
     sessionName: z.string().optional().describe('Optional human-readable alias for the session'),
+    device: z.string().optional().describe('Device profile id from ssh-session-mcp.config.json'),
+    connectionName: z.string().optional().describe('Logical connection name for the selected device'),
     host: z.string().optional().describe('SSH host. Falls back to server --host if omitted'),
     port: z.number().int().positive().optional().describe('SSH port. Falls back to server --port or 22'),
     user: z.string().optional().describe('SSH username. Falls back to server --user if omitted'),
@@ -3025,6 +3367,8 @@ server.tool(
   },
   async ({
     sessionName,
+    device,
+    connectionName,
     host,
     port,
     user,
@@ -3048,8 +3392,16 @@ server.tool(
     viewerMode,
     viewerSingletonScope,
   }) => {
-    const resolvedHost = sanitizeOptionalText(host) || DEFAULT_HOST;
-    const resolvedUser = sanitizeOptionalText(user) || DEFAULT_USER;
+    const resolvedDeviceId = sanitizeOptionalText(device);
+    const profile = resolvedDeviceId ? resolveProfileOrThrow(resolvedDeviceId) : undefined;
+    const profileDefaults = profile?.defaults;
+
+    if (!resolvedDeviceId && sanitizeOptionalText(connectionName)) {
+      throw new McpError(ErrorCode.InvalidParams, 'connectionName requires device');
+    }
+
+    const resolvedHost = sanitizeOptionalText(host) || profile?.host || DEFAULT_HOST;
+    const resolvedUser = sanitizeOptionalText(user) || profile?.user || DEFAULT_USER;
 
     if (!resolvedHost) {
       throw new McpError(ErrorCode.InvalidParams, 'host is required unless the server was started with --host');
@@ -3062,12 +3414,12 @@ server.tool(
     const resolvedSessionName = sanitizeOptionalText(sessionName);
     ensureUniqueSessionName(resolvedSessionName);
 
-    const resolvedPort = sanitizePort(port, DEFAULT_PORT);
-    const resolvedTerm = sanitizeOptionalText(term) || DEFAULT_TERM;
-    const resolvedCols = sanitizePositiveInt(cols, 'cols', DEFAULT_COLS);
-    const resolvedRows = sanitizePositiveInt(rows, 'rows', DEFAULT_ROWS);
-    const resolvedIdleTimeoutMs = sanitizeNonNegativeInt(idleTimeoutMs, 'idleTimeoutMs', DEFAULT_TIMEOUT);
-    const resolvedClosedRetentionMs = sanitizeNonNegativeInt(closedRetentionMs, 'closedRetentionMs', DEFAULT_CLOSED_RETENTION_MS);
+    const resolvedPort = sanitizePort(port, profile?.port ?? DEFAULT_PORT);
+    const resolvedTerm = sanitizeOptionalText(term) || profileDefaults?.term || DEFAULT_TERM;
+    const resolvedCols = sanitizePositiveInt(cols, 'cols', profileDefaults?.cols ?? DEFAULT_COLS);
+    const resolvedRows = sanitizePositiveInt(rows, 'rows', profileDefaults?.rows ?? DEFAULT_ROWS);
+    const resolvedIdleTimeoutMs = sanitizeNonNegativeInt(idleTimeoutMs, 'idleTimeoutMs', profileDefaults?.idleTimeoutMs ?? DEFAULT_TIMEOUT);
+    const resolvedClosedRetentionMs = sanitizeNonNegativeInt(closedRetentionMs, 'closedRetentionMs', profileDefaults?.closedRetentionMs ?? DEFAULT_CLOSED_RETENTION_MS);
     const resolvedWaitMs = sanitizeNonNegativeInt(startupWaitMs, 'startupWaitMs', 200);
     const resolvedDashboardWidth = sanitizePositiveInt(dashboardWidth, 'dashboardWidth', DEFAULT_DASHBOARD_WIDTH);
     const resolvedDashboardHeight = sanitizePositiveInt(dashboardHeight, 'dashboardHeight', DEFAULT_DASHBOARD_HEIGHT);
@@ -3075,66 +3427,75 @@ server.tool(
     const resolvedDashboardRightEvents = sanitizePositiveInt(dashboardRightEvents, 'dashboardRightEvents', DEFAULT_DASHBOARD_RIGHT_EVENTS);
     const resolvedStripAnsi = stripAnsiFromLeft !== false;
     const resolvedIncludeDashboard = includeDashboard !== false;
-    const resolvedAutoOpenViewer = autoOpenViewer === true;
-    const resolvedViewerMode = viewerModeValue(viewerMode);
+    const resolvedAutoOpenViewer = typeof autoOpenViewer === 'boolean'
+      ? autoOpenViewer
+      : profileDefaults?.autoOpenViewer === true;
+    const resolvedViewerMode = viewerModeValue(
+      viewerMode
+      || profileDefaults?.viewerMode
+      || VIEWER_LAUNCH_MODE,
+    );
     const resolvedViewerScope = viewerScopeValue(viewerSingletonScope);
 
-    const sshConfig: SSHConfig = {
-      host: resolvedHost,
-      port: resolvedPort,
-      username: resolvedUser,
-    };
-
-    const resolvedPassword = sanitizeOptionalText(password) || DEFAULT_PASSWORD;
-    const resolvedKey = sanitizeOptionalText(key) || DEFAULT_KEY;
-    if (resolvedPassword) {
-      sshConfig.password = resolvedPassword;
-    } else if (resolvedKey) {
-      sshConfig.privateKey = await readPrivateKey(resolvedKey);
-    }
-
-    const connection = new SSHConnection(sshConfig, SSH_CONNECT_TIMEOUT_MS);
-    await connection.connect();
-
     const sessionId = randomUUID();
-    const client = connection.getClient();
-    const session = await new Promise<SSHSession>((resolve, reject) => {
-      client.shell({ term: resolvedTerm, cols: resolvedCols, rows: resolvedRows }, (err, stream) => {
-        if (err) {
-          connection.close();
-          reject(new McpError(ErrorCode.InternalError, `Failed to open SSH shell: ${err.message}`));
-          return;
-        }
+    const resolvedConnectionName = resolvedDeviceId
+      ? allocateConnectionName(resolvedDeviceId, connectionName)
+      : undefined;
+    const profileSource = inferProfileSource({
+      deviceId: resolvedDeviceId,
+      host,
+      port,
+      user,
+      password,
+      key,
+    });
+    const metadata = buildSessionMetadata({
+      connectionName: resolvedConnectionName,
+      deviceId: resolvedDeviceId,
+      profileSource,
+      sessionId,
+      sessionName: resolvedSessionName,
+    });
 
-        resolve(new SSHSession(
-          sessionId,
-          resolvedSessionName,
-          resolvedHost,
-          resolvedPort,
-          resolvedUser,
-          resolvedCols,
-          resolvedRows,
-          resolvedTerm,
-          resolvedIdleTimeoutMs,
-          resolvedClosedRetentionMs,
-          tuning,
-          connection,
-          stream,
-        ));
-      });
+    const session = await openSSHSession({
+      cols: resolvedCols,
+      closedRetentionMs: resolvedClosedRetentionMs,
+      host: resolvedHost,
+      idleTimeoutMs: resolvedIdleTimeoutMs,
+      keyPath: key,
+      metadata,
+      password,
+      profile,
+      port: resolvedPort,
+      rows: resolvedRows,
+      sessionId,
+      sessionName: resolvedSessionName,
+      term: resolvedTerm,
+      user: resolvedUser,
     });
 
     sessions.set(session.sessionId, session);
+    setActiveSession(session);
     logSessionEvent(session.sessionId, 'session.opened', {
+      authSource: profile ? summarizeAuth(profile) : (sanitizeOptionalText(password) ? 'password' : sanitizeOptionalText(key) ? 'keyPath' : DEFAULT_PASSWORD ? 'password' : DEFAULT_KEY ? 'keyPath' : 'none'),
+      connectionName: resolvedConnectionName,
+      deviceId: resolvedDeviceId,
       host: resolvedHost,
       port: resolvedPort,
+      profileSource,
+      sessionRef: metadata.sessionRef,
       sessionName: resolvedSessionName,
       user: resolvedUser,
     });
     logServerEvent('session.opened', {
-      sessionId: session.sessionId,
+      authSource: profile ? summarizeAuth(profile) : (sanitizeOptionalText(password) ? 'password' : sanitizeOptionalText(key) ? 'keyPath' : DEFAULT_PASSWORD ? 'password' : DEFAULT_KEY ? 'keyPath' : 'none'),
+      connectionName: resolvedConnectionName,
+      deviceId: resolvedDeviceId,
       host: resolvedHost,
       port: resolvedPort,
+      profileSource,
+      sessionId: session.sessionId,
+      sessionRef: metadata.sessionRef,
       sessionName: resolvedSessionName,
       user: resolvedUser,
     });
@@ -3165,9 +3526,9 @@ server.tool(
     }
     let autoOpenTerminalUrl: string | undefined;
     let autoOpenTerminalError: string | undefined;
-    if (AUTO_OPEN_TERMINAL && DEFAULT_VIEWER_PORT > 0) {
+    if (AUTO_OPEN_TERMINAL && getViewerBaseUrl()) {
       try {
-        const termUrl = `http://${viewerHostForUrl(DEFAULT_VIEWER_HOST)}:${DEFAULT_VIEWER_PORT}/terminal/session/${encodeURIComponent(session.sessionId)}`;
+        const termUrl = `${getViewerBaseUrl()}/terminal/session/${encodeURIComponent(session.sessionId)}`;
         if (VIEWER_LAUNCH_MODE === 'terminal') {
           await ensureViewerForSession(session, {
             mode: 'terminal',
@@ -3191,6 +3552,7 @@ server.tool(
 
     return createToolResponse(JSON.stringify({
       ...session.summary(),
+      activeSession: true,
       nextOutputOffset: session.currentBufferEnd(),
       nextEventSeq: session.currentEventEnd(),
       dashboardWidth: resolvedDashboardWidth,
@@ -3205,6 +3567,7 @@ server.tool(
       autoOpenViewer: resolvedAutoOpenViewer,
       viewerMode: resolvedViewerMode,
       viewerSingletonScope: resolvedViewerScope,
+      viewerPort: actualViewerPort || undefined,
       viewerState,
       viewerAutoOpenError,
       autoOpenTerminalUrl,
@@ -3217,13 +3580,13 @@ server.tool(
   'ssh-session-send',
   'Send raw input to an interactive SSH PTY session. Actor is shown inline in the dashboard transcript.',
   {
-    session: z.string().describe('Session id or unique session name'),
+    session: z.string().optional().describe('Session id, session ref, or session name. Defaults to the active session'),
     input: z.string().describe('Raw text to send into the PTY'),
     appendNewline: z.boolean().optional().describe('Append a newline after the input'),
     actor: z.string().optional().describe('Label for the sender shown inline in the dashboard, e.g. codex, claude, user'),
   },
   async ({ session, input, appendNewline, actor }) => {
-    const target = resolveSession(sanitizeRequiredText(session, 'session'));
+    const target = resolveSession(session);
     if (input.length === 0) {
       throw new McpError(ErrorCode.InvalidParams, 'input cannot be empty');
     }
@@ -3255,16 +3618,49 @@ server.tool(
 );
 
 server.tool(
+  'ssh-device-list',
+  'List configured SSH device profiles discovered from ssh-session-mcp.config.json.',
+  {},
+  async () => {
+    const defaultDeviceId = resolveConfiguredDefaultDeviceId();
+    const devices = (PROFILES.config?.devices || []).map(device => ({
+      id: device.id,
+      label: device.label,
+      host: device.host,
+      port: device.port ?? 22,
+      user: device.user,
+      auth: summarizeAuth(device),
+      tags: device.tags || [],
+      defaults: device.defaults || {},
+      isDefault: device.id === defaultDeviceId,
+    }));
+
+    return createToolResponse(JSON.stringify({
+      instanceId: INSTANCE_ID,
+      source: PROFILES.source,
+      configPath: PROFILES.path,
+      defaultDevice: defaultDeviceId,
+      devices,
+      legacyDefaults: PROFILES.source === 'legacy-env' ? {
+        hostConfigured: Boolean(DEFAULT_HOST),
+        userConfigured: Boolean(DEFAULT_USER),
+        port: DEFAULT_PORT,
+      } : undefined,
+    }, null, 2));
+  },
+);
+
+server.tool(
   'ssh-session-read',
   'Read raw buffered terminal output from an SSH PTY session. Supports optional long-polling for new terminal output.',
   {
-    session: z.string().describe('Session id or unique session name'),
+    session: z.string().optional().describe('Session id, session ref, or session name. Defaults to the active session'),
     offset: z.number().int().nonnegative().optional().describe('Read from this output offset. If omitted, return the latest tail'),
     maxChars: z.number().int().positive().optional().describe('Maximum chars to return'),
     waitForChangeMs: z.number().int().nonnegative().optional().describe('Wait up to this many milliseconds for new terminal output before returning'),
   },
   async ({ session, offset, maxChars, waitForChangeMs }) => {
-    const target = resolveSession(sanitizeRequiredText(session, 'session'));
+    const target = resolveSession(session);
     const resolvedMaxChars = sanitizePositiveInt(maxChars, 'maxChars', DEFAULT_READ_CHARS);
     const resolvedWaitMs = sanitizeNonNegativeInt(waitForChangeMs, 'waitForChangeMs', 0);
     const baselineOffset = typeof offset === 'number' ? offset : target.currentBufferEnd();
@@ -3297,7 +3693,7 @@ server.tool(
   'ssh-session-watch',
   'Long-poll an SSH PTY session and render a terminal-style dashboard with inline actor markers.',
   {
-    session: z.string().describe('Session id or unique session name'),
+    session: z.string().optional().describe('Session id, session ref, or session name. Defaults to the active session'),
     outputOffset: z.number().int().nonnegative().optional().describe('Wait until terminal output grows beyond this offset'),
     eventSeq: z.number().int().nonnegative().optional().describe('Wait until transcript events grow beyond this sequence number'),
     waitForChangeMs: z.number().int().nonnegative().optional().describe('Long-poll duration in milliseconds'),
@@ -3320,7 +3716,7 @@ server.tool(
     stripAnsiFromLeft,
     includeDashboard,
   }) => {
-    const target = resolveSession(sanitizeRequiredText(session, 'session'));
+    const target = resolveSession(session);
     const resolvedWaitMs = sanitizeNonNegativeInt(waitForChangeMs, 'waitForChangeMs', DEFAULT_WATCH_WAIT_MS);
     const resolvedDashboardWidth = sanitizePositiveInt(dashboardWidth, 'dashboardWidth', DEFAULT_DASHBOARD_WIDTH);
     const resolvedDashboardHeight = sanitizePositiveInt(dashboardHeight, 'dashboardHeight', DEFAULT_DASHBOARD_HEIGHT);
@@ -3373,12 +3769,12 @@ server.tool(
   'ssh-session-history',
   'Read line-numbered session history built from terminal output and user/agent actions.',
   {
-    session: z.string().describe('Session id or unique session name'),
+    session: z.string().optional().describe('Session id, session ref, or session name. Defaults to the active session'),
     line: z.number().int().nonnegative().optional().describe('Read from this history line number'),
     maxLines: z.number().int().positive().optional().describe('Maximum number of history lines to return'),
   },
   async ({ session, line, maxLines }) => {
-    const target = resolveSession(sanitizeRequiredText(session, 'session'));
+    const target = resolveSession(session);
     const resolvedMaxLines = sanitizePositiveInt(maxLines, 'maxLines', 80);
     const snapshot = target.readHistory(line, resolvedMaxLines);
 
@@ -3400,12 +3796,12 @@ server.tool(
   'ssh-session-control',
   'Send a control key to an interactive SSH PTY session. Actor is shown inline in the dashboard transcript.',
   {
-    session: z.string().describe('Session id or unique session name'),
+    session: z.string().optional().describe('Session id, session ref, or session name. Defaults to the active session'),
     control: z.enum(['ctrl_c', 'ctrl_d', 'enter', 'tab', 'esc', 'up', 'down', 'left', 'right', 'backspace']).describe('Control key to send'),
     actor: z.string().optional().describe('Label for the sender shown inline in the dashboard, e.g. codex, claude, user'),
   },
   async ({ session, control, actor }) => {
-    const target = resolveSession(sanitizeRequiredText(session, 'session'));
+    const target = resolveSession(session);
 
     if (target.inputLock === 'user') {
       return createToolResponse(JSON.stringify({
@@ -3436,12 +3832,12 @@ server.tool(
   'ssh-session-resize',
   'Resize the PTY window of an interactive SSH session.',
   {
-    session: z.string().describe('Session id or unique session name'),
+    session: z.string().optional().describe('Session id, session ref, or session name. Defaults to the active session'),
     cols: z.number().int().positive().describe('New column count'),
     rows: z.number().int().positive().describe('New row count'),
   },
   async ({ session, cols, rows }) => {
-    const target = resolveSession(sanitizeRequiredText(session, 'session'));
+    const target = resolveSession(session);
     target.resize(
       sanitizePositiveInt(cols, 'cols', DEFAULT_COLS),
       sanitizePositiveInt(rows, 'rows', DEFAULT_ROWS),
@@ -3464,16 +3860,25 @@ server.tool(
   'List tracked SSH PTY sessions. Closed sessions are kept briefly for inspection, then automatically pruned.',
   {
     includeClosed: z.boolean().optional().describe('Include recently closed retained sessions'),
+    device: z.string().optional().describe('Filter by device id'),
+    connectionName: z.string().optional().describe('Filter by connection name'),
   },
-  async ({ includeClosed }) => {
+  async ({ includeClosed, device, connectionName }) => {
     sweepSessions();
+    const deviceFilter = sanitizeOptionalText(device);
+    const connectionFilter = sanitizeOptionalText(connectionName);
 
     const tracked = [...sessions.values()]
       .filter(session => includeClosed === true || !session.closed)
+      .filter(session => !deviceFilter || session.metadata.deviceId === deviceFilter)
+      .filter(session => !connectionFilter || session.metadata.connectionName === connectionFilter)
       .map(session => session.summary())
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 
-    return createToolResponse(JSON.stringify({ sessions: tracked }, null, 2));
+    return createToolResponse(JSON.stringify({
+      activeSessionRef: refreshActiveSession()?.metadata.sessionRef || null,
+      sessions: tracked,
+    }, null, 2));
   },
 );
 
@@ -3504,15 +3909,48 @@ server.tool(
 );
 
 server.tool(
+  'ssh-session-set-active',
+  'Set or clear the active session used by tools when the session argument is omitted.',
+  {
+    session: z.string().optional().describe('Session id, session ref, or session name. Omit to clear the active session'),
+  },
+  async ({ session }) => {
+    const requested = sanitizeOptionalText(session);
+    if (!requested) {
+      setActiveSession(undefined);
+      logServerEvent('session.active_cleared', {});
+      return createToolResponse(JSON.stringify({
+        instanceId: INSTANCE_ID,
+        activeSessionId: null,
+        activeSessionRef: null,
+      }, null, 2));
+    }
+
+    const target = resolveSession(requested);
+    setActiveSession(target);
+    logServerEvent('session.active_set', {
+      sessionId: target.sessionId,
+      sessionRef: target.metadata.sessionRef,
+    });
+    return createToolResponse(JSON.stringify({
+      instanceId: INSTANCE_ID,
+      activeSessionId: target.sessionId,
+      activeSessionRef: target.metadata.sessionRef,
+      session: target.summary(),
+    }, null, 2));
+  },
+);
+
+server.tool(
   'ssh-viewer-ensure',
   'Ensure that a viewer exists for a session. Terminal mode is singleton-scoped and will reuse a running viewer instead of opening duplicates.',
   {
-    session: z.string().describe('Session id or unique session name'),
+    session: z.string().optional().describe('Session id, session ref, or session name. Defaults to the active session'),
     mode: z.enum(['terminal', 'browser']).optional().describe('Viewer launch mode'),
     singletonScope: z.enum(['connection', 'session']).optional().describe('Deduplication scope for terminal viewers'),
   },
   async ({ session, mode, singletonScope }) => {
-    const target = resolveSession(sanitizeRequiredText(session, 'session'));
+    const target = resolveSession(session);
     const result = await ensureViewerForSession(target, {
       mode: viewerModeValue(mode),
       scope: viewerScopeValue(singletonScope),
@@ -3575,15 +4013,19 @@ server.tool(
   'ssh-session-close',
   'Close an interactive SSH PTY session immediately and remove it from the MCP server.',
   {
-    session: z.string().describe('Session id or unique session name'),
+    session: z.string().optional().describe('Session id, session ref, or session name. Defaults to the active session'),
   },
   async ({ session }) => {
-    const target = resolveSession(sanitizeRequiredText(session, 'session'));
+    const target = resolveSession(session);
     const summary = target.summary();
     logSessionEvent(target.sessionId, 'session.closed', { reason: 'closed by client' });
     logServerEvent('session.closed', { reason: 'closed by client', sessionId: target.sessionId });
     target.close();
     sessions.delete(target.sessionId);
+    if (activeSessionId === target.sessionId) {
+      setActiveSession(undefined);
+      refreshActiveSession();
+    }
 
     return createToolResponse(JSON.stringify({
       ...summary,
@@ -3599,53 +4041,178 @@ server.tool(
   'One-step: open SSH session using .env defaults, auto-open browser terminal, return terminal URL. If a session already exists, reuse it. AI agents should call this once at the start of a conversation.',
   {
     sessionName: z.string().optional().describe('Optional session name. Defaults to "default"'),
+    device: z.string().optional().describe('Device profile id. Defaults to config defaultDevice when available'),
+    connectionName: z.string().optional().describe('Logical connection name. Defaults to "main" for profile-based sessions'),
   },
-  async ({ sessionName }) => {
+  async ({ sessionName, device, connectionName }) => {
     sweepSessions();
-    const name = sanitizeOptionalText(sessionName) || 'default';
+    const requestedDeviceId = sanitizeOptionalText(device);
+    const configuredDefaultDeviceId = resolveConfiguredDefaultDeviceId();
+    const resolvedDeviceId = requestedDeviceId || configuredDefaultDeviceId;
+    const requestedSessionName = sanitizeOptionalText(sessionName);
 
-    // Reuse existing active session with same name
-    const existing = [...sessions.values()].find(s => !s.closed && s.sessionName === name);
-    if (existing) {
-      const terminalUrl = DEFAULT_VIEWER_PORT > 0
-        ? `http://${viewerHostForUrl(DEFAULT_VIEWER_HOST)}:${DEFAULT_VIEWER_PORT}/terminal/session/${encodeURIComponent(existing.sessionId)}`
-        : undefined;
+    if (!resolvedDeviceId && sanitizeOptionalText(connectionName)) {
+      throw new McpError(ErrorCode.InvalidParams, 'connectionName requires device or defaultDevice configuration');
+    }
+
+    if (resolvedDeviceId) {
+      const profile = resolveProfileOrThrow(resolvedDeviceId);
+      const profileDefaults = profile.defaults;
+      const resolvedConnectionName = sanitizeOptionalText(connectionName) || 'main';
+      const existing = findOpenProfileSession(resolvedDeviceId, resolvedConnectionName);
+      if (existing) {
+        setActiveSession(existing);
+        const terminalUrl = getViewerBaseUrl()
+          ? `${getViewerBaseUrl()}/terminal/session/${encodeURIComponent(existing.sessionId)}`
+          : undefined;
+        return createToolResponse(JSON.stringify({
+          reused: true,
+          instanceId: INSTANCE_ID,
+          activeSessionRef: existing.metadata.sessionRef,
+          session: existing.summary(),
+          terminalUrl,
+          viewerBaseUrl: getViewerBaseUrl(),
+          hint: 'Session already exists. Use ssh-run without a session argument or call ssh-session-set-active first.',
+        }, null, 2));
+      }
+
+      if (requestedSessionName) {
+        ensureUniqueSessionName(requestedSessionName);
+      }
+
+      const sessionId = randomUUID();
+      const metadata = buildSessionMetadata({
+        connectionName: resolvedConnectionName,
+        deviceId: resolvedDeviceId,
+        profileSource: 'profile',
+        sessionId,
+        sessionName: requestedSessionName,
+      });
+      const session = await openSSHSession({
+        cols: profileDefaults?.cols ?? DEFAULT_COLS,
+        closedRetentionMs: profileDefaults?.closedRetentionMs ?? DEFAULT_CLOSED_RETENTION_MS,
+        host: profile.host,
+        idleTimeoutMs: profileDefaults?.idleTimeoutMs ?? DEFAULT_TIMEOUT,
+        metadata,
+        profile,
+        port: profile.port ?? DEFAULT_PORT,
+        rows: profileDefaults?.rows ?? DEFAULT_ROWS,
+        sessionId,
+        sessionName: requestedSessionName,
+        term: profileDefaults?.term ?? DEFAULT_TERM,
+        user: profile.user,
+      });
+
+      sessions.set(sessionId, session);
+      setActiveSession(session);
+      logSessionEvent(session.sessionId, 'session.opened', {
+        authSource: summarizeAuth(profile),
+        connectionName: resolvedConnectionName,
+        deviceId: resolvedDeviceId,
+        host: profile.host,
+        port: profile.port ?? DEFAULT_PORT,
+        profileSource: 'profile',
+        sessionRef: metadata.sessionRef,
+        sessionName: requestedSessionName,
+        user: profile.user,
+      });
+      logServerEvent('session.opened', {
+        authSource: summarizeAuth(profile),
+        connectionName: resolvedConnectionName,
+        deviceId: resolvedDeviceId,
+        host: profile.host,
+        port: profile.port ?? DEFAULT_PORT,
+        profileSource: 'profile',
+        sessionId,
+        sessionRef: metadata.sessionRef,
+        sessionName: requestedSessionName,
+        user: profile.user,
+      });
+
+      let terminalUrl: string | undefined;
+      if (getViewerBaseUrl()) {
+        terminalUrl = `${getViewerBaseUrl()}/terminal/session/${encodeURIComponent(sessionId)}`;
+        if (profileDefaults?.autoOpenViewer === true || AUTO_OPEN_TERMINAL) {
+          try {
+            const mode = viewerModeValue(profileDefaults?.viewerMode || VIEWER_LAUNCH_MODE);
+            if (mode === 'terminal') {
+              await ensureViewerForSession(session, {
+                mode: 'terminal',
+                scope: 'session',
+              });
+            } else {
+              await launchBrowserViewer(terminalUrl);
+            }
+          } catch {
+            // ignore auto-open failures for quick-connect
+          }
+        }
+      }
+
+      await delay(300);
+
       return createToolResponse(JSON.stringify({
-        reused: true,
-        sessionId: existing.sessionId,
-        sessionName: existing.sessionName,
-        host: existing.host,
-        user: existing.user,
+        reused: false,
+        instanceId: INSTANCE_ID,
+        activeSessionRef: metadata.sessionRef,
+        configPath: PROFILES.path,
         terminalUrl,
-        hint: 'Session already exists. Use ssh-run to execute commands.',
+        viewerBaseUrl: getViewerBaseUrl(),
+        session: session.summary(),
+        hint: 'Session opened. Use ssh-run without a session argument to target the active session.',
       }, null, 2));
     }
 
-    // Open new session
+    const name = requestedSessionName || 'default';
+    const existing = findOpenSessionByName(name);
+    if (existing) {
+      setActiveSession(existing);
+      const terminalUrl = getViewerBaseUrl()
+        ? `${getViewerBaseUrl()}/terminal/session/${encodeURIComponent(existing.sessionId)}`
+        : undefined;
+      return createToolResponse(JSON.stringify({
+        reused: true,
+        instanceId: INSTANCE_ID,
+        activeSessionRef: existing.metadata.sessionRef,
+        session: existing.summary(),
+        terminalUrl,
+        viewerBaseUrl: getViewerBaseUrl(),
+        hint: 'Session already exists. Use ssh-run without a session argument to target the active session.',
+      }, null, 2));
+    }
+
     const resolvedHost = DEFAULT_HOST;
     const resolvedUser = DEFAULT_USER;
     if (!resolvedHost) throw new McpError(ErrorCode.InvalidParams, 'SSH_HOST not configured. Set it in .env or pass --host');
     if (!resolvedUser) throw new McpError(ErrorCode.InvalidParams, 'SSH_USER not configured. Set it in .env or pass --user');
 
-    const sshConfig: SSHConfig = { host: resolvedHost, port: DEFAULT_PORT, username: resolvedUser };
-    if (DEFAULT_PASSWORD) sshConfig.password = DEFAULT_PASSWORD;
-    else if (DEFAULT_KEY) sshConfig.privateKey = await readPrivateKey(DEFAULT_KEY);
-
-    const connection = new SSHConnection(sshConfig, SSH_CONNECT_TIMEOUT_MS);
-    await connection.connect();
-
     const sessionId = randomUUID();
-    const client = connection.getClient();
-    const session = await new Promise<SSHSession>((resolve, reject) => {
-      client.shell({ term: DEFAULT_TERM, cols: DEFAULT_COLS, rows: DEFAULT_ROWS }, (err, stream) => {
-        if (err) { connection.close(); reject(new McpError(ErrorCode.InternalError, `SSH shell failed: ${err.message}`)); return; }
-        resolve(new SSHSession(sessionId, name, resolvedHost, DEFAULT_PORT, resolvedUser, DEFAULT_COLS, DEFAULT_ROWS, DEFAULT_TERM, DEFAULT_TIMEOUT, DEFAULT_CLOSED_RETENTION_MS, tuning, connection, stream));
-      });
+    const metadata = buildSessionMetadata({
+      profileSource: 'legacy-env',
+      sessionId,
+      sessionName: name,
     });
+    const session = await openSSHSession({
+      cols: DEFAULT_COLS,
+      closedRetentionMs: DEFAULT_CLOSED_RETENTION_MS,
+      host: resolvedHost,
+      idleTimeoutMs: DEFAULT_TIMEOUT,
+      metadata,
+      port: DEFAULT_PORT,
+      rows: DEFAULT_ROWS,
+      sessionId,
+      sessionName: name,
+      term: DEFAULT_TERM,
+      user: resolvedUser,
+    });
+
     sessions.set(sessionId, session);
+    setActiveSession(session);
     logSessionEvent(session.sessionId, 'session.opened', {
       host: resolvedHost,
       port: DEFAULT_PORT,
+      profileSource: 'legacy-env',
+      sessionRef: metadata.sessionRef,
       sessionName: name,
       user: resolvedUser,
     });
@@ -3653,14 +4220,16 @@ server.tool(
       sessionId,
       host: resolvedHost,
       port: DEFAULT_PORT,
+      profileSource: 'legacy-env',
+      sessionRef: metadata.sessionRef,
       sessionName: name,
       user: resolvedUser,
     });
 
     // Auto open terminal
     let terminalUrl: string | undefined;
-    if (DEFAULT_VIEWER_PORT > 0) {
-      terminalUrl = `http://${viewerHostForUrl(DEFAULT_VIEWER_HOST)}:${DEFAULT_VIEWER_PORT}/terminal/session/${encodeURIComponent(sessionId)}`;
+    if (getViewerBaseUrl()) {
+      terminalUrl = `${getViewerBaseUrl()}/terminal/session/${encodeURIComponent(sessionId)}`;
       if (AUTO_OPEN_TERMINAL) {
         try {
           if (VIEWER_LAUNCH_MODE === 'terminal') {
@@ -3679,12 +4248,13 @@ server.tool(
 
     return createToolResponse(JSON.stringify({
       reused: false,
-      sessionId,
-      sessionName: name,
-      host: resolvedHost,
-      user: resolvedUser,
+      instanceId: INSTANCE_ID,
+      activeSessionRef: metadata.sessionRef,
+      configPath: PROFILES.path,
       terminalUrl,
-      hint: 'Session opened. Use ssh-run to execute commands. The user can also type in the browser terminal.',
+      viewerBaseUrl: getViewerBaseUrl(),
+      session: session.summary(),
+      hint: 'Session opened. Use ssh-run without a session argument to target the active session. The user can also type in the browser terminal.',
     }, null, 2));
   },
 );
@@ -3701,8 +4271,7 @@ server.tool(
   },
   async ({ command, session, waitMs, idleMs, maxChars }) => {
     sweepSessions();
-    const ref = sanitizeOptionalText(session) || 'default';
-    const target = resolveSession(ref);
+    const target = resolveSession(session);
     const commandMeta = summarizeCommandMeta(command);
 
     if (target.inputLock === 'user') {
@@ -3877,6 +4446,7 @@ server.tool(
         status: 'running',
         elapsedMs: completion.elapsedMs,
         sessionName: target.sessionName,
+        sessionRef: sessionReadRef(target),
         host: target.host,
         terminalMode,
         operationMode: OPERATION_MODE,
@@ -3909,6 +4479,7 @@ server.tool(
       return createToolResponse(JSON.stringify({
         command,
         sessionName: target.sessionName,
+        sessionRef: sessionReadRef(target),
         host: target.host,
         error: 'PASSWORD_REQUIRED',
         terminalMode: 'password_prompt',
@@ -3940,6 +4511,7 @@ server.tool(
       return createToolResponse(JSON.stringify({
         command,
         sessionName: target.sessionName,
+        sessionRef: sessionReadRef(target),
         host: target.host,
         completionReason: completion.reason,
         elapsedMs: completion.elapsedMs,
@@ -3973,6 +4545,7 @@ server.tool(
       return createToolResponse(JSON.stringify({
         command,
         sessionName: target.sessionName,
+        sessionRef: sessionReadRef(target),
         host: target.host,
         completionReason: completion.reason,
         elapsedMs: completion.elapsedMs,
@@ -3994,12 +4567,13 @@ server.tool(
     const omittedChars = omittedEnd - omittedStart;
     const totalOutputChars = snapshot.availableEnd - beforeOffset;
 
-    const separator = `\n\n--- OUTPUT TRUNCATED: ${omittedChars} chars omitted (offset ${omittedStart} to ${omittedEnd}) ---\n--- To read omitted section: use ssh-session-read with session="${target.sessionName}", offset=${omittedStart}, maxChars=${omittedChars} ---\n\n`;
+    const separator = `\n\n--- OUTPUT TRUNCATED: ${omittedChars} chars omitted (offset ${omittedStart} to ${omittedEnd}) ---\n--- To read omitted section: use ssh-session-read with session="${sessionReadRef(target)}", offset=${omittedStart}, maxChars=${omittedChars} ---\n\n`;
     const combinedOutput = headSnapshot.output + separator + tailSnapshot.output;
 
     return createToolResponse(JSON.stringify({
       command,
       sessionName: target.sessionName,
+      sessionRef: sessionReadRef(target),
       host: target.host,
       outputTruncated: true,
       totalOutputChars,
@@ -4034,22 +4608,33 @@ server.tool(
   {},
   async () => {
     sweepSessions();
+    const activeSession = refreshActiveSession();
     const active = [...sessions.values()].filter(s => !s.closed).map(s => ({
       sessionId: s.sessionId,
       sessionName: s.sessionName,
+      sessionRef: s.metadata.sessionRef,
+      deviceId: s.metadata.deviceId,
+      connectionName: s.metadata.connectionName,
+      instanceId: s.metadata.instanceId,
       host: s.host,
       user: s.user,
-      terminalUrl: DEFAULT_VIEWER_PORT > 0
-        ? `http://${viewerHostForUrl(DEFAULT_VIEWER_HOST)}:${DEFAULT_VIEWER_PORT}/terminal/session/${encodeURIComponent(s.sessionId)}`
+      terminalUrl: getViewerBaseUrl()
+        ? `${getViewerBaseUrl()}/terminal/session/${encodeURIComponent(s.sessionId)}`
         : undefined,
       idleMinutes: Math.round((Date.now() - Date.parse(s.lastActivityAt)) / 60000),
       terminalMode: detectTerminalMode(s.buffer.slice(-2000)),
     }));
 
     return createToolResponse(JSON.stringify({
+      instanceId: INSTANCE_ID,
       activeSessions: active.length,
+      activeSessionId: activeSession?.sessionId || null,
+      activeSessionRef: activeSession?.metadata.sessionRef || null,
       sessions: active,
       viewerBaseUrl: getViewerBaseUrl(),
+      viewerPort: actualViewerPort || undefined,
+      configPath: PROFILES.path,
+      configuredDevices: PROFILES.config?.devices.map(device => device.id) || [],
       operationMode: OPERATION_MODE,
       logging: logger.getConfig(),
       hint: active.length === 0
@@ -4159,8 +4744,7 @@ server.tool(
   },
   async ({ command, session, maxRetries, backoff, delayMs, successPattern, failPattern }) => {
     sweepSessions();
-    const ref = sanitizeOptionalText(session) || 'default';
-    const target = resolveSession(ref);
+    const target = resolveSession(session);
 
     const resolvedMaxRetries = maxRetries ?? 3;
     const resolvedBackoff = backoff ?? 'exponential';
@@ -4242,6 +4826,7 @@ server.tool(
             attempts,
             exitCode: lastExitCode,
             sessionName: target.sessionName,
+            sessionRef: sessionReadRef(target),
             hint: `Command succeeded on attempt ${attempts}.`,
           }, null, 2), [output]);
         }
@@ -4257,6 +4842,7 @@ server.tool(
             attempts,
             exitCode: 0,
             sessionName: target.sessionName,
+            sessionRef: sessionReadRef(target),
             hint: `Command succeeded on attempt ${attempts}.`,
           }, null, 2), [output]);
         }
@@ -4267,6 +4853,7 @@ server.tool(
             status: 'success',
             attempts,
             sessionName: target.sessionName,
+            sessionRef: sessionReadRef(target),
             hint: `Command completed on attempt ${attempts} (no exit code available).`,
           }, null, 2), [output]);
         }
@@ -4287,6 +4874,7 @@ server.tool(
       attempts,
       exitCode: lastExitCode,
       sessionName: target.sessionName,
+      sessionRef: sessionReadRef(target),
       hint: `Command failed after ${attempts} attempts.`,
     }, null, 2), [lastOutput.length > 0 ? lastOutput : '(no output)']);
   },
@@ -4308,22 +4896,31 @@ async function main() {
   }, DEFAULT_IDLE_SWEEP_MS);
   sweepTimer.unref?.();
 
-  const cleanup = () => {
-    clearInterval(sweepTimer);
-    if (viewerWss) {
-      for (const client of viewerWss.clients) {
-        try { client.close(1001, 'server shutdown'); } catch { /* ignore */ }
-      }
-      viewerWss.close();
+  let shuttingDown = false;
+  const cleanup = (reason: string) => {
+    if (shuttingDown) {
+      return;
     }
-    viewerServer?.close();
-    closeAllSessions('mcp server shutdown');
-    logServerEvent('server.shutdown', { reason: 'signal' });
-    process.exit(0);
+    shuttingDown = true;
+
+    void (async () => {
+      clearInterval(sweepTimer);
+      if (viewerWss) {
+        for (const client of viewerWss.clients) {
+          try { client.close(1001, 'server shutdown'); } catch { /* ignore */ }
+        }
+        viewerWss.close();
+      }
+      viewerServer?.close();
+      closeAllSessions(`mcp server shutdown (${reason})`);
+      logServerEvent('server.shutdown', { reason });
+      await removeServerInfoState();
+      process.exit(0);
+    })();
   };
 
-  process.on('SIGINT', cleanup);
-  process.on('SIGTERM', cleanup);
+  process.on('SIGINT', () => cleanup('SIGINT'));
+  process.on('SIGTERM', () => cleanup('SIGTERM'));
   process.on('exit', () => {
     clearInterval(sweepTimer);
     if (viewerWss) {
@@ -4334,6 +4931,7 @@ async function main() {
     }
     viewerServer?.close();
     closeAllSessions('process exit');
+    void removeServerInfoState();
   });
 }
 

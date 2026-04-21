@@ -12,6 +12,8 @@ English: [README.md](README.md)
 ## 特性
 
 - **共享 SSH 终端**：用户与 AI 共享同一条 PTY，会话状态一致
+- **多设备 / 多连接**：单个 MCP 实例可管理多个设备 profile，每个设备又可以同时保留多个命名连接
+- **按实例隔离 AI**：不同 AI 只要使用不同 `SSH_MCP_INSTANCE` 启动各自的 stdio MCP 进程，就能彼此隔离
 - **终端 / 浏览器分层**：`terminal` 模式走原样 PTY 透传，`browser` 模式提供更丰富的状态与控制能力
 - **xterm.js 浏览器终端**：通过 WebSocket 实时推送终端输出，接近原生 SSH 工具体验
 - **智能命令完成判定**：结合 prompt 检测、空闲超时和 sentinel 标记判断命令是否结束
@@ -55,16 +57,43 @@ SSH_PORT=22
 SSH_USER=username
 SSH_PASSWORD=your-password
 # 或使用 SSH_KEY=/path/to/private/key（更推荐）
-VIEWER_PORT=8793
-AUTO_OPEN_TERMINAL=true
+VIEWER_PORT=auto
+AUTO_OPEN_TERMINAL=false
 SSH_MCP_MODE=safe
 ```
+
+如需多设备 profile，可额外提供 `ssh-session-mcp.config.json`：
+
+```json
+{
+  "defaultDevice": "board-a",
+  "devices": [
+    {
+      "id": "board-a",
+      "host": "192.168.10.58",
+      "port": 22,
+      "user": "orangepi",
+      "auth": { "passwordEnv": "BOARD_A_PASSWORD" },
+      "defaults": {
+        "term": "xterm-256color",
+        "cols": 120,
+        "rows": 40,
+        "autoOpenViewer": true,
+        "viewerMode": "browser"
+      }
+    }
+  ]
+}
+```
+
+可放在仓库根目录，也可以通过 `--config=/path/to/config.json` 显式指定。
 
 ### 3. 启动（面向用户）
 
 ```bash
 npm run launch    # 启动 MCP + SSH + 浏览器终端
 npm run status    # 查看服务和会话状态
+npm run devices   # 列出已配置设备
 npm run kill      # 结束占用 viewer 端口的进程
 npm run cleanup   # 结束进程并清理状态文件
 npm run logs      # 查看本地 JSONL 元数据日志
@@ -97,8 +126,10 @@ ssh-quick-connect → ssh-run → 读取输出 → 决策 → ssh-run → ...
 | 工具 | 用途 |
 |------|------|
 | `ssh-quick-connect` | 一步建立 SSH 会话并打开浏览器终端 |
+| `ssh-device-list` | 列出当前已配置的设备 profile |
 | `ssh-run` | 执行命令并返回输出与退出码 |
 | `ssh-status` | 查看当前会话、终端模式、运行模式 |
+| `ssh-session-set-active` | 切换省略 `session` 参数时默认使用的活动会话 |
 | `ssh-session-diagnostics` | 查看锁状态、viewer 状态、运行中命令和缓存裁剪告警 |
 | `ssh-session-history` | 按行查看混合历史记录 |
 | `ssh-command-status` | 查询异步长命令执行状态 |
@@ -170,6 +201,8 @@ AI: ssh-command-status({ commandId: "abc123" })
 | `ssh-session-control` | 发送控制键，如 Ctrl+C、方向键等 |
 | `ssh-session-resize` | 调整 PTY 大小 |
 | `ssh-session-list` | 列出所有会话 |
+| `ssh-device-list` | 列出已配置设备 |
+| `ssh-session-set-active` | 设置或清空活动会话 |
 | `ssh-session-close` | 关闭会话 |
 | `ssh-viewer-ensure` | 打开 viewer |
 | `ssh-viewer-list` | 查看 viewer 进程状态 |
@@ -185,13 +218,15 @@ AI: ssh-command-status({ commandId: "abc123" })
 | `SSH_USER` | SSH 用户名 | 必填 |
 | `SSH_PASSWORD` | SSH 密码 | - |
 | `SSH_KEY` | SSH 私钥路径 | - |
+| `SSH_MCP_INSTANCE` | 用于隔离不同 AI 的实例 ID | 自动（`proc-<pid>`） |
+| `SSH_MCP_CONFIG` | `ssh-session-mcp.config.json` 路径 | 自动发现 |
 | `VIEWER_HOST` | Viewer HTTP 服务绑定地址 | `127.0.0.1` |
-| `VIEWER_PORT` | Viewer 服务端口（`0` 表示禁用） | `0` |
+| `VIEWER_PORT` | Viewer 服务端口（`0` 禁用，`auto` 自动分配空闲端口） | `0` |
 | `AUTO_OPEN_TERMINAL` | 建立会话时自动打开浏览器终端 | `false` |
 | `SSH_MCP_MODE` | 运行模式：`safe` 或 `full` | `safe` |
 | `SSH_MCP_USE_MARKER` | 是否启用 sentinel 完成标记 | `true` |
 | `SSH_MCP_LOG_MODE` | 本地日志模式：`off` 或 `meta` | `off` |
-| `SSH_MCP_LOG_DIR` | 本地 JSONL 日志目录 | `logs/session-mcp` |
+| `SSH_MCP_LOG_DIR` | 本地 JSONL 日志目录 | 按实例区分的 runtime 目录 |
 
 ### 命令行参数
 
@@ -206,12 +241,21 @@ node build/index.js --host=192.168.1.100 --user=username --viewerPort=8793 --mod
 ```bash
 npm run launch    # 启动服务并打开浏览器终端
 npm run status    # 查看服务和会话状态
+npm run devices   # 列出已配置设备
 npm run kill      # 结束占用 viewer 端口的进程
 npm run cleanup   # 结束进程并清理状态文件
 npm run logs      # 查看本地 server/session JSONL 日志
 npm run build     # 编译 TypeScript
 npm run test      # 运行单元测试
 npm run inspect   # 打开 MCP inspector
+```
+
+常用参数示例：
+
+```bash
+node scripts/ctl.mjs launch --instance=codex-a --device=board-a --connection=main
+node scripts/ctl.mjs status --instance=codex-a
+node scripts/ctl.mjs logs --instance=codex-a --session=board-a/main
 ```
 
 ## Viewer 模式

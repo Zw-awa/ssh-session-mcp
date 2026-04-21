@@ -48,11 +48,11 @@ function normalizeValue(value: unknown): unknown {
   return String(value);
 }
 
-export function resolveLoggerConfig(modeRaw: string | undefined, dirRaw: string | undefined): LoggerConfig {
+export function resolveLoggerConfig(modeRaw: string | undefined, dirRaw: string | undefined, defaultDir = DEFAULT_LOG_DIR): LoggerConfig {
   const mode = modeRaw === 'meta' ? 'meta' : 'off';
   return {
     mode,
-    dir: dirRaw && dirRaw.trim().length > 0 ? dirRaw.trim() : DEFAULT_LOG_DIR,
+    dir: dirRaw && dirRaw.trim().length > 0 ? dirRaw.trim() : defaultDir,
   };
 }
 

@@ -12,6 +12,8 @@ Persistent SSH PTY session manager for MCP clients. Users and AI agents share on
 ## Features
 
 - **Shared SSH Terminal**: One PTY, shared by user and AI, with input lock to prevent conflicts
+- **Multi-device / Multi-connection**: One MCP instance can manage multiple device profiles, and each device can keep multiple named SSH connections
+- **Per-AI isolation by instance**: Run separate stdio MCP processes with different `SSH_MCP_INSTANCE` values so multiple AI agents do not interfere with each other
 - **Terminal / Browser split**: Terminal mode is raw PTY passthrough; browser mode provides richer controls and status UI
 - **xterm.js Browser Terminal**: Real terminal emulator in the browser with WebSocket streaming
 - **Intelligent Command Completion**: Prompt detection + idle timeout + deterministic sentinel markers for reliable output capture
@@ -55,16 +57,43 @@ SSH_PORT=22
 SSH_USER=username
 SSH_PASSWORD=your-password
 # Or use SSH_KEY=/path/to/private/key (recommended)
-VIEWER_PORT=8793
-AUTO_OPEN_TERMINAL=true
+VIEWER_PORT=auto
+AUTO_OPEN_TERMINAL=false
 SSH_MCP_MODE=safe
 ```
+
+Optional multi-device config:
+
+```json
+{
+  "defaultDevice": "board-a",
+  "devices": [
+    {
+      "id": "board-a",
+      "host": "192.168.10.58",
+      "port": 22,
+      "user": "orangepi",
+      "auth": { "passwordEnv": "BOARD_A_PASSWORD" },
+      "defaults": {
+        "term": "xterm-256color",
+        "cols": 120,
+        "rows": 40,
+        "autoOpenViewer": true,
+        "viewerMode": "browser"
+      }
+    }
+  ]
+}
+```
+
+Save it as `ssh-session-mcp.config.json` in the repo root, or pass `--config=/path/to/config.json`.
 
 ### 3. Launch (for users)
 
 ```bash
 npm run launch    # Start MCP + SSH + open browser terminal
 npm run status    # Check server/session status
+npm run devices   # List configured device profiles
 npm run kill      # Kill leftover processes
 npm run cleanup   # Kill + clean state files
 npm run logs      # View local JSONL metadata logs
@@ -97,8 +126,10 @@ ssh-quick-connect → ssh-run → read output → decide → ssh-run → ...
 | Tool | Purpose |
 |------|---------|
 | `ssh-quick-connect` | Connect SSH + open browser terminal (once per conversation) |
+| `ssh-device-list` | List configured device profiles and defaults |
 | `ssh-run` | Execute command, return output with exit code (repeat as needed) |
 | `ssh-status` | Check sessions, terminal mode, and operation mode |
+| `ssh-session-set-active` | Switch the active session used when `session` is omitted |
 | `ssh-session-diagnostics` | Inspect lock state, viewer state, running command metadata, and trim warnings |
 | `ssh-session-history` | Read line-numbered mixed history of output and user/agent actions |
 | `ssh-command-status` | Poll async command progress |
@@ -170,6 +201,8 @@ The AI automatically acquires/releases the lock when calling `ssh-run`.
 | `ssh-session-control` | Send control keys (Ctrl+C, arrows, etc.) |
 | `ssh-session-resize` | Resize PTY window |
 | `ssh-session-list` | List all sessions |
+| `ssh-device-list` | List configured device profiles |
+| `ssh-session-set-active` | Set or clear the active session |
 | `ssh-session-close` | Close a session |
 | `ssh-viewer-ensure` | Open viewer window |
 | `ssh-viewer-list` | List viewer processes |
@@ -185,13 +218,15 @@ The AI automatically acquires/releases the lock when calling `ssh-run`.
 | `SSH_USER` | SSH username | (required) |
 | `SSH_PASSWORD` | SSH password | - |
 | `SSH_KEY` | Path to SSH private key | - |
+| `SSH_MCP_INSTANCE` | Instance id for per-AI runtime isolation | auto (`proc-<pid>`) |
+| `SSH_MCP_CONFIG` | Path to `ssh-session-mcp.config.json` | auto-discovery |
 | `VIEWER_HOST` | Viewer server bind address | 127.0.0.1 |
-| `VIEWER_PORT` | Viewer server port (0 = disabled) | 0 |
+| `VIEWER_PORT` | Viewer server port (`0` = disabled, `auto` = random free port) | `0` |
 | `AUTO_OPEN_TERMINAL` | Auto-open browser on connect | false |
 | `SSH_MCP_MODE` | Operation mode: safe or full | safe |
 | `SSH_MCP_USE_MARKER` | Enable sentinel completion markers | true |
 | `SSH_MCP_LOG_MODE` | Local log mode: `off` or `meta` | `off` |
-| `SSH_MCP_LOG_DIR` | Local JSONL log directory | `logs/session-mcp` |
+| `SSH_MCP_LOG_DIR` | Local JSONL log directory | per-instance runtime dir |
 
 ### Command-line parameters
 
@@ -206,12 +241,21 @@ node build/index.js --host=192.168.1.100 --user=username --viewerPort=8793 --mod
 ```bash
 npm run launch    # Start server + connect SSH + open browser
 npm run status    # Check server and session status
+npm run devices   # List configured device profiles
 npm run kill      # Kill process on viewer port
 npm run cleanup   # Kill + remove state files
 npm run logs      # Inspect local server/session JSONL logs
 npm run build     # Compile TypeScript
 npm run test      # Run unit tests
 npm run inspect   # Open MCP inspector
+```
+
+Useful flags:
+
+```bash
+node scripts/ctl.mjs launch --instance=codex-a --device=board-a --connection=main
+node scripts/ctl.mjs status --instance=codex-a
+node scripts/ctl.mjs logs --instance=codex-a --session=board-a/main
 ```
 
 ## Viewer Modes
