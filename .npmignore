@@ -97,3 +97,4 @@ logs/
 !.env.example
 
 .claude/
+Promotion/

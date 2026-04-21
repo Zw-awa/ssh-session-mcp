@@ -118,6 +118,15 @@ Config can come from three places:
 2. Workspace `ssh-session-mcp.config.json`
 3. User-global config plus legacy `.env`
 
+Important config discovery rules:
+
+- Workspace config discovery is based on the MCP server process working directory.
+- A config file in another project folder will not be auto-discovered unless the process is started there.
+- To use a config outside the current working directory, the operator must set `SSH_MCP_CONFIG` or start the server with `--config`.
+- Device auth schema supports `auth.passwordEnv` and `auth.keyPath`.
+- `auth.password` is invalid in the current schema and will fail config loading.
+- If `ssh-device-list` reports `source=legacy-env`, do not assume some other config file was loaded just because it exists elsewhere on disk.
+
 Useful commands for local operators:
 
 ```bash

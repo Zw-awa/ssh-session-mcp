@@ -88,12 +88,23 @@ Optional multi-device config:
 
 Save it as `ssh-session-mcp.config.json` in the repo root, or pass `--config=/path/to/config.json`.
 
+Important:
+
+- Auto-discovery is based on the MCP process working directory, not on arbitrary project folders elsewhere on disk.
+- If the MCP process is started in `E:\\XSmartcar\\tools\\ssh-mcp`, then `E:\\other-project\\ssh-session-mcp.config.json` will not be discovered automatically.
+- For a config file outside the current working directory, set `SSH_MCP_CONFIG=/path/to/config.json` or start the server with `--config=/path/to/config.json`.
+- Device auth currently supports only `auth.passwordEnv` and `auth.keyPath`.
+- Raw inline passwords such as `"auth": { "password": "secret" }` are invalid and will fail schema validation.
+- When using `passwordEnv`, put the real secret in `.env` or the parent process environment, for example `BOARD_A_PASSWORD=orangepi`.
+
 Config resolution order:
 
 1. Explicit `--config=/path/to/config.json`
 2. Workspace `ssh-session-mcp.config.json`
 3. User-global config at the platform default location
 4. Legacy `.env` single-device fallback
+
+This means a config file stored in another workspace is ignored unless you point to it explicitly with `SSH_MCP_CONFIG` or `--config`.
 
 Manage config from the compiled CLI:
 
@@ -262,6 +273,30 @@ node build/index.js --host=192.168.1.100 --user=username --viewerPort=8793 --mod
 - Explicit config: `SSH_MCP_CONFIG=/path/to/config.json` or `--config=/path/to/config.json`
 
 Config files support top-level `defaults`, `defaultDevice`, and `devices`. A workspace config replaces matching devices from the global config by `id`, while top-level `defaults` are shallow-merged.
+
+Discovery rule:
+
+- The workspace config path is always resolved from the current MCP process working directory.
+- A file in some other directory is not auto-discovered just because it exists on the machine.
+- If you want to reuse a config from another project folder, pass it explicitly with `SSH_MCP_CONFIG` or `--config`.
+
+Auth schema rule:
+
+- Supported: `auth.passwordEnv`, `auth.keyPath`
+- Not supported: `auth.password`
+- Recommended password pattern:
+
+```json
+{
+  "auth": {
+    "passwordEnv": "BOARD_A_PASSWORD"
+  }
+}
+```
+
+```ini
+BOARD_A_PASSWORD=orangepi
+```
 
 Reference example: [docs/examples/ssh-session-mcp.config.example.json](docs/examples/ssh-session-mcp.config.example.json)
 

@@ -1,9 +1,9 @@
-import { promises as fs, readFileSync } from 'node:fs';
+import { promises as fs, existsSync, readFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { createServer, type Server as HttpServer } from 'node:http';
 import { fileURLToPath } from 'node:url';
-import { resolve as pathResolve } from 'node:path';
+import { dirname, join, resolve as pathResolve } from 'node:path';
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
@@ -179,24 +179,38 @@ export interface RunningCommand {
 // ── .env loader & argv parser ────────────────────────────────────────────────
 
 export function loadDotEnv() {
-  try {
-    const envPath = pathResolve(fileURLToPath(import.meta.url), '../../.env');
-    const content = readFileSync(envPath, 'utf8');
-    for (const line of content.split('\n')) {
-      const trimmed = line.trim();
-      if (!trimmed || trimmed.startsWith('#')) continue;
-      const eqIdx = trimmed.indexOf('=');
-      if (eqIdx === -1) continue;
-      const key = trimmed.slice(0, eqIdx).trim();
-      const val = trimmed.slice(eqIdx + 1).trim();
-      if (key && val && !process.env[key]) {
-        process.env[key] = val;
-      }
+  const candidatePaths = [
+    pathResolve(process.cwd(), '.env'),
+    join(dirname(fileURLToPath(import.meta.url)), '..', '.env'),
+  ];
+  const loadedPaths = new Set<string>();
+
+  for (const envPath of candidatePaths) {
+    if (loadedPaths.has(envPath) || !existsSync(envPath)) {
+      continue;
     }
-  } catch {
-    // .env not found, that's fine
+    loadedPaths.add(envPath);
+
+    try {
+      const content = readFileSync(envPath, 'utf8');
+      for (const line of content.split('\n')) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith('#')) continue;
+        const eqIdx = trimmed.indexOf('=');
+        if (eqIdx === -1) continue;
+        const key = trimmed.slice(0, eqIdx).trim();
+        const val = trimmed.slice(eqIdx + 1).trim();
+        if (key && val && !process.env[key]) {
+          process.env[key] = val;
+        }
+      }
+    } catch {
+      // ignore unreadable .env candidates
+    }
   }
 }
+
+loadDotEnv();
 
 export function parseArgv() {
   const args = process.argv.slice(2);

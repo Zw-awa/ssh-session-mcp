@@ -3,7 +3,6 @@
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 
 import {
-  loadDotEnv,
   isCliEnabled,
   server,
   viewerServer,
@@ -19,10 +18,6 @@ import {
 
 import { startViewerServer } from './viewer-server.js';
 import { registerTools } from './tools.js';
-
-// ── .env bootstrap ───────────────────────────────────────────────────────────
-
-loadDotEnv();
 
 // ── Register MCP tools ───────────────────────────────────────────────────────
 

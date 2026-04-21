@@ -998,7 +998,7 @@ server.tool(
 
 server.tool(
   'ssh-quick-connect',
-  'One-step: open SSH session using .env defaults, auto-open browser terminal, return terminal URL. If a session already exists, reuse it. AI agents should call this once at the start of a conversation.',
+  'One-step: open SSH session using configured device profiles when available, otherwise fall back to legacy .env defaults. Reuse an existing session when possible and return viewer details when enabled.',
   {
     sessionName: z.string().optional().describe('Optional session name. Defaults to "default"'),
     device: z.string().optional().describe('Device profile id. Defaults to config defaultDevice when available'),
@@ -1028,10 +1028,13 @@ server.tool(
         return createJsonToolResponse(applyToolContract({
           reused: true,
           instanceId: INSTANCE_ID,
+          source: PROFILES.source,
+          configResolution: PROFILES.resolution,
           activeSessionRef: existing.metadata.sessionRef,
           session: existing.summary(),
           terminalUrl,
           viewerBaseUrl: getViewerBaseUrl(),
+          viewerEnabled: Boolean(getViewerBaseUrl()),
           hint: 'Session already exists. Use ssh-run without a session argument or call ssh-session-set-active first.',
           configPath: PROFILES.path,
           configPaths: PROFILES.paths,
@@ -1124,11 +1127,14 @@ server.tool(
       return createJsonToolResponse(applyToolContract({
         reused: false,
         instanceId: INSTANCE_ID,
+        source: PROFILES.source,
+        configResolution: PROFILES.resolution,
         activeSessionRef: metadata.sessionRef,
         configPath: PROFILES.path,
         configPaths: PROFILES.paths,
         terminalUrl,
         viewerBaseUrl: getViewerBaseUrl(),
+        viewerEnabled: Boolean(getViewerBaseUrl()),
         session: session.summary(),
         hint: 'Session opened. Use ssh-run without a session argument to target the active session.',
       }, {
@@ -1153,10 +1159,13 @@ server.tool(
       return createJsonToolResponse(applyToolContract({
         reused: true,
         instanceId: INSTANCE_ID,
+        source: PROFILES.source,
+        configResolution: PROFILES.resolution,
         activeSessionRef: existing.metadata.sessionRef,
         session: existing.summary(),
         terminalUrl,
         viewerBaseUrl: getViewerBaseUrl(),
+        viewerEnabled: Boolean(getViewerBaseUrl()),
         hint: 'Session already exists. Use ssh-run without a session argument to target the active session.',
         configPath: PROFILES.path,
         configPaths: PROFILES.paths,
@@ -1239,11 +1248,14 @@ server.tool(
     return createJsonToolResponse(applyToolContract({
       reused: false,
       instanceId: INSTANCE_ID,
+      source: PROFILES.source,
+      configResolution: PROFILES.resolution,
       activeSessionRef: metadata.sessionRef,
       configPath: PROFILES.path,
       configPaths: PROFILES.paths,
       terminalUrl,
       viewerBaseUrl: getViewerBaseUrl(),
+      viewerEnabled: Boolean(getViewerBaseUrl()),
       session: session.summary(),
       hint: 'Session opened. Use ssh-run without a session argument to target the active session. The user can also type in the browser terminal.',
     }, {

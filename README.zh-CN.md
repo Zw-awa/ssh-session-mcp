@@ -88,12 +88,23 @@ SSH_MCP_MODE=safe
 
 可放在仓库根目录，也可以通过 `--config=/path/to/config.json` 显式指定。
 
+重要说明：
+
+- 自动发现是基于 MCP 进程当前工作目录，不会扫描磁盘上其他任意项目目录。
+- 如果 MCP 进程启动于 `E:\\XSmartcar\\tools\\ssh-mcp`，那么放在 `E:\\其他目录\\ssh-session-mcp.config.json` 的配置文件不会被自动发现。
+- 如果配置文件在当前工作目录之外，必须通过 `SSH_MCP_CONFIG=/path/to/config.json` 或 `--config=/path/to/config.json` 显式指定。
+- 当前设备认证只支持 `auth.passwordEnv` 和 `auth.keyPath`。
+- 像 `"auth": { "password": "secret" }` 这种直接写明文密码的格式无效，会导致 schema 校验失败。
+- 使用 `passwordEnv` 时，真实密码应放在 `.env` 或父进程环境变量中，例如 `BOARD_A_PASSWORD=orangepi`。
+
 配置解析顺序如下：
 
 1. 显式 `--config=/path/to/config.json`
 2. 工作区 `ssh-session-mcp.config.json`
 3. 用户级全局配置
 4. 旧式单设备 `.env` 回退
+
+这意味着：如果配置文件在别的工作区目录里，除非你显式设置 `SSH_MCP_CONFIG` 或 `--config`，否则当前 MCP 进程不会自动使用它。
 
 可通过编译后的配置 CLI 管理：
 
@@ -262,6 +273,30 @@ node build/index.js --host=192.168.1.100 --user=username --viewerPort=8793 --mod
 - 显式配置：`SSH_MCP_CONFIG=/path/to/config.json` 或 `--config=/path/to/config.json`
 
 配置文件支持顶层 `defaults`、`defaultDevice` 和 `devices`。当工作区配置与全局配置中存在相同 `id` 的设备时，工作区版本会整体替换该设备；顶层 `defaults` 则做浅合并。
+
+发现规则：
+
+- 工作区配置路径永远是相对于当前 MCP 进程工作目录计算的。
+- 某个其他目录里即使存在 `ssh-session-mcp.config.json`，也不会自动生效。
+- 如果你要复用另一个项目目录下的配置，必须显式传入 `SSH_MCP_CONFIG` 或 `--config`。
+
+认证 schema 规则：
+
+- 支持：`auth.passwordEnv`、`auth.keyPath`
+- 不支持：`auth.password`
+- 推荐的密码写法：
+
+```json
+{
+  "auth": {
+    "passwordEnv": "BOARD_A_PASSWORD"
+  }
+}
+```
+
+```ini
+BOARD_A_PASSWORD=orangepi
+```
 
 参考示例：[docs/examples/ssh-session-mcp.config.example.json](docs/examples/ssh-session-mcp.config.example.json)
 
