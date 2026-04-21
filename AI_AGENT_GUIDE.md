@@ -1,102 +1,132 @@
 # AI Agent Integration Guide
 
-This document explains how AI agents (Claude Code, Codex CLI, etc.) should use ssh-session-mcp correctly.
+This document explains how Claude Code, Codex CLI, and similar MCP clients should use `ssh-session-mcp`.
 
-## Core Principle
+## Core Loop
 
-**Do NOT write scripts.** Use MCP tools interactively in a loop:
+Do not generate wrapper scripts for normal SSH interaction. Use MCP tools in a short control loop:
 
-```
-ssh-quick-connect → ssh-run → read output → decide → ssh-run → ...
-```
-
-## Quick Start (for AI agents)
-
-### Step 1: Connect (once per conversation)
-
-Call `ssh-quick-connect`. If a session already exists, it will be reused automatically.
-
-```json
-{ "name": "ssh-quick-connect" }
+```text
+ssh-quick-connect -> ssh-run -> inspect output -> decide -> ssh-run
 ```
 
-This returns a `terminalUrl` — tell the user to open it in their browser so they can watch.
+When you need lower-level control, drop to the session tools directly instead of creating extra automation layers.
 
-### Step 2: Run commands (repeat as needed)
+## Recommended Startup
 
-Call `ssh-run` with the command you want to execute:
+### 1. Inspect available devices
 
-```json
-{ "name": "ssh-run", "arguments": { "command": "hostname -I" } }
-```
+Use `ssh-device-list` first when the repo or user may have configured more than one target.
 
-The tool sends the command, waits for output, and returns it. Read the output, decide what to do next, then call `ssh-run` again.
+### 2. Connect or reuse
 
-### Step 3: Check status (if unsure)
+Use `ssh-quick-connect` for the common case. It can reuse an existing session and optionally ensure a viewer.
 
-Call `ssh-status` to see if sessions are running:
+### 3. Run commands
 
-```json
-{ "name": "ssh-status" }
-```
+Use `ssh-run` for most shell work. It handles locking, completion detection, exit code capture, and async handoff.
 
-## Input Lock Mechanism
+### 4. Check status when targeting is unclear
 
-The terminal has an input lock to prevent user and AI from typing simultaneously.
+Use `ssh-status`, `ssh-session-list`, `ssh-session-set-active`, and `ssh-session-diagnostics` before guessing.
 
-- When AI calls `ssh-run`, it automatically acquires the `agent` lock, sends the command, reads output, then releases the lock.
-- When the lock is `agent`, the browser terminal blocks user keyboard input and shows "AI active".
-- The user can switch to `user` mode in the browser (dropdown selector) to take control. When locked to `user`, `ssh-run` returns an error telling the AI to wait.
-- The user switches back to `claude`/`codex` mode to let AI resume.
+## Tool Catalog
 
-**AI agents cannot change the lock.** Only the user can switch modes via the browser UI. The AI should respect `INPUT_LOCKED` errors and inform the user.
+### High-frequency tools
 
-## Tool Reference
+| Tool | When to use |
+|------|-------------|
+| `ssh-device-list` | Discover configured devices and defaults |
+| `ssh-quick-connect` | Open or reuse the default SSH session |
+| `ssh-run` | Execute one command and wait for a stable result |
+| `ssh-status` | Inspect active sessions, runtime mode, and viewer status |
+| `ssh-command-status` | Poll a long-running async command |
+| `ssh-retry` | Retry flaky commands with fixed or exponential backoff |
 
-| Tool | Purpose | When to use |
-|------|---------|-------------|
-| `ssh-quick-connect` | Connect SSH + open terminal | Once at start of conversation |
-| `ssh-run` | Execute command, return output | Every time you need to run something |
-| `ssh-status` | Check active sessions | When unsure if connected |
-| `ssh-session-close` | Close a session | When done with the session |
+### Session control tools
 
-## Advanced Tools (rarely needed)
+| Tool | When to use |
+|------|-------------|
+| `ssh-session-open` | Open a session with explicit connection parameters |
+| `ssh-session-send` | Send raw text without waiting for completion |
+| `ssh-session-read` | Read buffered terminal output by offset |
+| `ssh-session-watch` | Long-poll for transcript growth and dashboard updates |
+| `ssh-session-history` | Read line-numbered mixed history of output and actor events |
+| `ssh-session-control` | Send control keys such as `ctrl_c`, arrows, or `tab` |
+| `ssh-session-resize` | Resize the PTY window |
+| `ssh-session-list` | List all tracked sessions |
+| `ssh-session-diagnostics` | Inspect lock state, trim warnings, running commands, and viewer health |
+| `ssh-session-set-active` | Choose the default session for tools that omit `session` |
+| `ssh-session-close` | Close a session cleanly |
 
-These exist for fine-grained control but `ssh-run` covers most use cases:
+### Viewer tools
 
-| Tool | Purpose |
+| Tool | When to use |
+|------|-------------|
+| `ssh-viewer-ensure` | Open or reuse the local viewer |
+| `ssh-viewer-list` | Inspect tracked local viewer processes |
+
+## Response Contract
+
+Many JSON-style responses include normalized contract fields in addition to tool-specific fields:
+
+| Field | Meaning |
 |------|---------|
-| `ssh-session-open` | Open session with custom parameters |
-| `ssh-session-send` | Send raw input without waiting |
-| `ssh-session-read` | Read output without sending |
-| `ssh-session-watch` | Long-poll for changes |
-| `ssh-session-control` | Send control keys (Ctrl+C, etc.) |
-| `ssh-session-resize` | Resize PTY |
-| `ssh-viewer-ensure` | Open viewer window |
-| `ssh-viewer-list` | List viewer processes |
-| `ssh-session-list` | List all sessions |
+| `resultStatus` | `success`, `partial_success`, `blocked`, or `failure` |
+| `summary` | One-line summary for humans and agents |
+| `failureCategory` | Normalized failure taxonomy key when blocked or failed |
+| `nextAction` | Suggested next step |
+| `evidence` | Short supporting facts such as ids, ports, or session refs |
 
-## Anti-Patterns (DO NOT do these)
+Important compatibility rule:
 
-1. **Do NOT write .mjs/.js scripts** to automate SSH interaction. Use `ssh-run` directly.
-2. **Do NOT hardcode SSH credentials** in any file. They belong in `.env` only.
-3. **Do NOT send multiple commands** without reading output between them. Always: send → read → decide → send.
-4. **Do NOT ignore `INPUT_LOCKED` errors.** Tell the user to switch to agent mode.
-5. **Do NOT try to run interactive TUI programs** (vim, htop, claude) via `ssh-run`. Use `ssh-session-send` for those and read output with `ssh-session-read`.
+- Do not replace tool-specific handling with `resultStatus` alone.
+- Do not assume top-level `status` has the same meaning across tools.
+- Some tools keep `status` for lifecycle values such as `running` or `completed`, so use `resultStatus` for cross-tool branching.
 
-## Example Conversation Flow
+Reference docs:
 
+- [docs/contracts.md](docs/contracts.md)
+- [docs/failure-taxonomy.md](docs/failure-taxonomy.md)
+
+## Targeting Rules
+
+- If a tool supports `session`, pass it explicitly when more than one session may exist.
+- If you want a reusable default target, call `ssh-session-set-active`.
+- If targeting is ambiguous, do not guess. Expect a blocked/failure response and resolve it first.
+
+## Locking Rules
+
+- `ssh-run`, `ssh-session-send`, and `ssh-session-control` must respect input locking.
+- When the user lock is active, expect an `input-locked` style failure and wait.
+- Do not keep sending commands if the terminal is in a password prompt, pager, or editor state.
+- Check `ssh-session-diagnostics` when the shell feels inconsistent.
+
+## Safe Usage Rules
+
+- Prefer one command per `ssh-run` call.
+- Read output before issuing the next command.
+- Do not hardcode credentials into prompts, scripts, or repo files.
+- Do not try to hide ambiguous session selection behind agent assumptions.
+- Use `ssh-retry` instead of ad hoc retry loops when the failure pattern is understood.
+
+## Config Awareness
+
+Config can come from three places:
+
+1. Explicit `--config`
+2. Workspace `ssh-session-mcp.config.json`
+3. User-global config plus legacy `.env`
+
+Useful commands for local operators:
+
+```bash
+npm run config -- path
+npm run config -- show --scope=merged
+npm run config -- device list --scope=merged
+npm run validate:repo
 ```
-AI: [calls ssh-quick-connect]
-AI: "I've connected to the board. Terminal is at http://127.0.0.1:8793/terminal/session/..."
 
-AI: [calls ssh-run { command: "uname -a" }]
-AI: "The board is running Linux 5.10.160-rockchip-rk3588 on aarch64."
+## Scope Boundary
 
-AI: [calls ssh-run { command: "df -h /" }]
-AI: "Root partition is 34% used (19G of 56G)."
-
-User: "Check what Python version is installed"
-AI: [calls ssh-run { command: "python3 --version" }]
-AI: "Python 3.10.12"
-```
+`ssh-session-mcp` is the transport/runtime layer. Device-specific build logic, ROS workflows, training pipelines, or company/project prompts should live outside this repo, typically as prompts, skills, or a companion repository.

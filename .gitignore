@@ -158,8 +158,10 @@ test-output/
 local.config.json
 dev.config.json
 
-# Local design docs
-docs/
+# Local design drafts
+docs/private/
+docs/drafts/
+docs/**/*.local.md
 
 .env.*
 !.env.example

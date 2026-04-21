@@ -1,0 +1,58 @@
+{
+  "defaults": {
+    "viewerHost": "127.0.0.1",
+    "viewerPort": "auto",
+    "viewerMode": "browser",
+    "viewerSingletonScope": "connection",
+    "autoOpenTerminal": false,
+    "mode": "safe",
+    "logMode": "meta"
+  },
+  "defaultDevice": "board-a",
+  "devices": [
+    {
+      "id": "board-a",
+      "label": "RK3588 Board",
+      "host": "192.168.10.58",
+      "port": 22,
+      "user": "orangepi",
+      "auth": {
+        "passwordEnv": "BOARD_A_PASSWORD"
+      },
+      "defaults": {
+        "term": "xterm-256color",
+        "cols": 120,
+        "rows": 40,
+        "idleTimeoutMs": 1800000,
+        "closedRetentionMs": 300000,
+        "autoOpenViewer": true,
+        "viewerMode": "browser"
+      },
+      "tags": [
+        "board",
+        "rk3588"
+      ]
+    },
+    {
+      "id": "host-dev",
+      "label": "Main Dev Host",
+      "host": "192.168.10.10",
+      "port": 22,
+      "user": "zw",
+      "auth": {
+        "keyPath": "C:/Users/you/.ssh/id_ed25519"
+      },
+      "defaults": {
+        "term": "xterm-256color",
+        "cols": 140,
+        "rows": 42,
+        "autoOpenViewer": false,
+        "viewerMode": "terminal"
+      },
+      "tags": [
+        "host",
+        "training"
+      ]
+    }
+  ]
+}

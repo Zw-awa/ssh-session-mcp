@@ -88,6 +88,23 @@ SSH_MCP_MODE=safe
 
 可放在仓库根目录，也可以通过 `--config=/path/to/config.json` 显式指定。
 
+配置解析顺序如下：
+
+1. 显式 `--config=/path/to/config.json`
+2. 工作区 `ssh-session-mcp.config.json`
+3. 用户级全局配置
+4. 旧式单设备 `.env` 回退
+
+可通过编译后的配置 CLI 管理：
+
+```bash
+npm run config -- path
+npm run config -- show --scope=merged
+npm run config -- device list --scope=merged
+npm run config -- device set board-a --host=192.168.10.58 --user=orangepi --password-env=BOARD_A_PASSWORD
+npm run config -- defaults set viewerPort auto
+```
+
 ### 3. 启动（面向用户）
 
 ```bash
@@ -236,15 +253,52 @@ AI: ssh-command-status({ commandId: "abc123" })
 node build/index.js --host=192.168.1.100 --user=username --viewerPort=8793 --mode=full
 ```
 
+### 配置文件
+
+- 工作区配置：`./ssh-session-mcp.config.json`
+- 用户全局配置：
+  - Windows：`%APPDATA%\\ssh-session-mcp\\config.json`
+  - Linux/macOS：`$XDG_CONFIG_HOME/ssh-session-mcp/config.json` 或 `~/.config/ssh-session-mcp/config.json`
+- 显式配置：`SSH_MCP_CONFIG=/path/to/config.json` 或 `--config=/path/to/config.json`
+
+配置文件支持顶层 `defaults`、`defaultDevice` 和 `devices`。当工作区配置与全局配置中存在相同 `id` 的设备时，工作区版本会整体替换该设备；顶层 `defaults` 则做浅合并。
+
+参考示例：[docs/examples/ssh-session-mcp.config.example.json](docs/examples/ssh-session-mcp.config.example.json)
+
+## 工具响应契约
+
+结构化工具响应可能带有以下额外字段：
+
+| 字段 | 含义 |
+|------|------|
+| `resultStatus` | 统一结果：`success`、`partial_success`、`blocked`、`failure` |
+| `summary` | 适合人和 AI 阅读的一行摘要 |
+| `failureCategory` | 被阻止或失败时的标准化失败类型 |
+| `nextAction` | 建议的下一步 |
+| `evidence` | 简短的支撑信息 |
+
+兼容性说明：
+
+- 现有工具原本的返回字段保持不变。
+- 跨工具做分支判断时请优先读取 `resultStatus`。
+- 某些工具顶层的 `status` 仍然表示生命周期状态，例如 `running`、`completed`。
+
+参考文档：
+
+- [docs/contracts.md](docs/contracts.md)
+- [docs/failure-taxonomy.md](docs/failure-taxonomy.md)
+
 ## CLI 命令
 
 ```bash
 npm run launch    # 启动服务并打开浏览器终端
+npm run config -- show --scope=merged
 npm run status    # 查看服务和会话状态
 npm run devices   # 列出已配置设备
 npm run kill      # 结束占用 viewer 端口的进程
 npm run cleanup   # 结束进程并清理状态文件
 npm run logs      # 查看本地 server/session JSONL 日志
+npm run validate:repo  # 校验仓库文档、配置示例和工具覆盖
 npm run build     # 编译 TypeScript
 npm run test      # 运行单元测试
 npm run inspect   # 打开 MCP inspector
@@ -276,6 +330,18 @@ node scripts/ctl.mjs logs --instance=codex-a --session=board-a/main
 - Viewer 默认仅绑定到 `127.0.0.1`
 - `safe` 模式默认拦截高风险命令
 - 建议优先使用 `SSH_KEY`，避免直接使用密码
+
+## 文档与校验
+
+- [docs/contracts.md](docs/contracts.md)：统一工具响应字段
+- [docs/failure-taxonomy.md](docs/failure-taxonomy.md)：稳定失败分类
+- [docs/acceptance-scenarios.md](docs/acceptance-scenarios.md)：当前架构的回归验收清单
+- [docs/platform-compatibility.md](docs/platform-compatibility.md)：主机、目标端和运行时兼容性说明
+- `npm run validate:repo`：检查必需文档、示例配置、验收场景 ID、`.env.example` 和 MCP 工具在文档中的覆盖情况
+
+## 项目边界
+
+本仓库只聚焦 SSH 传输与运行时层：会话、viewer、目标选择、锁、日志与工具契约。具体项目的 ROS 工作流、板卡职责、模型流程、业务提示词和更高层 skill 应放在仓库外部维护。
 
 ## 许可证
 

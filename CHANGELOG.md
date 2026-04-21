@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.0] - 2026-04-21
+
+### Added
+- **Config governance CLI**: Added `ssh-session-mcp-config` / `npm run config -- ...` for merged config inspection, device edits, default-device updates, and runtime default management
+- **Repository validator**: Added `ssh-session-mcp-validate-repo` / `npm run validate:repo` to check required docs, example config validity, acceptance scenario ids, `.env.example` tokens, and MCP tool coverage in docs
+- **Cross-tool response contract documentation**: Added `docs/contracts.md` for standardized tool response fields
+- **Normalized failure taxonomy documentation**: Added `docs/failure-taxonomy.md` for consistent error categorization
+- **Acceptance scenario baseline**: Added `docs/acceptance-scenarios.md` for defining expected user workflows
+- **Platform/runtime compatibility notes**: Added `docs/platform-compatibility.md` for deployment guidance
+- **Example multi-device config**: Added `docs/examples/ssh-session-mcp.config.example.json` for configuration reference
+- **Unit coverage**: Added tests for config merging, contract helpers, and repository validation helpers
+
+### Changed
+- **Tool response standardization**: Tool responses now expose normalized `resultStatus` / `summary` / `nextAction` style contract fields while keeping existing payload fields compatible
+- **Config loading model**: Config loading now explicitly models workspace config, user-global config, explicit config paths, loaded file lists, and resolution mode
+- **Documentation updates**: README, `README.zh-CN.md`, and `AI_AGENT_GUIDE.md` now document config resolution order, repo validation, response contracts, and repo scope boundaries
+- **Git ignore patterns**: `.gitignore` now keeps repo docs versionable while still ignoring local draft/private docs
+
 ## [2.5.0] - 2026-04-21
 
 ### Added

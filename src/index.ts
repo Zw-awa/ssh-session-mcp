@@ -14,6 +14,11 @@ import { z } from 'zod';
 import { WebSocketServer, WebSocket } from 'ws';
 
 import {
+  withToolContract,
+  type FailureCategory,
+  type ResultStatus,
+} from './contracts.js';
+import {
   delay,
   normalizePaneText,
   renderTerminalDashboard,
@@ -48,6 +53,7 @@ import {
   summarizeAuth,
   type DeviceProfile,
   type LoadedProfiles,
+  type RuntimeDefaults,
 } from './profiles.js';
 import {
   resolveInstanceId,
@@ -136,18 +142,37 @@ const PROFILES: LoadedProfiles = loadProfiles({
   cwd: process.cwd(),
   envPath: process.env.SSH_MCP_CONFIG,
 });
-const DEFAULT_VIEWER_HOST = argvConfig.viewerHost || process.env.VIEWER_HOST || '127.0.0.1';
-const VIEWER_PORT_SETTING: ViewerPortSetting = resolveViewerPortSetting(argvConfig.viewerPort || process.env.VIEWER_PORT);
+const CONFIG_DEFAULTS: RuntimeDefaults | undefined = PROFILES.config?.defaults;
+const DEFAULT_VIEWER_HOST = argvConfig.viewerHost || process.env.VIEWER_HOST || CONFIG_DEFAULTS?.viewerHost || '127.0.0.1';
+const VIEWER_PORT_SETTING: ViewerPortSetting = resolveViewerPortSetting(
+  argvConfig.viewerPort
+  || process.env.VIEWER_PORT
+  || (typeof CONFIG_DEFAULTS?.viewerPort === 'number' ? String(CONFIG_DEFAULTS.viewerPort) : CONFIG_DEFAULTS?.viewerPort),
+);
 const DEFAULT_VIEWER_REFRESH_MS = argvConfig.viewerRefreshMs ? parseInt(argvConfig.viewerRefreshMs, 10) : 1000;
 const LOG_CONFIG = resolveLoggerConfig(
-  argvConfig.logMode || process.env.SSH_MCP_LOG_MODE,
-  argvConfig.logDir || process.env.SSH_MCP_LOG_DIR,
+  argvConfig.logMode || process.env.SSH_MCP_LOG_MODE || CONFIG_DEFAULTS?.logMode,
+  argvConfig.logDir || process.env.SSH_MCP_LOG_DIR || CONFIG_DEFAULTS?.logDir,
   RUNTIME_PATHS.logDir,
 );
 const SSH_CONNECT_TIMEOUT_MS = 30000;
-const AUTO_OPEN_TERMINAL = argvConfig.autoOpenTerminal === 'true' || argvConfig.autoOpenTerminal === '1' || process.env.AUTO_OPEN_TERMINAL === 'true' || process.env.AUTO_OPEN_TERMINAL === '1';
-const VIEWER_LAUNCH_MODE: ViewerLaunchMode = (argvConfig.viewerLaunchMode || process.env.VIEWER_LAUNCH_MODE || 'browser') as ViewerLaunchMode;
-let OPERATION_MODE: OperationMode = (argvConfig.mode || process.env.SSH_MCP_MODE || 'safe') as OperationMode;
+const AUTO_OPEN_TERMINAL = argvConfig.autoOpenTerminal === 'true'
+  || argvConfig.autoOpenTerminal === '1'
+  || process.env.AUTO_OPEN_TERMINAL === 'true'
+  || process.env.AUTO_OPEN_TERMINAL === '1'
+  || CONFIG_DEFAULTS?.autoOpenTerminal === true;
+const VIEWER_LAUNCH_MODE: ViewerLaunchMode = (
+  argvConfig.viewerLaunchMode
+  || process.env.VIEWER_LAUNCH_MODE
+  || CONFIG_DEFAULTS?.viewerMode
+  || 'browser'
+) as ViewerLaunchMode;
+let OPERATION_MODE: OperationMode = (
+  argvConfig.mode
+  || process.env.SSH_MCP_MODE
+  || CONFIG_DEFAULTS?.mode
+  || 'safe'
+) as OperationMode;
 const USE_SENTINEL_MARKER = (argvConfig.useMarker || process.env.SSH_MCP_USE_MARKER || 'true') !== 'false';
 const VIEWER_STATE_FILE = RUNTIME_PATHS.viewerStateFile;
 const VIEWER_CLI_ENTRY_PATH = fileURLToPath(new URL('./viewer-cli.js', import.meta.url));
@@ -977,6 +1002,26 @@ function createToolResponse(primaryText: string, extraTexts: string[] = []) {
         .map(text => ({ type: 'text' as const, text })),
     ],
   };
+}
+
+function createJsonToolResponse(payload: object, extraTexts: string[] = []) {
+  return createToolResponse(JSON.stringify(payload, null, 2), extraTexts);
+}
+
+function applyToolContract(
+  payload: object,
+  contract: {
+    resultStatus: ResultStatus;
+    summary: string;
+    nextAction?: string;
+    failureCategory?: FailureCategory;
+    evidence?: Array<string | undefined | null>;
+  },
+) {
+  return withToolContract(payload, {
+    ...contract,
+    evidence: (contract.evidence || []).filter((value): value is string => typeof value === 'string' && value.trim().length > 0),
+  });
 }
 
 function escapeRegExp(value: string): string {
@@ -3435,7 +3480,7 @@ server.tool(
       || profileDefaults?.viewerMode
       || VIEWER_LAUNCH_MODE,
     );
-    const resolvedViewerScope = viewerScopeValue(viewerSingletonScope);
+    const resolvedViewerScope = viewerScopeValue(viewerSingletonScope || CONFIG_DEFAULTS?.viewerSingletonScope);
 
     const sessionId = randomUUID();
     const resolvedConnectionName = resolvedDeviceId
@@ -3550,7 +3595,7 @@ server.tool(
       stripAnsiFromLeft: resolvedStripAnsi,
     });
 
-    return createToolResponse(JSON.stringify({
+    return createJsonToolResponse(applyToolContract({
       ...session.summary(),
       activeSession: true,
       nextOutputOffset: session.currentBufferEnd(),
@@ -3572,7 +3617,19 @@ server.tool(
       viewerAutoOpenError,
       autoOpenTerminalUrl,
       autoOpenTerminalError,
-    }, null, 2), resolvedIncludeDashboard ? [dashboard] : []);
+      configPath: PROFILES.path,
+      configPaths: PROFILES.paths,
+      configResolution: PROFILES.resolution,
+    }, {
+      resultStatus: 'success',
+      summary: `Opened SSH session ${metadata.sessionRef}.`,
+      nextAction: 'Use ssh-run or ssh-session-send to interact with the active session.',
+      evidence: [
+        `sessionRef=${metadata.sessionRef}`,
+        `host=${resolvedUser}@${resolvedHost}:${resolvedPort}`,
+        `viewerBaseUrl=${getViewerBaseUrl() || '(disabled)'}`,
+      ],
+    }), resolvedIncludeDashboard ? [dashboard] : []);
   },
 );
 
@@ -3592,11 +3649,20 @@ server.tool(
     }
 
     if (target.inputLock === 'user') {
-      return createToolResponse(JSON.stringify({
+      return createJsonToolResponse(applyToolContract({
         error: 'INPUT_LOCKED',
         lock: 'user',
         message: 'Terminal is locked by user. The user must switch to agent or common mode in the browser terminal before AI can send input.',
-      }, null, 2));
+      }, {
+        resultStatus: 'blocked',
+        summary: 'Raw input was blocked because the terminal is locked by the user.',
+        failureCategory: 'input-locked',
+        nextAction: 'Ask the user to switch the browser terminal back to common or agent mode.',
+        evidence: [
+          `sessionRef=${sessionReadRef(target)}`,
+          'inputLock=user',
+        ],
+      }));
     }
 
     const payload = appendNewline === true ? `${input}\n` : input;
@@ -3607,13 +3673,21 @@ server.tool(
       sentChars: payload.length,
     });
 
-    return createToolResponse(JSON.stringify({
+    return createJsonToolResponse(applyToolContract({
       ...target.summary(),
       actor: resolvedActor,
       sentChars: payload.length,
       nextOutputOffset: target.currentBufferEnd(),
       nextEventSeq: target.currentEventEnd(),
-    }, null, 2));
+    }, {
+      resultStatus: 'success',
+      summary: `Sent ${payload.length} character(s) to ${sessionReadRef(target)}.`,
+      nextAction: 'Use ssh-session-read or ssh-session-watch to inspect the resulting output.',
+      evidence: [
+        `sessionRef=${sessionReadRef(target)}`,
+        `actor=${resolvedActor}`,
+      ],
+    }));
   },
 );
 
@@ -3635,10 +3709,13 @@ server.tool(
       isDefault: device.id === defaultDeviceId,
     }));
 
-    return createToolResponse(JSON.stringify({
+    return createJsonToolResponse(applyToolContract({
       instanceId: INSTANCE_ID,
       source: PROFILES.source,
       configPath: PROFILES.path,
+      configPaths: PROFILES.paths,
+      configResolution: PROFILES.resolution,
+      defaults: PROFILES.config?.defaults || {},
       defaultDevice: defaultDeviceId,
       devices,
       legacyDefaults: PROFILES.source === 'legacy-env' ? {
@@ -3646,7 +3723,20 @@ server.tool(
         userConfigured: Boolean(DEFAULT_USER),
         port: DEFAULT_PORT,
       } : undefined,
-    }, null, 2));
+    }, {
+      resultStatus: 'success',
+      summary: PROFILES.source === 'legacy-env'
+        ? 'No profile config file is active; legacy environment-variable mode is in use.'
+        : `Loaded ${devices.length} device profile(s).`,
+      nextAction: devices.length > 0
+        ? 'Use ssh-quick-connect with device and optional connectionName to open a session.'
+        : 'Add a device profile with the config CLI or create ssh-session-mcp.config.json.',
+      evidence: [
+        `source=${PROFILES.source}`,
+        `configPath=${PROFILES.path || '(none)'}`,
+        `defaultDevice=${defaultDeviceId || '(none)'}`,
+      ],
+    }));
   },
 );
 
@@ -3672,7 +3762,7 @@ server.tool(
     const snapshot = target.read(offset, resolvedMaxChars);
     const readProgress = buildReadProgress(snapshot);
 
-    return createToolResponse(JSON.stringify({
+    return createJsonToolResponse(applyToolContract({
       ...target.summary(),
       requestedOffset: snapshot.requestedOffset,
       effectiveOffset: snapshot.effectiveOffset,
@@ -3685,7 +3775,18 @@ server.tool(
       readMore: snapshot.truncatedAfter
         ? buildSnapshotReadMore(sessionReadRef(target), snapshot, resolvedMaxChars)
         : undefined,
-    }, null, 2), [snapshot.output.length > 0 ? `[output]\n${snapshot.output}` : '']);
+    }, {
+      resultStatus: 'success',
+      summary: `Read ${snapshot.output.length} character(s) from ${sessionReadRef(target)}.`,
+      nextAction: snapshot.truncatedAfter
+        ? 'Use nextOffset with ssh-session-read to continue reading buffered output.'
+        : 'Use ssh-session-watch for live updates or ssh-run for the next command.',
+      evidence: [
+        `sessionRef=${sessionReadRef(target)}`,
+        `nextOffset=${snapshot.nextOffset}`,
+        `truncatedAfter=${snapshot.truncatedAfter}`,
+      ],
+    }), [snapshot.output.length > 0 ? `[output]\n${snapshot.output}` : '']);
   },
 );
 
@@ -3745,7 +3846,7 @@ server.tool(
       stripAnsiFromLeft: resolvedStripAnsi,
     });
 
-    return createToolResponse(JSON.stringify({
+    return createJsonToolResponse(applyToolContract({
       ...target.summary(),
       requestedOutputOffset: typeof outputOffset === 'number' ? outputOffset : null,
       requestedEventSeq: typeof eventSeq === 'number' ? eventSeq : null,
@@ -3761,7 +3862,18 @@ server.tool(
       stripAnsiFromLeft: resolvedStripAnsi,
       viewerBaseUrl: getViewerBaseUrl(),
       viewerUrl: buildViewerSessionUrl(target),
-    }, null, 2), resolvedIncludeDashboard ? [dashboard] : []);
+    }, {
+      resultStatus: 'success',
+      summary: `Observed ${sessionReadRef(target)} for up to ${resolvedWaitMs} ms.`,
+      nextAction: nextOutputOffset > baselineOutputOffset || nextEventSeq > baselineEventSeq
+        ? 'Inspect the returned offsets or dashboard, then continue with ssh-run, ssh-session-read, or another watch call.'
+        : 'No change detected yet. Poll again with ssh-session-watch if needed.',
+      evidence: [
+        `sessionRef=${sessionReadRef(target)}`,
+        `outputChanged=${nextOutputOffset > baselineOutputOffset}`,
+        `eventChanged=${nextEventSeq > baselineEventSeq}`,
+      ],
+    }), resolvedIncludeDashboard ? [dashboard] : []);
   },
 );
 
@@ -3778,7 +3890,7 @@ server.tool(
     const resolvedMaxLines = sanitizePositiveInt(maxLines, 'maxLines', 80);
     const snapshot = target.readHistory(line, resolvedMaxLines);
 
-    return createToolResponse(JSON.stringify({
+    return createJsonToolResponse(applyToolContract({
       ...target.summary(),
       requestedLine: snapshot.requestedLine,
       effectiveLine: snapshot.effectiveLine,
@@ -3788,7 +3900,18 @@ server.tool(
       truncatedBefore: snapshot.truncatedBefore,
       truncatedAfter: snapshot.truncatedAfter,
       returnedLines: snapshot.lines.length,
-    }, null, 2), [snapshot.view.length > 0 ? snapshot.view : '(no history yet)']);
+    }, {
+      resultStatus: 'success',
+      summary: `Read ${snapshot.lines.length} history line(s) from ${sessionReadRef(target)}.`,
+      nextAction: snapshot.truncatedAfter
+        ? 'Use nextLine with ssh-session-history to continue reading later lines.'
+        : 'Use ssh-session-watch or ssh-run if you need fresh activity.',
+      evidence: [
+        `sessionRef=${sessionReadRef(target)}`,
+        `nextLine=${snapshot.nextLine}`,
+        `truncatedAfter=${snapshot.truncatedAfter}`,
+      ],
+    }), [snapshot.view.length > 0 ? snapshot.view : '(no history yet)']);
   },
 );
 
@@ -3804,11 +3927,20 @@ server.tool(
     const target = resolveSession(session);
 
     if (target.inputLock === 'user') {
-      return createToolResponse(JSON.stringify({
+      return createJsonToolResponse(applyToolContract({
         error: 'INPUT_LOCKED',
         lock: 'user',
         message: 'Terminal is locked by user. The user must switch to agent or common mode in the browser terminal before AI can send control keys.',
-      }, null, 2));
+      }, {
+        resultStatus: 'blocked',
+        summary: 'Control input was blocked because the terminal is locked by the user.',
+        failureCategory: 'input-locked',
+        nextAction: 'Ask the user to switch the browser terminal back to common or agent mode.',
+        evidence: [
+          `sessionRef=${sessionReadRef(target)}`,
+          'inputLock=user',
+        ],
+      }));
     }
 
     const resolvedActor = sanitizeActor(actor, 'agent');
@@ -3818,13 +3950,21 @@ server.tool(
       control,
     });
 
-    return createToolResponse(JSON.stringify({
+    return createJsonToolResponse(applyToolContract({
       ...target.summary(),
       actor: resolvedActor,
       control,
       nextOutputOffset: target.currentBufferEnd(),
       nextEventSeq: target.currentEventEnd(),
-    }, null, 2));
+    }, {
+      resultStatus: 'success',
+      summary: `Sent control key ${control} to ${sessionReadRef(target)}.`,
+      nextAction: 'Use ssh-session-read or ssh-session-watch to inspect the resulting output.',
+      evidence: [
+        `sessionRef=${sessionReadRef(target)}`,
+        `actor=${resolvedActor}`,
+      ],
+    }));
   },
 );
 
@@ -3847,11 +3987,20 @@ server.tool(
       rows: target.rows,
     });
 
-    return createToolResponse(JSON.stringify({
+    return createJsonToolResponse(applyToolContract({
       ...target.summary(),
       nextOutputOffset: target.currentBufferEnd(),
       nextEventSeq: target.currentEventEnd(),
-    }, null, 2));
+    }, {
+      resultStatus: 'success',
+      summary: `Resized ${sessionReadRef(target)} to ${target.cols}x${target.rows}.`,
+      nextAction: 'Continue using the session or reopen the viewer if your local terminal did not refresh.',
+      evidence: [
+        `sessionRef=${sessionReadRef(target)}`,
+        `cols=${target.cols}`,
+        `rows=${target.rows}`,
+      ],
+    }));
   },
 );
 
@@ -3875,10 +4024,21 @@ server.tool(
       .map(session => session.summary())
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 
-    return createToolResponse(JSON.stringify({
+    return createJsonToolResponse(applyToolContract({
       activeSessionRef: refreshActiveSession()?.metadata.sessionRef || null,
       sessions: tracked,
-    }, null, 2));
+    }, {
+      resultStatus: 'success',
+      summary: `Listed ${tracked.length} tracked session(s).`,
+      nextAction: tracked.length > 0
+        ? 'Use ssh-session-set-active to change the default target, or ssh-session-close to remove one.'
+        : 'Use ssh-quick-connect or ssh-session-open to create a new session.',
+      evidence: [
+        `includeClosed=${includeClosed === true}`,
+        `deviceFilter=${deviceFilter || '(none)'}`,
+        `connectionFilter=${connectionFilter || '(none)'}`,
+      ],
+    }));
   },
 );
 
@@ -3893,18 +4053,35 @@ server.tool(
     const sessionRef = sanitizeOptionalText(session);
     if (sessionRef) {
       const target = resolveSession(sessionRef);
-      return createToolResponse(JSON.stringify(buildSessionDiagnostics(target), null, 2));
+      return createJsonToolResponse(applyToolContract(buildSessionDiagnostics(target), {
+        resultStatus: 'success',
+        summary: `Built diagnostics for ${sessionReadRef(target)}.`,
+        nextAction: 'Review warnings and lock state before sending more commands.',
+        evidence: [
+          `sessionRef=${sessionReadRef(target)}`,
+        ],
+      }));
     }
 
     const reports = [...sessions.values()]
       .map(buildSessionDiagnostics)
       .sort((a, b) => b.session.updatedAt.localeCompare(a.session.updatedAt));
 
-    return createToolResponse(JSON.stringify(buildDiagnosticsOverview({
+    return createJsonToolResponse(applyToolContract(buildDiagnosticsOverview({
       sessions: reports,
       logDir: LOG_CONFIG.dir,
       logMode: LOG_CONFIG.mode,
-    }), null, 2));
+    }), {
+      resultStatus: 'success',
+      summary: `Built diagnostics overview for ${reports.length} session(s).`,
+      nextAction: reports.length > 0
+        ? 'Inspect a specific session with ssh-session-diagnostics { session }.'
+        : 'Create a session first with ssh-quick-connect or ssh-session-open.',
+      evidence: [
+        `sessionCount=${reports.length}`,
+        `logMode=${LOG_CONFIG.mode}`,
+      ],
+    }));
   },
 );
 
@@ -3919,11 +4096,16 @@ server.tool(
     if (!requested) {
       setActiveSession(undefined);
       logServerEvent('session.active_cleared', {});
-      return createToolResponse(JSON.stringify({
+      return createJsonToolResponse(applyToolContract({
         instanceId: INSTANCE_ID,
         activeSessionId: null,
         activeSessionRef: null,
-      }, null, 2));
+      }, {
+        resultStatus: 'success',
+        summary: 'Cleared the active session pointer.',
+        nextAction: 'Open or select a session before omitting the session argument in other tools.',
+        evidence: [`instanceId=${INSTANCE_ID}`],
+      }));
     }
 
     const target = resolveSession(requested);
@@ -3932,12 +4114,20 @@ server.tool(
       sessionId: target.sessionId,
       sessionRef: target.metadata.sessionRef,
     });
-    return createToolResponse(JSON.stringify({
+    return createJsonToolResponse(applyToolContract({
       instanceId: INSTANCE_ID,
       activeSessionId: target.sessionId,
       activeSessionRef: target.metadata.sessionRef,
       session: target.summary(),
-    }, null, 2));
+    }, {
+      resultStatus: 'success',
+      summary: `Active session set to ${target.metadata.sessionRef}.`,
+      nextAction: 'Subsequent tools may omit the session argument and will target this session.',
+      evidence: [
+        `instanceId=${INSTANCE_ID}`,
+        `sessionRef=${target.metadata.sessionRef}`,
+      ],
+    }));
   },
 );
 
@@ -3953,10 +4143,10 @@ server.tool(
     const target = resolveSession(session);
     const result = await ensureViewerForSession(target, {
       mode: viewerModeValue(mode),
-      scope: viewerScopeValue(singletonScope),
+      scope: viewerScopeValue(singletonScope || CONFIG_DEFAULTS?.viewerSingletonScope),
     });
 
-    return createToolResponse(JSON.stringify({
+    return createJsonToolResponse(applyToolContract({
       ...target.summary(),
       viewerBaseUrl: getViewerBaseUrl(),
       viewerUrl: result.viewerUrl,
@@ -3967,7 +4157,20 @@ server.tool(
       launched: result.launched,
       reusedExistingProcess: result.reusedExistingProcess,
       pid: result.pid,
-    }, null, 2));
+    }, {
+      resultStatus: 'success',
+      summary: result.reusedExistingProcess
+        ? `Reused viewer for ${sessionReadRef(target)}.`
+        : `Ensured viewer for ${sessionReadRef(target)}.`,
+      nextAction: result.viewerUrl
+        ? `Open ${result.viewerUrl} in a browser or terminal viewer.`
+        : 'Viewer is unavailable because the HTTP viewer server is disabled.',
+      evidence: [
+        `sessionRef=${sessionReadRef(target)}`,
+        `mode=${result.mode}`,
+        `scope=${result.scope}`,
+      ],
+    }));
   },
 );
 
@@ -4001,11 +4204,20 @@ server.tool(
       }))
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 
-    return createToolResponse(JSON.stringify({
+    return createJsonToolResponse(applyToolContract({
       viewerBaseUrl: getViewerBaseUrl(),
       viewers: records,
       bindings: [...viewerBindings.values()].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)),
-    }, null, 2));
+    }, {
+      resultStatus: 'success',
+      summary: `Listed ${records.length} viewer process record(s).`,
+      nextAction: records.length > 0
+        ? 'Use ssh-viewer-ensure to reopen a viewer if a terminal process has exited.'
+        : 'Open a session first, then call ssh-viewer-ensure.',
+      evidence: [
+        `viewerBaseUrl=${getViewerBaseUrl() || '(disabled)'}`,
+      ],
+    }));
   },
 );
 
@@ -4027,10 +4239,18 @@ server.tool(
       refreshActiveSession();
     }
 
-    return createToolResponse(JSON.stringify({
+    return createJsonToolResponse(applyToolContract({
       ...summary,
       removed: true,
-    }, null, 2));
+    }, {
+      resultStatus: 'success',
+      summary: `Closed SSH session ${summary.sessionRef}.`,
+      nextAction: 'Use ssh-session-list to confirm remaining sessions or ssh-quick-connect to open a new one.',
+      evidence: [
+        `sessionRef=${summary.sessionRef}`,
+        `sessionId=${summary.sessionId}`,
+      ],
+    }));
   },
 );
 
@@ -4065,7 +4285,7 @@ server.tool(
         const terminalUrl = getViewerBaseUrl()
           ? `${getViewerBaseUrl()}/terminal/session/${encodeURIComponent(existing.sessionId)}`
           : undefined;
-        return createToolResponse(JSON.stringify({
+        return createJsonToolResponse(applyToolContract({
           reused: true,
           instanceId: INSTANCE_ID,
           activeSessionRef: existing.metadata.sessionRef,
@@ -4073,7 +4293,17 @@ server.tool(
           terminalUrl,
           viewerBaseUrl: getViewerBaseUrl(),
           hint: 'Session already exists. Use ssh-run without a session argument or call ssh-session-set-active first.',
-        }, null, 2));
+          configPath: PROFILES.path,
+          configPaths: PROFILES.paths,
+        }, {
+          resultStatus: 'success',
+          summary: `Reused existing session ${existing.metadata.sessionRef}.`,
+          nextAction: 'Use ssh-run without a session argument to target the active session.',
+          evidence: [
+            `sessionRef=${existing.metadata.sessionRef}`,
+            `instanceId=${INSTANCE_ID}`,
+          ],
+        }));
       }
 
       if (requestedSessionName) {
@@ -4151,16 +4381,26 @@ server.tool(
 
       await delay(300);
 
-      return createToolResponse(JSON.stringify({
+      return createJsonToolResponse(applyToolContract({
         reused: false,
         instanceId: INSTANCE_ID,
         activeSessionRef: metadata.sessionRef,
         configPath: PROFILES.path,
+        configPaths: PROFILES.paths,
         terminalUrl,
         viewerBaseUrl: getViewerBaseUrl(),
         session: session.summary(),
         hint: 'Session opened. Use ssh-run without a session argument to target the active session.',
-      }, null, 2));
+      }, {
+        resultStatus: 'success',
+        summary: `Opened new profile session ${metadata.sessionRef}.`,
+        nextAction: 'Use ssh-run without a session argument to target the active session.',
+        evidence: [
+          `sessionRef=${metadata.sessionRef}`,
+          `deviceId=${resolvedDeviceId}`,
+          `connectionName=${resolvedConnectionName}`,
+        ],
+      }));
     }
 
     const name = requestedSessionName || 'default';
@@ -4170,7 +4410,7 @@ server.tool(
       const terminalUrl = getViewerBaseUrl()
         ? `${getViewerBaseUrl()}/terminal/session/${encodeURIComponent(existing.sessionId)}`
         : undefined;
-      return createToolResponse(JSON.stringify({
+      return createJsonToolResponse(applyToolContract({
         reused: true,
         instanceId: INSTANCE_ID,
         activeSessionRef: existing.metadata.sessionRef,
@@ -4178,7 +4418,17 @@ server.tool(
         terminalUrl,
         viewerBaseUrl: getViewerBaseUrl(),
         hint: 'Session already exists. Use ssh-run without a session argument to target the active session.',
-      }, null, 2));
+        configPath: PROFILES.path,
+        configPaths: PROFILES.paths,
+      }, {
+        resultStatus: 'success',
+        summary: `Reused existing session ${existing.metadata.sessionRef}.`,
+        nextAction: 'Use ssh-run without a session argument to target the active session.',
+        evidence: [
+          `sessionRef=${existing.metadata.sessionRef}`,
+          `instanceId=${INSTANCE_ID}`,
+        ],
+      }));
     }
 
     const resolvedHost = DEFAULT_HOST;
@@ -4246,16 +4496,25 @@ server.tool(
 
     await delay(300);
 
-    return createToolResponse(JSON.stringify({
+    return createJsonToolResponse(applyToolContract({
       reused: false,
       instanceId: INSTANCE_ID,
       activeSessionRef: metadata.sessionRef,
       configPath: PROFILES.path,
+      configPaths: PROFILES.paths,
       terminalUrl,
       viewerBaseUrl: getViewerBaseUrl(),
       session: session.summary(),
       hint: 'Session opened. Use ssh-run without a session argument to target the active session. The user can also type in the browser terminal.',
-    }, null, 2));
+    }, {
+      resultStatus: 'success',
+      summary: `Opened new session ${metadata.sessionRef}.`,
+      nextAction: 'Use ssh-run without a session argument to target the active session.',
+      evidence: [
+        `sessionRef=${metadata.sessionRef}`,
+        `instanceId=${INSTANCE_ID}`,
+      ],
+    }));
   },
 );
 
@@ -4275,20 +4534,38 @@ server.tool(
     const commandMeta = summarizeCommandMeta(command);
 
     if (target.inputLock === 'user') {
-      return createToolResponse(JSON.stringify({
+      return createJsonToolResponse(applyToolContract({
         error: 'INPUT_LOCKED',
         lock: 'user',
         message: 'Terminal is locked by user. The user must switch to agent or common mode in the browser terminal before AI can send commands.',
-      }, null, 2));
+      }, {
+        resultStatus: 'blocked',
+        summary: 'Command execution was blocked because the user currently owns terminal input.',
+        failureCategory: 'input-locked',
+        nextAction: 'Ask the user to switch the browser terminal back to common or agent mode.',
+        evidence: [
+          `sessionRef=${sessionReadRef(target)}`,
+          'inputLock=user',
+        ],
+      }));
     }
 
     // Mutual exclusion: reject if another agent command is already running
     if (target.inputLock === 'agent') {
-      return createToolResponse(JSON.stringify({
+      return createJsonToolResponse(applyToolContract({
         error: 'AGENT_BUSY',
         lock: 'agent',
         message: 'Another agent command is already running on this session. Wait for it to complete or use ssh-command-status to check progress.',
-      }, null, 2));
+      }, {
+        resultStatus: 'blocked',
+        summary: 'Command execution was blocked because another agent command is still active.',
+        failureCategory: 'runtime-state-abnormal',
+        nextAction: 'Wait for the running command to finish or check it with ssh-command-status.',
+        evidence: [
+          `sessionRef=${sessionReadRef(target)}`,
+          'inputLock=agent',
+        ],
+      }));
     }
 
     // Command validation
@@ -4299,13 +4576,23 @@ server.tool(
         operationMode: OPERATION_MODE,
         ...commandMeta,
       });
-      return createToolResponse(JSON.stringify({
+      return createJsonToolResponse(applyToolContract({
         error: 'COMMAND_BLOCKED',
         category: validation.category,
         message: validation.message,
         suggestion: validation.suggestion,
         operationMode: OPERATION_MODE,
-      }, null, 2));
+      }, {
+        resultStatus: 'blocked',
+        summary: 'Command policy blocked execution in the current operation mode.',
+        failureCategory: 'policy-blocked',
+        nextAction: validation.suggestion || 'Adjust the command or switch the terminal to a more suitable mode.',
+        evidence: [
+          `sessionRef=${sessionReadRef(target)}`,
+          `operationMode=${OPERATION_MODE}`,
+          `category=${validation.category}`,
+        ],
+      }));
     }
 
     // Terminal mode check
@@ -4318,13 +4605,22 @@ server.tool(
         operationMode: OPERATION_MODE,
         ...commandMeta,
       });
-      return createToolResponse(JSON.stringify({
+      return createJsonToolResponse(applyToolContract({
         error: 'PASSWORD_REQUIRED',
         terminalMode: 'password_prompt',
         message: 'Terminal is at a password prompt. DO NOT send commands — they will be typed as the password.',
         suggestion: 'Options: (1) Ask the user to enter the password in the browser terminal. (2) Use ssh-session-control to send ctrl_c to cancel. (3) If you know the password, use ssh-session-send to type it directly.',
         operationMode: OPERATION_MODE,
-      }, null, 2));
+      }, {
+        resultStatus: 'blocked',
+        summary: 'Command execution was blocked because the terminal is currently waiting for a password.',
+        failureCategory: 'terminal-state-abnormal',
+        nextAction: 'Ask the user to resolve the password prompt or cancel it before running another command.',
+        evidence: [
+          `sessionRef=${sessionReadRef(target)}`,
+          'terminalMode=password_prompt',
+        ],
+      }));
     }
 
     // Editor/pager check — only blocks in safe mode
@@ -4334,14 +4630,25 @@ server.tool(
         terminalMode,
         ...commandMeta,
       });
-      return createToolResponse(JSON.stringify({
+      return createJsonToolResponse(applyToolContract({
         error: 'WRONG_TERMINAL_MODE',
         terminalMode,
         message: `Terminal is in ${terminalMode} mode. Cannot execute commands in this state.`,
         suggestion: terminalMode === 'editor' ? 'Send ctrl_c or ctrl_d via ssh-session-control to exit the editor first.'
           : 'Send "q" via ssh-session-control to exit the pager first.',
         operationMode: OPERATION_MODE,
-      }, null, 2));
+      }, {
+        resultStatus: 'blocked',
+        summary: `Command execution was blocked because the terminal is in ${terminalMode} mode.`,
+        failureCategory: 'terminal-state-abnormal',
+        nextAction: terminalMode === 'editor'
+          ? 'Exit the editor before issuing shell commands.'
+          : 'Exit the pager before issuing shell commands.',
+        evidence: [
+          `sessionRef=${sessionReadRef(target)}`,
+          `terminalMode=${terminalMode}`,
+        ],
+      }));
     }
 
     // Acquire agent lock
@@ -4439,7 +4746,7 @@ server.tool(
         availableStart: partialSnapshot.availableStart,
         availableEnd: partialSnapshot.availableEnd,
       });
-      return createToolResponse(JSON.stringify({
+      return createJsonToolResponse(applyToolContract({
         command,
         async: true,
         commandId,
@@ -4453,7 +4760,16 @@ server.tool(
         warning: validation.category !== 'safe' ? validation.message : undefined,
         hint: `Command is still running. Use ssh-command-status with commandId="${commandId}" to check progress.`,
         readMore,
-      }, null, 2), [partialOutput.length > 0 ? partialOutput : '(no output yet)']);
+      }, {
+        resultStatus: 'partial_success',
+        summary: 'Command started successfully and is still running in the background.',
+        nextAction: `Use ssh-command-status with commandId="${commandId}" to poll for completion.`,
+        evidence: [
+          `sessionRef=${sessionReadRef(target)}`,
+          `commandId=${commandId}`,
+          `completionReason=${completion.reason}`,
+        ],
+      }), [partialOutput.length > 0 ? partialOutput : '(no output yet)']);
     }
 
     // Command completed - read output
@@ -4476,7 +4792,7 @@ server.tool(
         ...commandMeta,
       });
 
-      return createToolResponse(JSON.stringify({
+      return createJsonToolResponse(applyToolContract({
         command,
         sessionName: target.sessionName,
         sessionRef: sessionReadRef(target),
@@ -4486,7 +4802,16 @@ server.tool(
         operationMode: OPERATION_MODE,
         message: 'The command is waiting for a password input. The terminal is now at a password prompt.',
         suggestion: 'DO NOT send another ssh-run command — it will be typed into the password field. Options: (1) Ask the user to enter the password in the browser terminal. (2) Use ssh-session-control to send ctrl_c to cancel the command. (3) If you know the password, use ssh-session-send to send it (not recommended for security).',
-      }, null, 2), [outputText.length > 0 ? outputText : '(password prompt detected)']);
+      }, {
+        resultStatus: 'blocked',
+        summary: 'Command execution reached a password prompt and needs user intervention.',
+        failureCategory: 'terminal-state-abnormal',
+        nextAction: 'Ask the user to resolve the password prompt or cancel it before continuing.',
+        evidence: [
+          `sessionRef=${sessionReadRef(target)}`,
+          'terminalMode=password_prompt',
+        ],
+      }), [outputText.length > 0 ? outputText : '(password prompt detected)']);
     }
 
     // Release lock
@@ -4508,7 +4833,7 @@ server.tool(
     });
 
     if (outputText.length <= resolvedMaxChars) {
-      return createToolResponse(JSON.stringify({
+      return createJsonToolResponse(applyToolContract({
         command,
         sessionName: target.sessionName,
         sessionRef: sessionReadRef(target),
@@ -4528,7 +4853,16 @@ server.tool(
           availableEnd: snapshot.availableEnd,
         }),
         exitHint: 'Check output for command result. Use ssh-run again for next command.',
-      }, null, 2), [outputText.length > 0 ? outputText : '(no output yet)']);
+      }, {
+        resultStatus: 'success',
+        summary: `Command completed for ${sessionReadRef(target)}.`,
+        nextAction: 'Inspect the output, then call ssh-run again for the next step.',
+        evidence: [
+          `sessionRef=${sessionReadRef(target)}`,
+          `completionReason=${completion.reason}`,
+          `exitCode=${typeof exitCode === 'number' ? exitCode : '(none)'}`,
+        ],
+      }), [outputText.length > 0 ? outputText : '(no output yet)']);
     }
 
     // Output exceeds maxChars -- apply head+tail truncation (30% head, 70% tail)
@@ -4542,7 +4876,7 @@ server.tool(
     const tailSnapshot = target.read(undefined, tailChars);
 
     if (tailSnapshot.effectiveOffset <= headSnapshot.nextOffset) {
-      return createToolResponse(JSON.stringify({
+      return createJsonToolResponse(applyToolContract({
         command,
         sessionName: target.sessionName,
         sessionRef: sessionReadRef(target),
@@ -4559,7 +4893,15 @@ server.tool(
           availableEnd: snapshot.availableEnd,
         }),
         exitHint: 'Check output for command result. Use ssh-run again for next command.',
-      }, null, 2), [snapshot.output.length > 0 ? snapshot.output : '(no output yet)']);
+      }, {
+        resultStatus: 'success',
+        summary: `Command completed for ${sessionReadRef(target)}.`,
+        nextAction: 'Inspect the output, then call ssh-run again for the next step.',
+        evidence: [
+          `sessionRef=${sessionReadRef(target)}`,
+          `completionReason=${completion.reason}`,
+        ],
+      }), [snapshot.output.length > 0 ? snapshot.output : '(no output yet)']);
     }
 
     const omittedStart = headSnapshot.nextOffset;
@@ -4570,7 +4912,7 @@ server.tool(
     const separator = `\n\n--- OUTPUT TRUNCATED: ${omittedChars} chars omitted (offset ${omittedStart} to ${omittedEnd}) ---\n--- To read omitted section: use ssh-session-read with session="${sessionReadRef(target)}", offset=${omittedStart}, maxChars=${omittedChars} ---\n\n`;
     const combinedOutput = headSnapshot.output + separator + tailSnapshot.output;
 
-    return createToolResponse(JSON.stringify({
+    return createJsonToolResponse(applyToolContract({
       command,
       sessionName: target.sessionName,
       sessionRef: sessionReadRef(target),
@@ -4590,7 +4932,16 @@ server.tool(
         availableEnd: snapshot.availableEnd,
       }),
       exitHint: `Output was truncated (${totalOutputChars} total chars). Head and tail are shown. Use ssh-session-read with offset=${omittedStart} to read the omitted middle section.`,
-    }, null, 2), [combinedOutput]);
+    }, {
+      resultStatus: 'success',
+      summary: `Command completed for ${sessionReadRef(target)} with truncated output.`,
+      nextAction: 'Use ssh-session-read with the suggested offset to fetch omitted output.',
+      evidence: [
+        `sessionRef=${sessionReadRef(target)}`,
+        `totalOutputChars=${totalOutputChars}`,
+        `omittedChars=${omittedChars}`,
+      ],
+    }), [combinedOutput]);
 
     } finally {
       // Ensure lock is always released even if an error occurs
@@ -4625,7 +4976,7 @@ server.tool(
       terminalMode: detectTerminalMode(s.buffer.slice(-2000)),
     }));
 
-    return createToolResponse(JSON.stringify({
+    return createJsonToolResponse(applyToolContract({
       instanceId: INSTANCE_ID,
       activeSessions: active.length,
       activeSessionId: activeSession?.sessionId || null,
@@ -4634,13 +4985,28 @@ server.tool(
       viewerBaseUrl: getViewerBaseUrl(),
       viewerPort: actualViewerPort || undefined,
       configPath: PROFILES.path,
+      configPaths: PROFILES.paths,
+      configResolution: PROFILES.resolution,
       configuredDevices: PROFILES.config?.devices.map(device => device.id) || [],
       operationMode: OPERATION_MODE,
       logging: logger.getConfig(),
       hint: active.length === 0
         ? 'No active sessions. Use ssh-quick-connect to start one.'
         : 'Sessions are running. Use ssh-run to execute commands.',
-    }, null, 2));
+    }, {
+      resultStatus: 'success',
+      summary: active.length === 0
+        ? 'No active SSH sessions are currently open.'
+        : `Found ${active.length} active SSH session(s).`,
+      nextAction: active.length === 0
+        ? 'Use ssh-quick-connect or ssh-session-open to create a session.'
+        : 'Use ssh-run to execute commands or ssh-session-set-active to switch the default target.',
+      evidence: [
+        `instanceId=${INSTANCE_ID}`,
+        `activeSessionRef=${activeSession?.metadata.sessionRef || '(none)'}`,
+        `viewerBaseUrl=${getViewerBaseUrl() || '(disabled)'}`,
+      ],
+    }));
   },
 );
 
@@ -4656,10 +5022,16 @@ server.tool(
   async ({ commandId, maxChars }) => {
     const entry = runningCommands.get(commandId);
     if (!entry) {
-      return createToolResponse(JSON.stringify({
+      return createJsonToolResponse(applyToolContract({
         error: 'UNKNOWN_COMMAND',
         message: `No tracked command with id "${commandId}". It may have been cleaned up or already retrieved.`,
-      }, null, 2));
+      }, {
+        resultStatus: 'failure',
+        summary: `No tracked async command exists for ${commandId}.`,
+        failureCategory: 'runtime-state-abnormal',
+        nextAction: 'Run ssh-run again or check whether the MCP process has been restarted.',
+        evidence: [`commandId=${commandId}`],
+      }));
     }
 
     const resolvedMaxChars = sanitizePositiveInt(maxChars, 'maxChars', 16000);
@@ -4667,7 +5039,7 @@ server.tool(
     if (entry.status === 'completed' || entry.status === 'interrupted') {
       const output = entry.output || '';
       runningCommands.delete(commandId);
-      return createToolResponse(JSON.stringify({
+      return createJsonToolResponse(applyToolContract({
         commandId,
         command: entry.command,
         status: entry.status,
@@ -4682,7 +5054,20 @@ server.tool(
           availableEnd: entry.startOffset + output.length,
         }),
         hint: 'Command has finished. Output is included below.',
-      }, null, 2), [output.length > 0 ? output : '(no output captured)']);
+      }, {
+        resultStatus: entry.status === 'completed' ? 'success' : 'failure',
+        summary: entry.status === 'completed'
+          ? `Async command ${commandId} has completed.`
+          : `Async command ${commandId} was interrupted.`,
+        failureCategory: entry.status === 'completed' ? undefined : 'runtime-state-abnormal',
+        nextAction: entry.status === 'completed'
+          ? 'Inspect the output and continue with the next command.'
+          : 'Re-run the command if the session is still valid.',
+        evidence: [
+          `commandId=${commandId}`,
+          `status=${entry.status}`,
+        ],
+      }), [output.length > 0 ? output : '(no output captured)']);
     }
 
     // Still running - read current partial output from session
@@ -4697,13 +5082,22 @@ server.tool(
         ...summarizeCommandMeta(entry.command),
       });
       runningCommands.delete(commandId);
-      return createToolResponse(JSON.stringify({
+      return createJsonToolResponse(applyToolContract({
         commandId,
         command: entry.command,
         status: 'interrupted',
         message: 'Session no longer exists.',
         elapsedMs: Date.now() - entry.startTime,
-      }, null, 2));
+      }, {
+        resultStatus: 'failure',
+        summary: `Async command ${commandId} was interrupted because its session disappeared.`,
+        failureCategory: 'runtime-state-abnormal',
+        nextAction: 'Re-open the SSH session, then re-run the command if needed.',
+        evidence: [
+          `commandId=${commandId}`,
+          `sessionId=${entry.sessionId}`,
+        ],
+      }));
     }
 
     const snapshot = session.read(entry.startOffset, resolvedMaxChars);
@@ -4711,7 +5105,7 @@ server.tool(
       sentinelMarker: entry.sentinelMarker,
       sentinelSuffix: entry.sentinelSuffix,
     });
-    return createToolResponse(JSON.stringify({
+    return createJsonToolResponse(applyToolContract({
       commandId,
       command: entry.command,
       status: 'running',
@@ -4724,7 +5118,15 @@ server.tool(
         availableEnd: snapshot.availableEnd,
       }),
       hint: 'Command is still running. Call ssh-command-status again later to check. Partial output is included below.',
-    }, null, 2), [output.length > 0 ? output : '(no output yet)']);
+    }, {
+      resultStatus: 'partial_success',
+      summary: `Async command ${commandId} is still running.`,
+      nextAction: 'Call ssh-command-status again later to poll for completion.',
+      evidence: [
+        `commandId=${commandId}`,
+        `sessionRef=${sessionReadRef(session)}`,
+      ],
+    }), [output.length > 0 ? output : '(no output yet)']);
   },
 );
 
@@ -4756,10 +5158,16 @@ server.tool(
       if (successPattern) successRe = new RegExp(successPattern);
       if (failPattern) failRe = new RegExp(failPattern);
     } catch (e) {
-      return createToolResponse(JSON.stringify({
+      return createJsonToolResponse(applyToolContract({
         error: 'INVALID_PATTERN',
         message: `Invalid regex pattern: ${(e as Error).message}`,
-      }, null, 2));
+      }, {
+        resultStatus: 'failure',
+        summary: 'Retry execution could not start because one of the regex patterns is invalid.',
+        failureCategory: 'config-error',
+        nextAction: 'Fix the supplied successPattern or failPattern and try again.',
+        evidence: [`error=${(e as Error).message}`],
+      }));
     }
 
     let lastOutput = '';
@@ -4779,11 +5187,20 @@ server.tool(
 
       // Execute command
       if (target.inputLock === 'user') {
-        return createToolResponse(JSON.stringify({
+        return createJsonToolResponse(applyToolContract({
           error: 'INPUT_LOCKED',
           lock: 'user',
           message: 'Terminal is locked by user.',
-        }, null, 2));
+        }, {
+          resultStatus: 'blocked',
+          summary: 'Retry execution was blocked because the user currently owns terminal input.',
+          failureCategory: 'input-locked',
+          nextAction: 'Ask the user to switch the browser terminal back to common or agent mode.',
+          evidence: [
+            `sessionRef=${sessionReadRef(target)}`,
+            'inputLock=user',
+          ],
+        }));
       }
 
       target.inputLock = 'agent';
@@ -4820,7 +5237,7 @@ server.tool(
         lastExitCode = completion.exitCode;
 
         if (successRe && successRe.test(output)) {
-          return createToolResponse(JSON.stringify({
+          return createJsonToolResponse(applyToolContract({
             command,
             status: 'success',
             attempts,
@@ -4828,7 +5245,16 @@ server.tool(
             sessionName: target.sessionName,
             sessionRef: sessionReadRef(target),
             hint: `Command succeeded on attempt ${attempts}.`,
-          }, null, 2), [output]);
+          }, {
+            resultStatus: 'success',
+            summary: `Retry command succeeded after ${attempts} attempt(s).`,
+            nextAction: 'Inspect the output and continue with the next command.',
+            evidence: [
+              `sessionRef=${sessionReadRef(target)}`,
+              `attempts=${attempts}`,
+              `exitCode=${typeof lastExitCode === 'number' ? lastExitCode : '(none)'}`,
+            ],
+          }), [output]);
         }
 
         if (failRe && failRe.test(output)) {
@@ -4836,7 +5262,7 @@ server.tool(
         }
 
         if (lastExitCode === 0) {
-          return createToolResponse(JSON.stringify({
+          return createJsonToolResponse(applyToolContract({
             command,
             status: 'success',
             attempts,
@@ -4844,18 +5270,35 @@ server.tool(
             sessionName: target.sessionName,
             sessionRef: sessionReadRef(target),
             hint: `Command succeeded on attempt ${attempts}.`,
-          }, null, 2), [output]);
+          }, {
+            resultStatus: 'success',
+            summary: `Retry command succeeded after ${attempts} attempt(s).`,
+            nextAction: 'Inspect the output and continue with the next command.',
+            evidence: [
+              `sessionRef=${sessionReadRef(target)}`,
+              `attempts=${attempts}`,
+              'exitCode=0',
+            ],
+          }), [output]);
         }
 
         if (lastExitCode === undefined && completion.completed) {
-          return createToolResponse(JSON.stringify({
+          return createJsonToolResponse(applyToolContract({
             command,
             status: 'success',
             attempts,
             sessionName: target.sessionName,
             sessionRef: sessionReadRef(target),
             hint: `Command completed on attempt ${attempts} (no exit code available).`,
-          }, null, 2), [output]);
+          }, {
+            resultStatus: 'success',
+            summary: `Retry command completed after ${attempts} attempt(s).`,
+            nextAction: 'Inspect the output and continue with the next command.',
+            evidence: [
+              `sessionRef=${sessionReadRef(target)}`,
+              `attempts=${attempts}`,
+            ],
+          }), [output]);
         }
       } finally {
         if (target.inputLock === 'agent') {
@@ -4868,7 +5311,7 @@ server.tool(
     }
 
     // All retries exhausted
-    return createToolResponse(JSON.stringify({
+    return createJsonToolResponse(applyToolContract({
       command,
       status: 'failed',
       attempts,
@@ -4876,7 +5319,17 @@ server.tool(
       sessionName: target.sessionName,
       sessionRef: sessionReadRef(target),
       hint: `Command failed after ${attempts} attempts.`,
-    }, null, 2), [lastOutput.length > 0 ? lastOutput : '(no output)']);
+    }, {
+      resultStatus: 'failure',
+      summary: `Retry command failed after ${attempts} attempt(s).`,
+      failureCategory: 'connection-failure',
+      nextAction: 'Inspect the last output, then decide whether to retry manually or fix the remote state.',
+      evidence: [
+        `sessionRef=${sessionReadRef(target)}`,
+        `attempts=${attempts}`,
+        `exitCode=${typeof lastExitCode === 'number' ? lastExitCode : '(none)'}`,
+      ],
+    }), [lastOutput.length > 0 ? lastOutput : '(no output)']);
   },
 );
 

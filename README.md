@@ -88,6 +88,23 @@ Optional multi-device config:
 
 Save it as `ssh-session-mcp.config.json` in the repo root, or pass `--config=/path/to/config.json`.
 
+Config resolution order:
+
+1. Explicit `--config=/path/to/config.json`
+2. Workspace `ssh-session-mcp.config.json`
+3. User-global config at the platform default location
+4. Legacy `.env` single-device fallback
+
+Manage config from the compiled CLI:
+
+```bash
+npm run config -- path
+npm run config -- show --scope=merged
+npm run config -- device list --scope=merged
+npm run config -- device set board-a --host=192.168.10.58 --user=orangepi --password-env=BOARD_A_PASSWORD
+npm run config -- defaults set viewerPort auto
+```
+
 ### 3. Launch (for users)
 
 ```bash
@@ -236,15 +253,52 @@ All env variables can be overridden with `--` flags:
 node build/index.js --host=192.168.1.100 --user=username --viewerPort=8793 --mode=full
 ```
 
+### Config files
+
+- Workspace config: `./ssh-session-mcp.config.json`
+- User-global config:
+  - Windows: `%APPDATA%\\ssh-session-mcp\\config.json`
+  - Linux/macOS: `$XDG_CONFIG_HOME/ssh-session-mcp/config.json` or `~/.config/ssh-session-mcp/config.json`
+- Explicit config: `SSH_MCP_CONFIG=/path/to/config.json` or `--config=/path/to/config.json`
+
+Config files support top-level `defaults`, `defaultDevice`, and `devices`. A workspace config replaces matching devices from the global config by `id`, while top-level `defaults` are shallow-merged.
+
+Reference example: [docs/examples/ssh-session-mcp.config.example.json](docs/examples/ssh-session-mcp.config.example.json)
+
+## Tool Response Contract
+
+Structured tool responses may include these extra top-level fields:
+
+| Field | Meaning |
+|------|---------|
+| `resultStatus` | Normalized outcome: `success`, `partial_success`, `blocked`, `failure` |
+| `summary` | Short human/agent readable summary |
+| `failureCategory` | Normalized failure type when blocked or failed |
+| `nextAction` | Suggested next step |
+| `evidence` | Short supporting facts |
+
+Compatibility note:
+
+- Existing tool payloads remain compatible.
+- `resultStatus` is the cross-tool decision field.
+- Top-level `status` is still used by some tools for lifecycle values such as `running` or `completed`.
+
+Reference docs:
+
+- [docs/contracts.md](docs/contracts.md)
+- [docs/failure-taxonomy.md](docs/failure-taxonomy.md)
+
 ## CLI Commands
 
 ```bash
 npm run launch    # Start server + connect SSH + open browser
+npm run config -- show --scope=merged
 npm run status    # Check server and session status
 npm run devices   # List configured device profiles
 npm run kill      # Kill process on viewer port
 npm run cleanup   # Kill + remove state files
 npm run logs      # Inspect local server/session JSONL logs
+npm run validate:repo  # Validate repo docs/config contract coverage
 npm run build     # Compile TypeScript
 npm run test      # Run unit tests
 npm run inspect   # Open MCP inspector
@@ -277,6 +331,18 @@ node scripts/ctl.mjs logs --instance=codex-a --session=board-a/main
 - Safe mode blocks dangerous commands by default
 - No data is uploaded to external servers
 - Use `SSH_KEY` instead of `SSH_PASSWORD` when possible
+
+## Docs and Validation
+
+- [docs/contracts.md](docs/contracts.md): normalized tool response fields
+- [docs/failure-taxonomy.md](docs/failure-taxonomy.md): stable failure categories
+- [docs/acceptance-scenarios.md](docs/acceptance-scenarios.md): regression checklist for the current architecture
+- [docs/platform-compatibility.md](docs/platform-compatibility.md): host/target/runtime support notes
+- `npm run validate:repo`: checks required docs, example config validity, acceptance scenario ids, `.env.example`, and MCP tool coverage in docs
+
+## Scope Boundary
+
+This repository stays focused on the SSH transport/runtime layer: sessions, viewers, targeting, locks, logging, and tool contracts. Project-specific prompts, ROS workflows, board-role logic, model pipelines, and higher-level agent skills should live outside this repo.
 
 ## License
 
