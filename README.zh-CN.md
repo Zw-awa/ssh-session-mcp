@@ -19,6 +19,9 @@ English: [README.md](README.md)
 - **异步命令跟踪**：长时间运行的命令可自动转为异步并通过轮询查询状态
 - **结构化输出解析**：可自动解析部分常见命令输出，如 `git status`、`git log`、`ls -la`
 - **自动重试**：内置 `ssh-retry` 工具，支持固定/指数退避
+- **会话诊断**：`ssh-session-diagnostics` 可汇总终端模式、锁状态、viewer 状态、运行中命令和缓存裁剪告警
+- **行级历史回看**：`ssh-session-history` 可按行查看 SSH 输出、用户输入、AI 输入和生命周期事件
+- **本地元数据日志**：可选 JSONL 文件日志仅记录本地会话 / viewer / 命令元数据，不把终端 transcript 写入 MCP 标准输出
 - **输入锁**：支持 `common` / `user` / `codex` / `claude` 模式，避免人与 AI 抢输入
 - **来源标记**：状态栏会区分最近一次输入来自 `user`、`codex` 或 `claude`
 - **自动清理**：支持空闲超时回收，减少悬挂会话和遗留进程
@@ -64,6 +67,7 @@ npm run launch    # 启动 MCP + SSH + 浏览器终端
 npm run status    # 查看服务和会话状态
 npm run kill      # 结束占用 viewer 端口的进程
 npm run cleanup   # 结束进程并清理状态文件
+npm run logs      # 查看本地 JSONL 元数据日志
 ```
 
 ### 4. 注册 MCP（面向 AI Agent）
@@ -95,6 +99,8 @@ ssh-quick-connect → ssh-run → 读取输出 → 决策 → ssh-run → ...
 | `ssh-quick-connect` | 一步建立 SSH 会话并打开浏览器终端 |
 | `ssh-run` | 执行命令并返回输出与退出码 |
 | `ssh-status` | 查看当前会话、终端模式、运行模式 |
+| `ssh-session-diagnostics` | 查看锁状态、viewer 状态、运行中命令和缓存裁剪告警 |
+| `ssh-session-history` | 按行查看混合历史记录 |
 | `ssh-command-status` | 查询异步长命令执行状态 |
 | `ssh-retry` | 对易失败命令做自动重试 |
 
@@ -159,6 +165,7 @@ AI: ssh-command-status({ commandId: "abc123" })
 | `ssh-session-open` | 以自定义参数打开会话 |
 | `ssh-session-send` | 发送原始输入，不等待完成 |
 | `ssh-session-read` | 按 offset 读取输出 |
+| `ssh-session-history` | 按行号读取历史视图 |
 | `ssh-session-watch` | 长轮询会话变化，并渲染 dashboard |
 | `ssh-session-control` | 发送控制键，如 Ctrl+C、方向键等 |
 | `ssh-session-resize` | 调整 PTY 大小 |
@@ -183,6 +190,8 @@ AI: ssh-command-status({ commandId: "abc123" })
 | `AUTO_OPEN_TERMINAL` | 建立会话时自动打开浏览器终端 | `false` |
 | `SSH_MCP_MODE` | 运行模式：`safe` 或 `full` | `safe` |
 | `SSH_MCP_USE_MARKER` | 是否启用 sentinel 完成标记 | `true` |
+| `SSH_MCP_LOG_MODE` | 本地日志模式：`off` 或 `meta` | `off` |
+| `SSH_MCP_LOG_DIR` | 本地 JSONL 日志目录 | `logs/session-mcp` |
 
 ### 命令行参数
 
@@ -199,6 +208,7 @@ npm run launch    # 启动服务并打开浏览器终端
 npm run status    # 查看服务和会话状态
 npm run kill      # 结束占用 viewer 端口的进程
 npm run cleanup   # 结束进程并清理状态文件
+npm run logs      # 查看本地 server/session JSONL 日志
 npm run build     # 编译 TypeScript
 npm run test      # 运行单元测试
 npm run inspect   # 打开 MCP inspector

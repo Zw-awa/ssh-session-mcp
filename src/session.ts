@@ -15,6 +15,11 @@ import {
   type TranscriptEvent,
   type TranscriptEventType,
 } from './shared.js';
+import {
+  SessionHistory,
+  type HistorySnapshot,
+  type HistoryStats,
+} from './history.js';
 
 export interface SSHConfig extends ConnectConfig {
   host: string;
@@ -32,6 +37,7 @@ export interface SessionTuning {
   maxTranscriptEventChars: number;
   defaultDashboardRightEvents: number;
   defaultDashboardLeftChars: number;
+  maxHistoryLines: number;
 }
 
 export interface SessionSummary {
@@ -70,6 +76,41 @@ interface ChangeWaiter {
   eventSeq?: number;
   resolve: () => void;
   timer: NodeJS.Timeout;
+}
+
+export function normalizeCompletionText(text: string): string {
+  return stripAnsi(text).replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+}
+
+function findSentinelOutputInNormalizedText(normalized: string, sentinel: string): number {
+  let searchFrom = 0;
+  while (true) {
+    const idx = normalized.indexOf(sentinel, searchFrom);
+    if (idx === -1) return -1;
+
+    const lineStart = normalized.lastIndexOf('\n', idx);
+    const lineContent = normalized.slice(lineStart === -1 ? 0 : lineStart + 1, idx);
+    if (lineContent.includes('__MCP_EC=') || lineContent.includes('printf ')) {
+      searchFrom = idx + sentinel.length;
+      continue;
+    }
+
+    return idx;
+  }
+}
+
+export function findSentinelOutputInText(text: string, sentinel: string): number {
+  return findSentinelOutputInNormalizedText(normalizeCompletionText(text), sentinel);
+}
+
+export function extractExitCodeFromText(text: string, sentinel: string): number | undefined {
+  const normalized = normalizeCompletionText(text);
+  const idx = findSentinelOutputInNormalizedText(normalized, sentinel);
+  if (idx === -1) return undefined;
+
+  const afterSentinel = normalized.slice(idx + sentinel.length);
+  const match = afterSentinel.match(/^(\d+)___/);
+  return match ? parseInt(match[1], 10) : undefined;
 }
 
 export class SSHConnection {
@@ -179,6 +220,7 @@ export class SSHSession {
   private readonly rawOutputListeners = new Set<(chunk: Buffer) => void>();
   private readonly eventListeners = new Set<(event: TranscriptEvent) => void>();
   private readonly outputNotifyListeners = new Set<() => void>();
+  private readonly history: SessionHistory;
   private lastActivityMs = Date.now();
 
   constructor(
@@ -196,6 +238,8 @@ export class SSHSession {
     private readonly connection: SSHConnection,
     private readonly stream: ClientChannel,
   ) {
+    this.history = new SessionHistory(this.tuning.maxHistoryLines);
+
     const onData = (chunk: Buffer | string) => {
       const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
       const text = buf.toString();
@@ -289,6 +333,9 @@ export class SSHSession {
     this.nextEventSeq += 1;
     this.transcriptCharCount += clipped.length;
     this.trimTranscriptEvents();
+    if (type !== 'output') {
+      this.history.appendEvent(type, clipped, actor, at);
+    }
     this.markUpdated(at, countAsActivity);
     this.flushWaiters();
 
@@ -325,6 +372,7 @@ export class SSHSession {
       try { listener(); } catch { /* ignore */ }
     }
 
+    this.history.appendOutput(text);
     this.pushEvent('output', text, undefined, nowIso(), true);
   }
 
@@ -368,6 +416,14 @@ export class SSHSession {
       this.tuning.defaultDashboardRightEvents,
       this.tuning.defaultDashboardLeftChars,
     );
+  }
+
+  readHistory(line: number | undefined, maxLines: number): HistorySnapshot {
+    return this.history.read(line, maxLines);
+  }
+
+  historyStats(): HistoryStats {
+    return this.history.summary();
   }
 
   getConversationEvents(maxEvents: number): TranscriptEvent[] {
@@ -449,6 +505,7 @@ export class SSHSession {
     if (this.closed) return;
 
     const at = nowIso();
+    this.history.flushPendingOutput();
     this.closed = true;
     this.closedAt = at;
     this.closeReason = reason;
@@ -532,8 +589,8 @@ export class SSHSession {
   }
 
   private matchesPrompt(tail: string, patterns: RegExp[]): boolean {
-    const cleaned = stripAnsi(tail);
-    const lines = cleaned.split('\n').filter(l => l.trim().length > 0);
+    const normalized = normalizeCompletionText(tail);
+    const lines = normalized.split('\n').filter(l => l.trim().length > 0);
     if (lines.length === 0) return false;
     const lastLine = lines[lines.length - 1];
     return patterns.some(p => p.test(lastLine));
@@ -548,27 +605,8 @@ export class SSHSession {
    * We need to match only #2. The key difference: #2 starts at the beginning of a line
    * (or after a newline) and is NOT preceded by the injected trailer on the same line.
    */
-  private findSentinelOutputInCleanTail(cleaned: string, sentinel: string): number {
-    let searchFrom = 0;
-    while (true) {
-      const idx = cleaned.indexOf(sentinel, searchFrom);
-      if (idx === -1) return -1;
-
-      // Check if this occurrence is inside the command echo/trailer rather than the emitted sentinel line.
-      const lineStart = cleaned.lastIndexOf('\n', idx);
-      const lineContent = cleaned.slice(lineStart === -1 ? 0 : lineStart + 1, idx);
-      if (lineContent.includes('__MCP_EC=') || lineContent.includes('printf ')) {
-        // This is the command echo, skip it
-        searchFrom = idx + sentinel.length;
-        continue;
-      }
-
-      return idx;
-    }
-  }
-
   private findSentinelOutput(tail: string, sentinel: string): number {
-    return this.findSentinelOutputInCleanTail(stripAnsi(tail), sentinel);
+    return findSentinelOutputInText(tail, sentinel);
   }
 
   async waitForCompletion(options: {
@@ -658,13 +696,7 @@ export class SSHSession {
   }
 
   private extractExitCode(tail: string, sentinel: string): number | undefined {
-    const cleaned = stripAnsi(tail);
-    const idx = this.findSentinelOutputInCleanTail(cleaned, sentinel);
-    if (idx === -1) return undefined;
-    // Sentinel format: ___MCP_DONE_<uuid>_<exitcode>___
-    const afterSentinel = cleaned.slice(idx + sentinel.length);
-    const match = afterSentinel.match(/^(\d+)___/);
-    return match ? parseInt(match[1], 10) : undefined;
+    return extractExitCodeFromText(tail, sentinel);
   }
 }
 

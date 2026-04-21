@@ -19,6 +19,9 @@ Persistent SSH PTY session manager for MCP clients. Users and AI agents share on
 - **Async Command Tracking**: Long-running commands auto-transition to async with polling support
 - **Structured Output Parsing**: Automatic JSON parsing for common commands (git status, git log, ls -la)
 - **Retry with Backoff**: Built-in `ssh-retry` tool for flaky commands with exponential/fixed backoff
+- **Session Diagnostics**: `ssh-session-diagnostics` reports terminal mode, lock state, viewer state, running command metadata, and buffer trim warnings
+- **Line History Recall**: `ssh-session-history` provides line-numbered history across SSH output, agent input, user input, and lifecycle events
+- **File-Only Meta Logging**: Optional JSONL logs record session/viewer/command metadata locally without writing transcripts to MCP stdio
 - **Input Lock**: User/AI/Common mode switch prevents simultaneous input conflicts
 - **Actor Tracking**: Color-coded input source markers (user/codex/claude) in the status bar
 - **Auto Cleanup**: Idle timeout, graceful shutdown, no orphan processes
@@ -64,6 +67,7 @@ npm run launch    # Start MCP + SSH + open browser terminal
 npm run status    # Check server/session status
 npm run kill      # Kill leftover processes
 npm run cleanup   # Kill + clean state files
+npm run logs      # View local JSONL metadata logs
 ```
 
 ### 4. Register MCP (for AI agents)
@@ -95,6 +99,8 @@ ssh-quick-connect → ssh-run → read output → decide → ssh-run → ...
 | `ssh-quick-connect` | Connect SSH + open browser terminal (once per conversation) |
 | `ssh-run` | Execute command, return output with exit code (repeat as needed) |
 | `ssh-status` | Check sessions, terminal mode, and operation mode |
+| `ssh-session-diagnostics` | Inspect lock state, viewer state, running command metadata, and trim warnings |
+| `ssh-session-history` | Read line-numbered mixed history of output and user/agent actions |
 | `ssh-command-status` | Poll async command progress |
 | `ssh-retry` | Retry flaky commands with backoff |
 
@@ -159,6 +165,7 @@ The AI automatically acquires/releases the lock when calling `ssh-run`.
 | `ssh-session-open` | Open session with custom parameters |
 | `ssh-session-send` | Send raw input without waiting |
 | `ssh-session-read` | Read output with offset-based pagination |
+| `ssh-session-history` | Read line-numbered history snapshots |
 | `ssh-session-watch` | Long-poll for changes, render dashboard |
 | `ssh-session-control` | Send control keys (Ctrl+C, arrows, etc.) |
 | `ssh-session-resize` | Resize PTY window |
@@ -183,6 +190,8 @@ The AI automatically acquires/releases the lock when calling `ssh-run`.
 | `AUTO_OPEN_TERMINAL` | Auto-open browser on connect | false |
 | `SSH_MCP_MODE` | Operation mode: safe or full | safe |
 | `SSH_MCP_USE_MARKER` | Enable sentinel completion markers | true |
+| `SSH_MCP_LOG_MODE` | Local log mode: `off` or `meta` | `off` |
+| `SSH_MCP_LOG_DIR` | Local JSONL log directory | `logs/session-mcp` |
 
 ### Command-line parameters
 
@@ -199,6 +208,7 @@ npm run launch    # Start server + connect SSH + open browser
 npm run status    # Check server and session status
 npm run kill      # Kill process on viewer port
 npm run cleanup   # Kill + remove state files
+npm run logs      # Inspect local server/session JSONL logs
 npm run build     # Compile TypeScript
 npm run test      # Run unit tests
 npm run inspect   # Open MCP inspector

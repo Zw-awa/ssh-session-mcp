@@ -1,7 +1,7 @@
 {
   "name": "ssh-session-mcp",
   "license": "MIT",
-  "version": "2.3.1",
+  "version": "2.4.0",
   "description": "Persistent SSH PTY session manager for MCP clients with actor-aware input tracking, terminal-style dashboard rendering, and automatic session cleanup.",
   "type": "module",
   "author": "Zw-awa",
@@ -24,6 +24,7 @@
     "status": "node scripts/ctl.mjs status",
     "kill": "node scripts/ctl.mjs kill",
     "cleanup": "node scripts/ctl.mjs cleanup",
+    "logs": "node scripts/ctl.mjs logs",
     "inspect": "npx @modelcontextprotocol/inspector node build/index.js",
     "test": "cross-env SSH_MCP_DISABLE_MAIN=1 vitest --run",
     "test:watch": "cross-env SSH_MCP_DISABLE_MAIN=1 vitest",

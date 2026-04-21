@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.4.0] - 2026-04-21
+
+### Added
+- **Session diagnostics**: Added `ssh-session-diagnostics` to inspect terminal mode, input lock state, viewer attachment state, running command metadata, logging state, and trim warnings
+- **Line-numbered history**: Added `ssh-session-history` so agents can recall mixed SSH output, user input, AI input, and lifecycle events as numbered lines
+- **Local JSONL metadata logs**: Added optional `SSH_MCP_LOG_MODE=meta` and `SSH_MCP_LOG_DIR` for file-only local logging of session, viewer, lock, and command metadata
+- **CLI log viewer**: Added `npm run logs` / `node scripts/ctl.mjs logs` to inspect local server or session logs without polluting MCP stdio
+
+### Changed
+- **Unified read-more hints**: `ssh-run`, `ssh-command-status`, and `ssh-session-read` now expose consistent offset guidance for continuing truncated or live output reads
+- **Lighter launch behavior**: `scripts/ctl.mjs launch` now reuses a healthy existing viewer/server when possible instead of always killing the current process first
+- **Viewer / lock observability**: Session lock changes, browser mode changes, viewer launches, viewer reuse, and async command lifecycle transitions are now captured as local metadata events
+
+### Technical
+- New modules: `src/history.ts`, `src/paging.ts`, `src/logger.ts`, `src/diagnostics.ts`
+- `SSHSession` now maintains an in-memory line history ring buffer alongside raw output and transcript events
+- Added focused unit tests for history, paging, diagnostics, and logger helpers
+- Logging remains local-only and metadata-only by default; no SSH transcript or full command text is written unless future versions explicitly add a different mode
+
+## [2.3.2] - 2026-04-20
+
+### Fixed
+- **CR-only PTY completion detection**: Normalized `\r\n` / `\r` before prompt and sentinel matching so boards that primarily echo carriage returns no longer miss command completion
+- **`ssh-retry` lock leaks**: Added guaranteed lock release on retry execution errors so the shared terminal is not left stuck in `agent` mode
+- **Async command completion tracking**: Background async monitoring now keeps using sentinel markers, preserves exit codes, cleans sentinel artifacts from returned output, and no longer marks a still-running command as completed when an internal monitor window times out
+
 ## [2.3.1] - 2026-04-20
 
 ### Fixed

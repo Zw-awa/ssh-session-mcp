@@ -4,9 +4,12 @@ import {
   buildSentinelCommandSuffix,
   createBufferSnapshot,
   createEventSnapshot,
+  extractExitCodeFromText,
+  findSentinelOutputInText,
   getControlSequence,
   normalizeTerminalInput,
   parseArgv,
+  normalizeCompletionText,
   renderTerminalDashboard,
   renderViewerTranscript,
   stripSentinelFromOutput,
@@ -127,6 +130,10 @@ describe('dashboard rendering', () => {
 });
 
 describe('sentinel helpers', () => {
+  it('normalizes CR-only completion text to logical lines', () => {
+    expect(normalizeCompletionText('line1\rline2\rprompt$ ')).toBe('line1\nline2\nprompt$ ');
+  });
+
   it('builds a shell-safe sentinel suffix', () => {
     const suffix = buildSentinelCommandSuffix('___MCP_DONE_deadbeef_');
 
@@ -152,6 +159,14 @@ describe('sentinel helpers', () => {
     expect(cleaned).toContain('fps=2.4 target=none rpm=(0.0,0.0)');
     expect(cleaned).not.toContain(marker);
     expect(cleaned).not.toContain('__MCP_EC=');
+  });
+
+  it('finds the emitted sentinel in CR-only PTY output', () => {
+    const marker = '___MCP_DONE_deadbeef_';
+    const text = `cmd; __MCP_EC=$?; printf "%s%s___\\n" "${marker}" "\${__MCP_EC}"\rline1\r${marker}124___`;
+
+    expect(findSentinelOutputInText(text, marker)).toBeGreaterThanOrEqual(0);
+    expect(extractExitCodeFromText(text, marker)).toBe(124);
   });
 });
 

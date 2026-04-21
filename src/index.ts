@@ -36,6 +36,9 @@ import {
   type SessionWriteRecord,
   type CompletionResult,
 } from './session.js';
+import { buildDiagnosticsOverview, buildSessionDiagnosticReport } from './diagnostics.js';
+import { resolveLoggerConfig, SessionLogger, summarizeCommandMeta } from './logger.js';
+import { buildReadMoreHint, buildReadProgress, buildSnapshotReadMore } from './paging.js';
 
 import {
   type OperationMode,
@@ -109,9 +112,11 @@ const DEFAULT_DASHBOARD_WIDTH = argvConfig.defaultDashboardWidth ? parseInt(argv
 const DEFAULT_DASHBOARD_HEIGHT = argvConfig.defaultDashboardHeight ? parseInt(argvConfig.defaultDashboardHeight, 10) : 24;
 const DEFAULT_DASHBOARD_LEFT_CHARS = argvConfig.defaultDashboardLeftChars ? parseInt(argvConfig.defaultDashboardLeftChars, 10) : 12000;
 const DEFAULT_DASHBOARD_RIGHT_EVENTS = argvConfig.defaultDashboardRightEvents ? parseInt(argvConfig.defaultDashboardRightEvents, 10) : 40;
+const MAX_HISTORY_LINES = argvConfig.maxHistoryLines ? parseInt(argvConfig.maxHistoryLines, 10) : 4000;
 const DEFAULT_VIEWER_HOST = argvConfig.viewerHost || process.env.VIEWER_HOST || '127.0.0.1';
 const DEFAULT_VIEWER_PORT = argvConfig.viewerPort ? parseInt(argvConfig.viewerPort, 10) : (process.env.VIEWER_PORT ? parseInt(process.env.VIEWER_PORT, 10) : 0);
 const DEFAULT_VIEWER_REFRESH_MS = argvConfig.viewerRefreshMs ? parseInt(argvConfig.viewerRefreshMs, 10) : 1000;
+const LOG_CONFIG = resolveLoggerConfig(argvConfig.logMode || process.env.SSH_MCP_LOG_MODE, argvConfig.logDir || process.env.SSH_MCP_LOG_DIR);
 const SSH_CONNECT_TIMEOUT_MS = 30000;
 const AUTO_OPEN_TERMINAL = argvConfig.autoOpenTerminal === 'true' || argvConfig.autoOpenTerminal === '1' || process.env.AUTO_OPEN_TERMINAL === 'true' || process.env.AUTO_OPEN_TERMINAL === '1';
 const VIEWER_LAUNCH_MODE: ViewerLaunchMode = (argvConfig.viewerLaunchMode || process.env.VIEWER_LAUNCH_MODE || 'browser') as ViewerLaunchMode;
@@ -154,6 +159,7 @@ const viewerBindings = new Map<string, ViewerBindingState>();
 let viewerServer: HttpServer | undefined;
 let viewerWss: WebSocketServer | undefined;
 let viewerStateLoaded = false;
+const logger = new SessionLogger(LOG_CONFIG);
 
 function validateConfig(config: Record<string, string | null>) {
   const numericFields = [
@@ -172,6 +178,7 @@ function validateConfig(config: Record<string, string | null>) {
     'defaultDashboardHeight',
     'defaultDashboardLeftChars',
     'defaultDashboardRightEvents',
+    'maxHistoryLines',
     'viewerPort',
     'viewerRefreshMs',
   ];
@@ -382,6 +389,7 @@ const tuning: SessionTuning = {
   maxTranscriptEventChars: MAX_TRANSCRIPT_EVENT_CHARS,
   defaultDashboardRightEvents: DEFAULT_DASHBOARD_RIGHT_EVENTS,
   defaultDashboardLeftChars: DEFAULT_DASHBOARD_LEFT_CHARS,
+  maxHistoryLines: MAX_HISTORY_LINES,
 };
 
 const sessions = new Map<string, SSHSession>();
@@ -392,15 +400,84 @@ interface RunningCommand {
   commandId: string;
   sessionId: string;
   command: string;
+  commandProgram?: string;
   startOffset: number;
+  startedAt: string;
   startTime: number;
   status: 'running' | 'completed' | 'interrupted';
   output?: string;
   completedAt?: number;
   completionReason?: 'prompt' | 'idle' | 'timeout' | 'sentinel';
+  exitCode?: number;
+  sentinelMarker?: string;
+  sentinelSuffix?: string;
 }
 
 const runningCommands = new Map<string, RunningCommand>();
+
+function logServerEvent(event: string, data?: Record<string, unknown>) {
+  void logger.logServer(event, data);
+}
+
+function logSessionEvent(sessionId: string, event: string, data?: Record<string, unknown>) {
+  void logger.logSession(sessionId, event, data);
+}
+
+function findRunningCommandForSession(sessionId: string) {
+  for (const entry of runningCommands.values()) {
+    if (entry.sessionId === sessionId && entry.status === 'running') {
+      return entry;
+    }
+  }
+  return undefined;
+}
+
+function buildSessionDiagnostics(session: SSHSession) {
+  const history = session.historyStats();
+  const binding = [...viewerBindings.values()].find(candidate => candidate.sessionId === session.sessionId);
+  const viewerProcess = binding ? viewerProcesses.get(binding.bindingKey) : undefined;
+  const staleViewerProcess = viewerProcess?.mode === 'terminal'
+    ? Boolean(viewerProcess.pid && !viewerProcessAlive(viewerProcess.pid))
+    : false;
+  const runningCommand = findRunningCommandForSession(session.sessionId);
+
+  return buildSessionDiagnosticReport({
+    session: session.summary(),
+    terminalMode: detectTerminalMode(session.buffer.slice(-2000)),
+    historyLineStart: history.lineStart,
+    historyLineEnd: history.lineEnd,
+    historyPendingOutput: history.pendingOutput,
+    runningCommand: runningCommand ? {
+      commandId: runningCommand.commandId,
+      program: runningCommand.commandProgram,
+      startedAt: runningCommand.startedAt,
+      status: runningCommand.status,
+    } : undefined,
+    viewer: binding ? {
+      bindingKey: binding.bindingKey,
+      mode: viewerProcess?.mode,
+      pid: viewerProcess?.pid,
+      reused: viewerProcess ? true : undefined,
+    } : undefined,
+    staleViewerProcess,
+    logDir: LOG_CONFIG.dir,
+    logMode: LOG_CONFIG.mode,
+  });
+}
+
+function cleanCommandOutput(output: string, command: string, options: {
+  sentinelMarker?: string;
+  sentinelSuffix?: string;
+} = {}) {
+  let cleaned = stripAnsi(output);
+  cleaned = stripCommandEcho(cleaned, command);
+
+  if (options.sentinelMarker) {
+    cleaned = stripSentinelFromOutput(cleaned, options.sentinelMarker, options.sentinelSuffix);
+  }
+
+  return cleaned;
+}
 
 function startBackgroundMonitor(entry: RunningCommand, session: SSHSession): void {
   session.waitForCompletion({
@@ -408,19 +485,45 @@ function startBackgroundMonitor(entry: RunningCommand, session: SSHSession): voi
     maxWaitMs: 5 * 60 * 1000,
     idleMs: 3000,
     promptPatterns: DEFAULT_PROMPT_PATTERNS,
+    sentinel: entry.sentinelMarker,
   }).then((result) => {
     const stored = runningCommands.get(entry.commandId);
     if (!stored || stored.status !== 'running') return;
+
+    if (result.reason === 'timeout') {
+      startBackgroundMonitor(stored, session);
+      return;
+    }
+
     const snapshot = session.read(entry.startOffset, 32000);
+    const output = cleanCommandOutput(snapshot.output, stored.command, {
+      sentinelMarker: stored.sentinelMarker,
+      sentinelSuffix: stored.sentinelSuffix,
+    });
     stored.status = 'completed';
-    stored.output = snapshot.output;
+    stored.output = output;
     stored.completedAt = Date.now();
     stored.completionReason = result.reason;
+    stored.exitCode = result.exitCode;
+    logSessionEvent(stored.sessionId, 'command.completed', {
+      commandId: stored.commandId,
+      completionReason: stored.completionReason,
+      exitCode: stored.exitCode,
+      elapsedMs: stored.completedAt - stored.startTime,
+      status: stored.status,
+      ...summarizeCommandMeta(stored.command),
+    });
   }).catch(() => {
     const stored = runningCommands.get(entry.commandId);
     if (stored && stored.status === 'running') {
       stored.status = 'interrupted';
       stored.completedAt = Date.now();
+      logSessionEvent(stored.sessionId, 'command.interrupted', {
+        commandId: stored.commandId,
+        elapsedMs: stored.completedAt - stored.startTime,
+        status: stored.status,
+        ...summarizeCommandMeta(stored.command),
+      });
     }
   });
 }
@@ -428,11 +531,15 @@ function startBackgroundMonitor(entry: RunningCommand, session: SSHSession): voi
 function sweepSessions(nowMs = Date.now()) {
   for (const [sessionId, session] of sessions.entries()) {
     if (session.shouldCloseForIdle(nowMs)) {
+      logSessionEvent(sessionId, 'session.idle_timeout', { idleTimeoutMs: session.idleTimeoutMs });
+      logServerEvent('session.idle_timeout', { sessionId, idleTimeoutMs: session.idleTimeoutMs });
       session.finalize(`idle timeout after ${session.idleTimeoutMs}ms without input/output`);
       continue;
     }
 
     if (session.shouldPrune(nowMs)) {
+      logSessionEvent(sessionId, 'session.pruned', {});
+      logServerEvent('session.pruned', { sessionId });
       sessions.delete(sessionId);
     }
   }
@@ -445,6 +552,10 @@ function sweepSessions(nowMs = Date.now()) {
     }
     // Clean completed entries after 5 minutes (reduced from 10)
     if (entry.status !== 'running' && entry.completedAt && nowMs - entry.completedAt > 5 * 60 * 1000) {
+      logSessionEvent(entry.sessionId, 'command.evicted', {
+        commandId: entry.commandId,
+        status: entry.status,
+      });
       runningCommands.delete(cmdId);
       continue;
     }
@@ -452,6 +563,12 @@ function sweepSessions(nowMs = Date.now()) {
     if (entry.status === 'running' && nowMs - entry.startTime > 10 * 60 * 1000) {
       entry.status = 'interrupted';
       entry.completedAt = nowMs;
+      logSessionEvent(entry.sessionId, 'command.interrupted', {
+        commandId: entry.commandId,
+        elapsedMs: entry.completedAt - entry.startTime,
+        status: entry.status,
+        ...summarizeCommandMeta(entry.command),
+      });
       runningCommands.delete(cmdId);
     }
   }
@@ -537,6 +654,10 @@ function createToolResponse(primaryText: string, extraTexts: string[] = []) {
         .map(text => ({ type: 'text' as const, text })),
     ],
   };
+}
+
+function sessionReadRef(session: SSHSession) {
+  return session.sessionName || session.sessionId;
 }
 
 function escapeRegExp(value: string): string {
@@ -1001,6 +1122,11 @@ async function ensureViewerForSession(
 
   if (options.mode === 'browser') {
     await launchBrowserViewer(bindingUrl);
+    logSessionEvent(session.sessionId, 'viewer.opened', {
+      bindingKey: binding.bindingKey,
+      mode: options.mode,
+      scope: options.scope,
+    });
     return {
       launched: true,
       reusedExistingProcess: false,
@@ -1027,6 +1153,12 @@ async function ensureViewerForSession(
     };
     viewerProcesses.set(binding.bindingKey, updated);
     await saveViewerProcessState();
+    logSessionEvent(session.sessionId, 'viewer.reused', {
+      bindingKey: binding.bindingKey,
+      mode: options.mode,
+      pid: updated.pid,
+      scope: options.scope,
+    });
 
     return {
       launched: false,
@@ -1049,6 +1181,12 @@ async function ensureViewerForSession(
   const launchedProcess = await launchTerminalViewer(binding);
   viewerProcesses.set(binding.bindingKey, launchedProcess);
   await saveViewerProcessState();
+  logSessionEvent(session.sessionId, 'viewer.opened', {
+    bindingKey: binding.bindingKey,
+    mode: options.mode,
+    pid: launchedProcess.pid,
+    scope: options.scope,
+  });
 
   return {
     launched: true,
@@ -1971,6 +2109,7 @@ function renderViewerBindingPage(bindingKey: string) {
 }
 
 function broadcastLock(session: SSHSession) {
+  logSessionEvent(session.sessionId, 'session.lock', { lock: session.inputLock });
   if (!viewerWss) return;
   const msg = JSON.stringify({ type: 'lock', lock: session.inputLock });
   for (const client of viewerWss.clients) {
@@ -2040,15 +2179,7 @@ function handleWsAttach(ws: WebSocket, kind: 'session' | 'binding', ref: string,
         const validLocks = ['none', 'agent', 'user'];
         if (validLocks.includes(msg.lock)) {
           session.inputLock = msg.lock as 'none' | 'agent' | 'user';
-          // Broadcast lock change to all WS clients
-          if (viewerWss) {
-            const lockMsg = JSON.stringify({ type: 'lock', lock: session.inputLock });
-            for (const client of viewerWss.clients) {
-              if (client.readyState === WebSocket.OPEN) {
-                try { client.send(lockMsg); } catch { /* ignore */ }
-              }
-            }
-          }
+          broadcastLock(session);
         }
         return;
       }
@@ -2057,6 +2188,7 @@ function handleWsAttach(ws: WebSocket, kind: 'session' | 'binding', ref: string,
         const validModes = ['safe', 'full'];
         if (validModes.includes(msg.mode)) {
           OPERATION_MODE = msg.mode as OperationMode;
+          logServerEvent('operation_mode.changed', { mode: OPERATION_MODE, sessionId: session.sessionId });
           // Broadcast mode change to all WS clients
           if (viewerWss) {
             const modeMsg = JSON.stringify({ type: 'mode', mode: OPERATION_MODE });
@@ -2085,6 +2217,10 @@ function handleWsAttach(ws: WebSocket, kind: 'session' | 'binding', ref: string,
           }
         }
         session.writeRaw(msg.data, records);
+        logSessionEvent(session.sessionId, 'session.input', {
+          actor: records[0]?.actor || 'user',
+          sentChars: msg.data.length,
+        });
       }
 
       if (msg.type === 'control' && typeof msg.key === 'string') {
@@ -2093,6 +2229,10 @@ function handleWsAttach(ws: WebSocket, kind: 'session' | 'binding', ref: string,
           return;
         }
         session.sendControl(msg.key as any, sanitizeActor(msg.actor, 'user'));
+        logSessionEvent(session.sessionId, 'session.control', {
+          actor: sanitizeActor(msg.actor, 'user'),
+          control: msg.key,
+        });
       }
 
       if (msg.type === 'resize' && typeof msg.cols === 'number' && typeof msg.rows === 'number') {
@@ -2804,6 +2944,10 @@ async function startViewerServer() {
       resolve();
     });
   });
+  logServerEvent('viewer_server.started', {
+    host: DEFAULT_VIEWER_HOST,
+    port: DEFAULT_VIEWER_PORT,
+  });
 
   const wss = new WebSocketServer({ noServer: true });
   viewerWss = wss;
@@ -2832,17 +2976,19 @@ async function startViewerServer() {
 function closeAllSessions(reason: string) {
   for (const session of sessions.values()) {
     try {
+      logSessionEvent(session.sessionId, 'session.close_all', { reason });
       session.close(reason);
     } catch {
       // ignore
     }
   }
   sessions.clear();
+  logServerEvent('server.close_all_sessions', { reason });
 }
 
 const server = new McpServer({
   name: 'ssh-session-mcp',
-  version: '2.0.0',
+  version: '2.4.0',
   capabilities: {
     resources: {},
     tools: {},
@@ -2979,6 +3125,19 @@ server.tool(
     });
 
     sessions.set(session.sessionId, session);
+    logSessionEvent(session.sessionId, 'session.opened', {
+      host: resolvedHost,
+      port: resolvedPort,
+      sessionName: resolvedSessionName,
+      user: resolvedUser,
+    });
+    logServerEvent('session.opened', {
+      sessionId: session.sessionId,
+      host: resolvedHost,
+      port: resolvedPort,
+      sessionName: resolvedSessionName,
+      user: resolvedUser,
+    });
 
     if (typeof startupInput === 'string' && startupInput.length > 0) {
       session.write(startupInput, sanitizeActor(startupInputActor, 'agent'));
@@ -3010,8 +3169,10 @@ server.tool(
       try {
         const termUrl = `http://${viewerHostForUrl(DEFAULT_VIEWER_HOST)}:${DEFAULT_VIEWER_PORT}/terminal/session/${encodeURIComponent(session.sessionId)}`;
         if (VIEWER_LAUNCH_MODE === 'terminal') {
-          const binding = upsertViewerBinding(session, 'session');
-          await launchTerminalViewer(binding);
+          await ensureViewerForSession(session, {
+            mode: 'terminal',
+            scope: 'session',
+          });
         } else {
           await launchBrowserViewer(termUrl);
         }
@@ -3078,6 +3239,10 @@ server.tool(
     const payload = appendNewline === true ? `${input}\n` : input;
     const resolvedActor = sanitizeActor(actor, 'agent');
     target.write(payload, resolvedActor);
+    logSessionEvent(target.sessionId, 'session.input', {
+      actor: resolvedActor,
+      sentChars: payload.length,
+    });
 
     return createToolResponse(JSON.stringify({
       ...target.summary(),
@@ -3109,6 +3274,7 @@ server.tool(
     }
 
     const snapshot = target.read(offset, resolvedMaxChars);
+    const readProgress = buildReadProgress(snapshot);
 
     return createToolResponse(JSON.stringify({
       ...target.summary(),
@@ -3119,6 +3285,10 @@ server.tool(
       truncatedAfter: snapshot.truncatedAfter,
       returnedChars: snapshot.output.length,
       waitedMs: resolvedWaitMs,
+      ...readProgress,
+      readMore: snapshot.truncatedAfter
+        ? buildSnapshotReadMore(sessionReadRef(target), snapshot, resolvedMaxChars)
+        : undefined,
     }, null, 2), [snapshot.output.length > 0 ? `[output]\n${snapshot.output}` : '']);
   },
 );
@@ -3200,6 +3370,33 @@ server.tool(
 );
 
 server.tool(
+  'ssh-session-history',
+  'Read line-numbered session history built from terminal output and user/agent actions.',
+  {
+    session: z.string().describe('Session id or unique session name'),
+    line: z.number().int().nonnegative().optional().describe('Read from this history line number'),
+    maxLines: z.number().int().positive().optional().describe('Maximum number of history lines to return'),
+  },
+  async ({ session, line, maxLines }) => {
+    const target = resolveSession(sanitizeRequiredText(session, 'session'));
+    const resolvedMaxLines = sanitizePositiveInt(maxLines, 'maxLines', 80);
+    const snapshot = target.readHistory(line, resolvedMaxLines);
+
+    return createToolResponse(JSON.stringify({
+      ...target.summary(),
+      requestedLine: snapshot.requestedLine,
+      effectiveLine: snapshot.effectiveLine,
+      nextLine: snapshot.nextLine,
+      availableStart: snapshot.availableStart,
+      availableEnd: snapshot.availableEnd,
+      truncatedBefore: snapshot.truncatedBefore,
+      truncatedAfter: snapshot.truncatedAfter,
+      returnedLines: snapshot.lines.length,
+    }, null, 2), [snapshot.view.length > 0 ? snapshot.view : '(no history yet)']);
+  },
+);
+
+server.tool(
   'ssh-session-control',
   'Send a control key to an interactive SSH PTY session. Actor is shown inline in the dashboard transcript.',
   {
@@ -3220,6 +3417,10 @@ server.tool(
 
     const resolvedActor = sanitizeActor(actor, 'agent');
     target.sendControl(control, resolvedActor);
+    logSessionEvent(target.sessionId, 'session.control', {
+      actor: resolvedActor,
+      control,
+    });
 
     return createToolResponse(JSON.stringify({
       ...target.summary(),
@@ -3245,6 +3446,10 @@ server.tool(
       sanitizePositiveInt(cols, 'cols', DEFAULT_COLS),
       sanitizePositiveInt(rows, 'rows', DEFAULT_ROWS),
     );
+    logSessionEvent(target.sessionId, 'session.resize', {
+      cols: target.cols,
+      rows: target.rows,
+    });
 
     return createToolResponse(JSON.stringify({
       ...target.summary(),
@@ -3269,6 +3474,32 @@ server.tool(
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 
     return createToolResponse(JSON.stringify({ sessions: tracked }, null, 2));
+  },
+);
+
+server.tool(
+  'ssh-session-diagnostics',
+  'Inspect session health, buffer trim state, viewer attachment state, input lock state, and tracked command metadata.',
+  {
+    session: z.string().optional().describe('Session id or unique session name. Omit to inspect all tracked sessions'),
+  },
+  async ({ session }) => {
+    sweepSessions();
+    const sessionRef = sanitizeOptionalText(session);
+    if (sessionRef) {
+      const target = resolveSession(sessionRef);
+      return createToolResponse(JSON.stringify(buildSessionDiagnostics(target), null, 2));
+    }
+
+    const reports = [...sessions.values()]
+      .map(buildSessionDiagnostics)
+      .sort((a, b) => b.session.updatedAt.localeCompare(a.session.updatedAt));
+
+    return createToolResponse(JSON.stringify(buildDiagnosticsOverview({
+      sessions: reports,
+      logDir: LOG_CONFIG.dir,
+      logMode: LOG_CONFIG.mode,
+    }), null, 2));
   },
 );
 
@@ -3349,6 +3580,8 @@ server.tool(
   async ({ session }) => {
     const target = resolveSession(sanitizeRequiredText(session, 'session'));
     const summary = target.summary();
+    logSessionEvent(target.sessionId, 'session.closed', { reason: 'closed by client' });
+    logServerEvent('session.closed', { reason: 'closed by client', sessionId: target.sessionId });
     target.close();
     sessions.delete(target.sessionId);
 
@@ -3410,6 +3643,19 @@ server.tool(
       });
     });
     sessions.set(sessionId, session);
+    logSessionEvent(session.sessionId, 'session.opened', {
+      host: resolvedHost,
+      port: DEFAULT_PORT,
+      sessionName: name,
+      user: resolvedUser,
+    });
+    logServerEvent('session.opened', {
+      sessionId,
+      host: resolvedHost,
+      port: DEFAULT_PORT,
+      sessionName: name,
+      user: resolvedUser,
+    });
 
     // Auto open terminal
     let terminalUrl: string | undefined;
@@ -3418,8 +3664,10 @@ server.tool(
       if (AUTO_OPEN_TERMINAL) {
         try {
           if (VIEWER_LAUNCH_MODE === 'terminal') {
-            const binding = upsertViewerBinding(session, 'session');
-            await launchTerminalViewer(binding);
+            await ensureViewerForSession(session, {
+              mode: 'terminal',
+              scope: 'session',
+            });
           } else {
             await launchBrowserViewer(terminalUrl);
           }
@@ -3455,6 +3703,7 @@ server.tool(
     sweepSessions();
     const ref = sanitizeOptionalText(session) || 'default';
     const target = resolveSession(ref);
+    const commandMeta = summarizeCommandMeta(command);
 
     if (target.inputLock === 'user') {
       return createToolResponse(JSON.stringify({
@@ -3476,6 +3725,11 @@ server.tool(
     // Command validation
     const validation = validateCommand(command, OPERATION_MODE);
     if (!validation.allowed) {
+      logSessionEvent(target.sessionId, 'command.blocked', {
+        category: validation.category,
+        operationMode: OPERATION_MODE,
+        ...commandMeta,
+      });
       return createToolResponse(JSON.stringify({
         error: 'COMMAND_BLOCKED',
         category: validation.category,
@@ -3491,6 +3745,10 @@ server.tool(
 
     // Password prompt blocks in ALL modes — sending a command here would type it as password
     if (terminalMode === 'password_prompt') {
+      logSessionEvent(target.sessionId, 'command.blocked_password_prompt', {
+        operationMode: OPERATION_MODE,
+        ...commandMeta,
+      });
       return createToolResponse(JSON.stringify({
         error: 'PASSWORD_REQUIRED',
         terminalMode: 'password_prompt',
@@ -3502,6 +3760,11 @@ server.tool(
 
     // Editor/pager check — only blocks in safe mode
     if (OPERATION_MODE === 'safe' && (terminalMode === 'editor' || terminalMode === 'pager')) {
+      logSessionEvent(target.sessionId, 'command.blocked_terminal_mode', {
+        operationMode: OPERATION_MODE,
+        terminalMode,
+        ...commandMeta,
+      });
       return createToolResponse(JSON.stringify({
         error: 'WRONG_TERMINAL_MODE',
         terminalMode,
@@ -3529,7 +3792,14 @@ server.tool(
     const useMarker = USE_SENTINEL_MARKER && !immediateAsync && validation.category !== 'interactive';
 
     const beforeOffset = target.currentBufferEnd();
+    const startedAt = new Date().toISOString();
     const sentinelSuffix = useMarker ? buildSentinelCommandSuffix(sentinelMarker) : undefined;
+    logSessionEvent(target.sessionId, 'command.started', {
+      operationMode: OPERATION_MODE,
+      startedAt,
+      terminalMode,
+      ...commandMeta,
+    });
     if (useMarker) {
       // Use __MCP_EC to capture exit code reliably even with pipes
       target.write(`${command}${sentinelSuffix}\n`, 'agent');
@@ -3566,11 +3836,20 @@ server.tool(
         commandId,
         sessionId: target.sessionId,
         command,
+        commandProgram: commandMeta.commandProgram,
         startOffset: beforeOffset,
+        startedAt,
         startTime: Date.now(),
         status: 'running',
+        sentinelMarker: useMarker ? sentinelMarker : undefined,
+        sentinelSuffix,
       };
       runningCommands.set(commandId, entry);
+      logSessionEvent(target.sessionId, 'command.promoted_async', {
+        commandId,
+        startedAt,
+        ...commandMeta,
+      });
 
       // Release lock
       target.inputLock = 'none';
@@ -3580,6 +3859,17 @@ server.tool(
       startBackgroundMonitor(entry, target);
 
       const partialSnapshot = target.read(beforeOffset, resolvedMaxChars);
+      const partialOutput = cleanCommandOutput(partialSnapshot.output, command, {
+        sentinelMarker: useMarker ? sentinelMarker : undefined,
+        sentinelSuffix,
+      });
+      const readMore = buildReadMoreHint({
+        session: sessionReadRef(target),
+        offset: beforeOffset,
+        maxCharsSuggested: resolvedMaxChars,
+        availableStart: partialSnapshot.availableStart,
+        availableEnd: partialSnapshot.availableEnd,
+      });
       return createToolResponse(JSON.stringify({
         command,
         async: true,
@@ -3592,18 +3882,18 @@ server.tool(
         operationMode: OPERATION_MODE,
         warning: validation.category !== 'safe' ? validation.message : undefined,
         hint: `Command is still running. Use ssh-command-status with commandId="${commandId}" to check progress.`,
-      }, null, 2), [partialSnapshot.output.length > 0 ? partialSnapshot.output : '(no output yet)']);
+        readMore,
+      }, null, 2), [partialOutput.length > 0 ? partialOutput : '(no output yet)']);
     }
 
     // Command completed - read output
     let outputText = target.read(beforeOffset, resolvedMaxChars).output;
 
     // Clean output: ANSI → echo → sentinel
-    outputText = stripAnsi(outputText);
-    outputText = stripCommandEcho(outputText, command);
-    if (useMarker) {
-      outputText = stripSentinelFromOutput(outputText, sentinelMarker, sentinelSuffix);
-    }
+    outputText = cleanCommandOutput(outputText, command, {
+      sentinelMarker: useMarker ? sentinelMarker : undefined,
+      sentinelSuffix,
+    });
 
     // Post-execution terminal mode check: detect password prompt
     const postTerminalMode = detectTerminalMode(target.buffer.slice(-2000));
@@ -3611,6 +3901,10 @@ server.tool(
       // Release lock
       target.inputLock = 'none';
       broadcastLock(target);
+      logSessionEvent(target.sessionId, 'command.password_prompt', {
+        startedAt,
+        ...commandMeta,
+      });
 
       return createToolResponse(JSON.stringify({
         command,
@@ -3633,6 +3927,14 @@ server.tool(
 
     // Try structured parsing
     const parsed = tryParseCommandOutput(command, outputText);
+    logSessionEvent(target.sessionId, 'command.completed', {
+      completionReason: completion.reason,
+      elapsedMs: completion.elapsedMs,
+      exitCode,
+      startedAt,
+      status: 'completed',
+      ...commandMeta,
+    });
 
     if (outputText.length <= resolvedMaxChars) {
       return createToolResponse(JSON.stringify({
@@ -3646,6 +3948,13 @@ server.tool(
         operationMode: OPERATION_MODE,
         warning: validation.category !== 'safe' ? validation.message : undefined,
         parsed: parsed ? { type: parsed.type, data: parsed.data } : undefined,
+        readMore: buildReadMoreHint({
+          session: sessionReadRef(target),
+          offset: beforeOffset,
+          maxCharsSuggested: resolvedMaxChars,
+          availableStart: snapshot.availableStart,
+          availableEnd: snapshot.availableEnd,
+        }),
         exitHint: 'Check output for command result. Use ssh-run again for next command.',
       }, null, 2), [outputText.length > 0 ? outputText : '(no output yet)']);
     }
@@ -3669,6 +3978,13 @@ server.tool(
         elapsedMs: completion.elapsedMs,
         terminalMode,
         operationMode: OPERATION_MODE,
+        readMore: buildReadMoreHint({
+          session: sessionReadRef(target),
+          offset: beforeOffset,
+          maxCharsSuggested: resolvedMaxChars,
+          availableStart: snapshot.availableStart,
+          availableEnd: snapshot.availableEnd,
+        }),
         exitHint: 'Check output for command result. Use ssh-run again for next command.',
       }, null, 2), [snapshot.output.length > 0 ? snapshot.output : '(no output yet)']);
     }
@@ -3692,6 +4008,13 @@ server.tool(
       elapsedMs: completion.elapsedMs,
       terminalMode,
       operationMode: OPERATION_MODE,
+      readMore: buildReadMoreHint({
+        session: sessionReadRef(target),
+        offset: omittedStart,
+        maxCharsSuggested: omittedChars,
+        availableStart: snapshot.availableStart,
+        availableEnd: snapshot.availableEnd,
+      }),
       exitHint: `Output was truncated (${totalOutputChars} total chars). Head and tail are shown. Use ssh-session-read with offset=${omittedStart} to read the omitted middle section.`,
     }, null, 2), [combinedOutput]);
 
@@ -3728,6 +4051,7 @@ server.tool(
       sessions: active,
       viewerBaseUrl: getViewerBaseUrl(),
       operationMode: OPERATION_MODE,
+      logging: logger.getConfig(),
       hint: active.length === 0
         ? 'No active sessions. Use ssh-quick-connect to start one.'
         : 'Sessions are running. Use ssh-run to execute commands.',
@@ -3763,7 +4087,15 @@ server.tool(
         command: entry.command,
         status: entry.status,
         completionReason: entry.completionReason,
+        exitCode: entry.exitCode,
         elapsedMs: (entry.completedAt || Date.now()) - entry.startTime,
+        readMore: buildReadMoreHint({
+          session: entry.sessionId,
+          offset: entry.startOffset,
+          maxCharsSuggested: resolvedMaxChars,
+          availableStart: entry.startOffset,
+          availableEnd: entry.startOffset + output.length,
+        }),
         hint: 'Command has finished. Output is included below.',
       }, null, 2), [output.length > 0 ? output : '(no output captured)']);
     }
@@ -3773,6 +4105,12 @@ server.tool(
     if (!session) {
       entry.status = 'interrupted';
       entry.completedAt = Date.now();
+      logSessionEvent(entry.sessionId, 'command.interrupted', {
+        commandId: entry.commandId,
+        elapsedMs: entry.completedAt - entry.startTime,
+        status: entry.status,
+        ...summarizeCommandMeta(entry.command),
+      });
       runningCommands.delete(commandId);
       return createToolResponse(JSON.stringify({
         commandId,
@@ -3784,13 +4122,24 @@ server.tool(
     }
 
     const snapshot = session.read(entry.startOffset, resolvedMaxChars);
+    const output = cleanCommandOutput(snapshot.output, entry.command, {
+      sentinelMarker: entry.sentinelMarker,
+      sentinelSuffix: entry.sentinelSuffix,
+    });
     return createToolResponse(JSON.stringify({
       commandId,
       command: entry.command,
       status: 'running',
       elapsedMs: Date.now() - entry.startTime,
+      readMore: buildReadMoreHint({
+        session: sessionReadRef(session),
+        offset: entry.startOffset,
+        maxCharsSuggested: resolvedMaxChars,
+        availableStart: snapshot.availableStart,
+        availableEnd: snapshot.availableEnd,
+      }),
       hint: 'Command is still running. Call ssh-command-status again later to check. Partial output is included below.',
-    }, null, 2), [snapshot.output.length > 0 ? snapshot.output : '(no output yet)']);
+    }, null, 2), [output.length > 0 ? output : '(no output yet)']);
   },
 );
 
@@ -3856,77 +4205,76 @@ server.tool(
       target.inputLock = 'agent';
       broadcastLock(target);
 
-      const sentinelId = randomUUID().slice(0, 8);
-      const sentinelMarker = `___MCP_DONE_${sentinelId}_`;
-      const beforeOffset = target.currentBufferEnd();
+      try {
+        const sentinelId = randomUUID().slice(0, 8);
+        const sentinelMarker = `___MCP_DONE_${sentinelId}_`;
+        const beforeOffset = target.currentBufferEnd();
 
-      const sentinelSuffix = USE_SENTINEL_MARKER ? buildSentinelCommandSuffix(sentinelMarker) : undefined;
+        const sentinelSuffix = USE_SENTINEL_MARKER ? buildSentinelCommandSuffix(sentinelMarker) : undefined;
 
-      if (USE_SENTINEL_MARKER) {
-        target.write(`${command}${sentinelSuffix}\n`, 'agent');
-      } else {
-        target.write(`${command}\n`, 'agent');
-      }
+        if (USE_SENTINEL_MARKER) {
+          target.write(`${command}${sentinelSuffix}\n`, 'agent');
+        } else {
+          target.write(`${command}\n`, 'agent');
+        }
 
-      const completion = await target.waitForCompletion({
-        startOffset: beforeOffset,
-        maxWaitMs: 30000,
-        idleMs: 2000,
-        promptPatterns: DEFAULT_PROMPT_PATTERNS,
-        sentinel: USE_SENTINEL_MARKER ? sentinelMarker : undefined,
-      });
+        const completion = await target.waitForCompletion({
+          startOffset: beforeOffset,
+          maxWaitMs: 30000,
+          idleMs: 2000,
+          promptPatterns: DEFAULT_PROMPT_PATTERNS,
+          sentinel: USE_SENTINEL_MARKER ? sentinelMarker : undefined,
+        });
 
-      target.inputLock = 'none';
-      broadcastLock(target);
+        let output = target.read(beforeOffset, 16000).output;
+        output = cleanCommandOutput(output, command, {
+          sentinelMarker: USE_SENTINEL_MARKER ? sentinelMarker : undefined,
+          sentinelSuffix,
+        });
 
-      let output = target.read(beforeOffset, 16000).output;
-      // Clean output: ANSI → echo → sentinel
-      output = stripAnsi(output);
-      output = stripCommandEcho(output, command);
-      if (USE_SENTINEL_MARKER) {
-        output = stripSentinelFromOutput(output, sentinelMarker, sentinelSuffix);
-      }
+        lastOutput = output;
+        lastExitCode = completion.exitCode;
 
-      lastOutput = output;
-      lastExitCode = completion.exitCode;
+        if (successRe && successRe.test(output)) {
+          return createToolResponse(JSON.stringify({
+            command,
+            status: 'success',
+            attempts,
+            exitCode: lastExitCode,
+            sessionName: target.sessionName,
+            hint: `Command succeeded on attempt ${attempts}.`,
+          }, null, 2), [output]);
+        }
 
-      // Check success/fail patterns
-      if (successRe && successRe.test(output)) {
-        return createToolResponse(JSON.stringify({
-          command,
-          status: 'success',
-          attempts,
-          exitCode: lastExitCode,
-          sessionName: target.sessionName,
-          hint: `Command succeeded on attempt ${attempts}.`,
-        }, null, 2), [output]);
-      }
+        if (failRe && failRe.test(output)) {
+          continue;
+        }
 
-      if (failRe && failRe.test(output)) {
-        continue; // Retry
-      }
+        if (lastExitCode === 0) {
+          return createToolResponse(JSON.stringify({
+            command,
+            status: 'success',
+            attempts,
+            exitCode: 0,
+            sessionName: target.sessionName,
+            hint: `Command succeeded on attempt ${attempts}.`,
+          }, null, 2), [output]);
+        }
 
-      // If sentinel gave us exit code 0, success
-      if (lastExitCode === 0) {
-        return createToolResponse(JSON.stringify({
-          command,
-          status: 'success',
-          attempts,
-          exitCode: 0,
-          sessionName: target.sessionName,
-          hint: `Command succeeded on attempt ${attempts}.`,
-        }, null, 2), [output]);
-      }
-
-      // If no exit code info and completed normally, assume success
-      if (lastExitCode === undefined && completion.completed) {
-        return createToolResponse(JSON.stringify({
-          command,
-          status: 'success',
-          attempts,
-          sessionName: target.sessionName,
-          hint: `Command completed on attempt ${attempts} (no exit code available).`,
-        }, null, 2), [output]);
+        if (lastExitCode === undefined && completion.completed) {
+          return createToolResponse(JSON.stringify({
+            command,
+            status: 'success',
+            attempts,
+            sessionName: target.sessionName,
+            hint: `Command completed on attempt ${attempts} (no exit code available).`,
+          }, null, 2), [output]);
+        }
+      } finally {
+        if (target.inputLock === 'agent') {
+          target.inputLock = 'none';
+          broadcastLock(target);
+        }
       }
 
       // Otherwise retry
@@ -3970,6 +4318,7 @@ async function main() {
     }
     viewerServer?.close();
     closeAllSessions('mcp server shutdown');
+    logServerEvent('server.shutdown', { reason: 'signal' });
     process.exit(0);
   };
 
@@ -4008,3 +4357,8 @@ export {
   renderViewerTranscriptEvent,
   stripAnsi,
 } from './shared.js';
+export {
+  extractExitCodeFromText,
+  findSentinelOutputInText,
+  normalizeCompletionText,
+} from './session.js';
