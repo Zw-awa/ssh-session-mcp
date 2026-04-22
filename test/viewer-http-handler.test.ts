@@ -121,7 +121,6 @@ function createMockSession(overrides: Partial<Record<string, unknown>> = {}) {
     metadata: { sessionRef: 'demo-ref' },
     updatedAt,
     closed: false,
-    idleTimeoutMs: 0,
     host: '192.168.10.58',
     port: 22,
     user: 'orangepi',
@@ -154,13 +153,6 @@ function createMockSession(overrides: Partial<Record<string, unknown>> = {}) {
         { seq: 2, at: '2026-04-22T12:00:02.000Z', type: 'input', text: 'ls', actor: 'user' },
       ],
     })),
-    getConversationEvents: vi.fn(() => [
-      { seq: 2, at: '2026-04-22T12:00:02.000Z', type: 'input', text: 'ls', actor: 'user' },
-    ]),
-    shouldCloseForIdle: vi.fn(() => false),
-    shouldPrune: vi.fn(() => false),
-    finalize: vi.fn(),
-    close: vi.fn(),
     writeRaw: vi.fn(),
     resize: vi.fn(),
     ...overrides,
@@ -267,7 +259,6 @@ describe('viewer http handler', () => {
       outputOffset: 8,
       eventSeq: 2,
       waitMs: 25,
-      signal: expect.any(AbortSignal),
     });
     expect(state.statusCode).toBe(200);
     expect(JSON.parse(state.body)).toMatchObject({

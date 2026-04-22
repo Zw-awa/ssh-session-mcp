@@ -10,14 +10,6 @@ class FakeWebSocket extends EventEmitter {
   sent: Array<{ data: unknown; options?: unknown }> = [];
   closeArgs?: { code?: number; reason?: string };
 
-  constructor() {
-    super();
-    this.on('error', () => {
-      // Mirror tolerant test transport behavior: late synthetic error events
-      // should not fail the test once attach cleanup has already run.
-    });
-  }
-
   send = vi.fn((data: unknown, options?: unknown) => {
     this.sent.push({ data, options });
   });
@@ -26,31 +18,15 @@ class FakeWebSocket extends EventEmitter {
     this.closeArgs = { code, reason };
     this.readyState = 3;
   });
-
-  override emit(eventName: string | symbol, ...args: any[]): boolean {
-    if (eventName === 'close') {
-      this.readyState = 3;
-    }
-    return super.emit(eventName, ...args);
-  }
 }
 
 function createMockSession(overrides: Partial<Record<string, unknown>> = {}) {
+  const unsubOutput = vi.fn();
+  const unsubEvent = vi.fn();
   let rawOutputListener: ((chunk: Buffer) => void) | undefined;
   let eventListener: ((event: { seq: number; at: string; type: string; text: string; actor?: string }) => void) | undefined;
-  const unsubOutput = vi.fn(() => {
-    rawOutputListener = undefined;
-  });
-  const unsubEvent = vi.fn(() => {
-    eventListener = undefined;
-  });
   const session = {
     sessionId: 'demo-session',
-    sessionName: 'demo',
-    metadata: { sessionRef: 'demo-ref' },
-    updatedAt: '2026-04-22T12:00:01.000Z',
-    closed: false,
-    idleTimeoutMs: 0,
     inputLock: 'none' as 'none' | 'agent' | 'user',
     rawBufferStart: 0,
     rawBuffer: Buffer.from('abcdef'),
@@ -76,10 +52,6 @@ function createMockSession(overrides: Partial<Record<string, unknown>> = {}) {
       eventListener = listener;
       return unsubEvent;
     }),
-    shouldCloseForIdle: vi.fn(() => false),
-    shouldPrune: vi.fn(() => false),
-    finalize: vi.fn(),
-    close: vi.fn(),
     writeRaw: vi.fn(),
     sendControl: vi.fn(),
     resize: vi.fn(),
