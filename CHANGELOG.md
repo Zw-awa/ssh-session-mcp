@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.4] - 2026-04-22
+
+### Fixed
+- **Viewer UI responsiveness**: Fixed CSS layout for narrow screens (<900px) with improved flexbox wrapping, overflow handling, and mobile-friendly headers
+- **Lock mode JavaScript logic**: Corrected xterm browser terminal lock handling to treat "common" mode as unlocked (lock: 'none') instead of coercing it to user lock
+- **Input actor separation**: Separated `getLockMode()` from `getInputActor()` functions to properly track UI lock state vs. input attribution
+
+### Added
+- **Viewer UI contract tests**: Added `test/viewer-html.test.ts` and `test/viewer-ui-contracts.test.ts` to verify responsive design and lock mode behavior
+
 ## [2.6.3] - 2026-04-21
 
 ### Fixed

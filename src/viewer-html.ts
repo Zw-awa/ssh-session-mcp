@@ -75,20 +75,24 @@ export function renderViewerHomePage() {
       display: flex;
       justify-content: space-between;
       align-items: center;
+      gap: 16px;
       margin-bottom: 15px;
     }
     .session-title {
       font-weight: bold;
       font-size: 16px;
       color: var(--accent);
+      overflow-wrap: anywhere;
     }
     .session-meta {
       font-size: 13px;
       color: var(--muted);
+      overflow-wrap: anywhere;
     }
     .session-actions {
       display: flex;
       gap: 10px;
+      flex-wrap: wrap;
     }
     .btn {
       padding: 6px 12px;
@@ -127,6 +131,19 @@ export function renderViewerHomePage() {
       font-size: 12px;
       color: var(--muted);
       text-align: center;
+    }
+    footer code {
+      overflow-wrap: anywhere;
+      word-break: break-word;
+    }
+    @media (max-width: 900px) {
+      .session-header {
+        flex-direction: column;
+        align-items: flex-start;
+      }
+      .session-actions {
+        width: 100%;
+      }
     }
   </style>
 </head>
@@ -180,12 +197,12 @@ export function renderViewerHomePage() {
   </main>
 
   <footer>
-    <div>SSH Session MCP • Auto‑refresh: \${refreshMs}ms</div>
-    <div>Viewer base URL: <code>\${baseUrl}</code></div>
+    <div>SSH Session MCP • Auto‑refresh: ${refreshMs}ms</div>
+    <div>Viewer base URL: <code>${escapeHtml(baseUrl)}</code></div>
   </footer>
 
   <script>
-    setTimeout(() => location.reload(), \${refreshMs});
+    setTimeout(() => location.reload(), ${refreshMs});
   </script>
 </body>
 </html>`;
@@ -969,12 +986,12 @@ export function renderXtermTerminalPage(options: {
     .header {
       display: flex; justify-content: space-between; align-items: center;
       padding: 8px 16px; background: var(--panel); border-bottom: 1px solid var(--line);
-      flex-shrink: 0; gap: 12px;
+      flex-shrink: 0; gap: 12px; flex-wrap: wrap;
     }
-    .header-left { display: flex; align-items: center; gap: 12px; min-width: 0; }
+    .header-left { display: flex; align-items: center; gap: 12px; min-width: 0; flex: 1 1 320px; }
     .header-title { font-size: 15px; font-weight: 700; color: var(--accent); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .header-meta { font-size: 12px; color: var(--muted); white-space: nowrap; }
-    .header-actions { display: flex; gap: 6px; align-items: center; flex-shrink: 0; }
+    .header-meta { font-size: 12px; color: var(--muted); white-space: normal; overflow-wrap: anywhere; }
+    .header-actions { display: flex; gap: 6px; align-items: center; flex-shrink: 0; flex-wrap: wrap; }
     .btn {
       height: 30px; padding: 0 10px; border-radius: 6px; border: 1px solid var(--line);
       background: rgba(255,255,255,0.04); color: var(--text); font: inherit; font-size: 12px; cursor: pointer;
@@ -1000,6 +1017,14 @@ export function renderXtermTerminalPage(options: {
     .lock-badge.agent { background: var(--claude); color: #fff; }
     .lock-badge.user-lock { background: var(--user); color: #fff; }
     .lock-badge.none { background: rgba(255,255,255,0.1); color: var(--muted); }
+    @media (max-width: 900px) {
+      .header {
+        align-items: flex-start;
+      }
+      .header-actions {
+        width: 100%;
+      }
+    }
   </style>
 </head>
 <body>
@@ -1065,7 +1090,13 @@ export function renderXtermTerminalPage(options: {
     var scrollTimer = null;
     var offsetDecoder = null;
 
-    function getActor() { var v = actorSelect.value; return (v && v !== 'common') ? v : 'user'; }
+    function getLockMode() {
+      return actorSelect.value || 'common';
+    }
+
+    function getInputActor() {
+      return 'user';
+    }
 
     function isUserBlocked() {
       return currentLock === 'agent';
@@ -1136,7 +1167,7 @@ export function renderXtermTerminalPage(options: {
         connDot.className = 'conn-dot';
         if (isFirstConnect) { isFirstConnect = false; }
         currentLine = '';
-        setStatus('Connected as ' + getActor(), '');
+        setStatus('Connected in ' + getLockMode() + ' mode', '');
         scheduleScrollToBottom();
       };
 
@@ -1201,15 +1232,15 @@ export function renderXtermTerminalPage(options: {
       for (var i = 0; i < normalized.length; i++) {
         var ch = normalized[i];
         if (ch === '\\n') {
-          records.push({ actor: getActor(), text: currentLine.length > 0 ? currentLine : '<newline>', type: 'input' });
+          records.push({ actor: getInputActor(), text: currentLine.length > 0 ? currentLine : '<newline>', type: 'input' });
           currentLine = '';
         } else if (ch === '\\u007f' || ch === '\\b') {
           currentLine = currentLine.slice(0, -1);
         } else if (ch === '\\u0003') {
           currentLine = '';
-          records.push({ actor: getActor(), text: 'ctrl_c', type: 'control' });
+          records.push({ actor: getInputActor(), text: 'ctrl_c', type: 'control' });
         } else if (ch === '\\u0004') {
-          records.push({ actor: getActor(), text: 'ctrl_d', type: 'control' });
+          records.push({ actor: getInputActor(), text: 'ctrl_d', type: 'control' });
         } else if (ch >= ' ') {
           currentLine += ch;
         }
@@ -1234,19 +1265,19 @@ export function renderXtermTerminalPage(options: {
     });
 
     actorSelect.addEventListener('change', function() {
-      var actor = getActor();
-      if (actor === 'common') {
+      var lockMode = getLockMode();
+      if (lockMode === 'common') {
         sendJson({ type: 'lock', lock: 'none' });
         updateLockUI('none');
         setStatus('Switched to common mode. Both user and AI can type.', 'user');
-      } else if (actor === 'user') {
+      } else if (lockMode === 'user') {
         sendJson({ type: 'lock', lock: 'user' });
         updateLockUI('user');
         setStatus('Switched to user mode. AI input is blocked.', 'user');
       } else {
         sendJson({ type: 'lock', lock: 'agent' });
         updateLockUI('agent');
-        setStatus('Switched to ' + actor + ' mode. AI controls the terminal. Your input is blocked.', 'claude');
+        setStatus('Switched to ' + lockMode + ' mode. AI controls the terminal. Your input is blocked.', 'claude');
       }
       terminal.focus();
     });
@@ -1334,4 +1365,3 @@ export function renderXtermBindingPage(bindingKey: string) {
     title: sessionDisplayName(sessionData),
   });
 }
-
