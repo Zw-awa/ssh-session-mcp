@@ -2,7 +2,7 @@
 
 English: [README.md](README.md)
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![License: Apache%202.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![Node.js Version](https://img.shields.io/badge/node-%3E%3D18-brightgreen)](https://nodejs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.9.2-blue)](https://www.typescriptlang.org/)
 [![npm version](https://img.shields.io/npm/v/ssh-session-mcp)](https://www.npmjs.com/package/ssh-session-mcp)
@@ -380,4 +380,6 @@ node scripts/ctl.mjs logs --instance=codex-a --session=board-a/main
 
 ## 许可证
 
-[MIT](LICENSE)
+本仓库采用 [Apache License 2.0](LICENSE)。
+
+项目归属说明见 [NOTICE](NOTICE)。

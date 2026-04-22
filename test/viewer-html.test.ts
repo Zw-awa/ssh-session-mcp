@@ -4,8 +4,8 @@ import { tmpdir } from 'node:os';
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-let renderViewerHomePage: typeof import('../src/viewer-html').renderViewerHomePage;
-let setActualViewerPort: typeof import('../src/server-state').setActualViewerPort;
+let renderViewerHomePage: typeof import('../src/viewer-html.js').renderViewerHomePage;
+let setActualViewerPort: typeof import('../src/server-state.js').setActualViewerPort;
 
 const previousEnv = {
   SSH_MCP_DISABLE_MAIN: process.env.SSH_MCP_DISABLE_MAIN,
@@ -37,11 +37,11 @@ beforeAll(async () => {
   process.env.VIEWER_HOST = '127.0.0.1';
   process.env.BOARD_A_PASSWORD = 'dummy-password';
 
-  const serverStateModule = await import('../src/server-state');
+  const serverStateModule = await import('../src/server-state.js');
   serverStateModule.setActualViewerPort(8793);
   setActualViewerPort = serverStateModule.setActualViewerPort;
 
-  const viewerHtmlModule = await import('../src/viewer-html');
+  const viewerHtmlModule = await import('../src/viewer-html.js');
   renderViewerHomePage = viewerHtmlModule.renderViewerHomePage;
 });
 
@@ -63,7 +63,8 @@ describe('renderViewerHomePage', () => {
 
     expect(html).toContain('SSH Session MCP • Auto‑refresh: 1000ms');
     expect(html).toContain('<code>http://127.0.0.1:8793</code>');
-    expect(html).toContain('setTimeout(() => location.reload(), 1000);');
+    expect(html).toContain('const refreshTimer = setTimeout(() => location.reload(), 1000);');
+    expect(html).toContain("window.addEventListener('pagehide', () => clearTimeout(refreshTimer), { once: true });");
     expect(html).not.toContain('${refreshMs}');
     expect(html).not.toContain('${baseUrl}');
   });

@@ -2,7 +2,7 @@
 
 中文文档: [简体中文](README.zh-CN.md)
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![License: Apache%202.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![Node.js Version](https://img.shields.io/badge/node-%3E%3D18-brightgreen)](https://nodejs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.9.2-blue)](https://www.typescriptlang.org/)
 [![npm version](https://img.shields.io/npm/v/ssh-session-mcp)](https://www.npmjs.com/package/ssh-session-mcp)
@@ -381,4 +381,6 @@ This repository stays focused on the SSH transport/runtime layer: sessions, view
 
 ## License
 
-[MIT](LICENSE)
+This repository is licensed under the [Apache License 2.0](LICENSE).
+
+See also [NOTICE](NOTICE) for project attribution metadata.

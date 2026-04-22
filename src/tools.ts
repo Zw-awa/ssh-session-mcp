@@ -60,7 +60,9 @@ import {
   buildViewerBindingUrl,
   buildViewerSessionUrl,
   buildSentinelCommandSuffix,
+  cleanBufferSnapshot,
   cleanCommandOutput,
+  resolveCompletedCommandOutput,
   startBackgroundMonitor,
   sweepSessions,
   setActiveSession,
@@ -1486,11 +1488,11 @@ server.tool(
       // Start background monitor
       startBackgroundMonitor(entry, target);
 
-      const partialSnapshot = target.read(beforeOffset, resolvedMaxChars);
-      const partialOutput = cleanCommandOutput(partialSnapshot.output, command, {
+      const partialSnapshot = cleanBufferSnapshot(target.read(beforeOffset, resolvedMaxChars), command, {
         sentinelMarker: useMarker ? sentinelMarker : undefined,
         sentinelSuffix,
       });
+      const partialOutput = partialSnapshot.output;
       const readMore = buildReadMoreHint({
         session: sessionReadRef(target),
         offset: beforeOffset,
@@ -1525,13 +1527,11 @@ server.tool(
     }
 
     // Command completed - read output
-    let outputText = target.read(beforeOffset, resolvedMaxChars).output;
-
-    // Clean output: ANSI → echo → sentinel
-    outputText = cleanCommandOutput(outputText, command, {
+    const snapshot = cleanBufferSnapshot(target.read(beforeOffset, resolvedMaxChars), command, {
       sentinelMarker: useMarker ? sentinelMarker : undefined,
       sentinelSuffix,
     });
+    const outputText = snapshot.output;
 
     // Post-execution terminal mode check: detect password prompt
     const postTerminalMode = detectTerminalMode(target.buffer.slice(-2000));
@@ -1570,7 +1570,6 @@ server.tool(
     target.inputLock = 'none';
     broadcastLock(target);
 
-    const snapshot = target.read(beforeOffset, resolvedMaxChars);
     const exitCode = completion.exitCode;
 
     // Try structured parsing
@@ -1584,7 +1583,7 @@ server.tool(
       ...commandMeta,
     });
 
-    if (outputText.length <= resolvedMaxChars) {
+    if (!snapshot.truncatedAfter) {
       return createJsonToolResponse(applyToolContract({
         command,
         sessionName: target.sessionName,
@@ -1624,8 +1623,14 @@ server.tool(
     const headChars = Math.floor(usableChars * HEAD_RATIO);
     const tailChars = usableChars - headChars;
 
-    const headSnapshot = target.read(beforeOffset, headChars);
-    const tailSnapshot = target.read(undefined, tailChars);
+    const headSnapshot = cleanBufferSnapshot(target.read(beforeOffset, headChars), command, {
+      sentinelMarker: useMarker ? sentinelMarker : undefined,
+      sentinelSuffix,
+    });
+    const tailSnapshot = cleanBufferSnapshot(target.read(undefined, tailChars), command, {
+      sentinelMarker: useMarker ? sentinelMarker : undefined,
+      sentinelSuffix,
+    });
 
     if (tailSnapshot.effectiveOffset <= headSnapshot.nextOffset) {
       return createJsonToolResponse(applyToolContract({
@@ -1789,7 +1794,9 @@ server.tool(
     const resolvedMaxChars = sanitizePositiveInt(maxChars, 'maxChars', 16000);
 
     if (entry.status === 'completed' || entry.status === 'interrupted') {
-      const output = entry.output || '';
+      const outputState = resolveCompletedCommandOutput(entry, resolvedMaxChars);
+      const output = outputState.output;
+      const sessionRef = sessions.get(entry.sessionId)?.metadata.sessionRef || entry.sessionId;
       runningCommands.delete(commandId);
       return createJsonToolResponse(applyToolContract({
         commandId,
@@ -1798,14 +1805,20 @@ server.tool(
         completionReason: entry.completionReason,
         exitCode: entry.exitCode,
         elapsedMs: (entry.completedAt || Date.now()) - entry.startTime,
-        readMore: buildReadMoreHint({
-          session: entry.sessionId,
-          offset: entry.startOffset,
-          maxCharsSuggested: resolvedMaxChars,
-          availableStart: entry.startOffset,
-          availableEnd: entry.startOffset + output.length,
-        }),
-        hint: 'Command has finished. Output is included below.',
+        outputTruncatedBefore: outputState.truncatedBefore,
+        outputTruncatedAfter: outputState.truncatedAfter,
+        readMore: outputState.truncatedAfter
+          ? buildReadMoreHint({
+            session: sessionRef,
+            offset: entry.startOffset,
+            maxCharsSuggested: resolvedMaxChars,
+            availableStart: outputState.availableStart,
+            availableEnd: outputState.availableEnd,
+          })
+          : undefined,
+        hint: outputState.truncatedBefore || outputState.truncatedAfter
+          ? 'Command has finished. The returned output is partial; use readMore with ssh-session-read to inspect the omitted section if the session is still available.'
+          : 'Command has finished. Output is included below.',
       }, {
         resultStatus: entry.status === 'completed' ? 'success' : 'failure',
         summary: entry.status === 'completed'
@@ -1813,11 +1826,14 @@ server.tool(
           : `Async command ${commandId} was interrupted.`,
         failureCategory: entry.status === 'completed' ? undefined : 'runtime-state-abnormal',
         nextAction: entry.status === 'completed'
-          ? 'Inspect the output and continue with the next command.'
+          ? (outputState.truncatedBefore || outputState.truncatedAfter
+            ? 'Inspect the partial output, then use ssh-session-read if you need more buffered text.'
+            : 'Inspect the output and continue with the next command.')
           : 'Re-run the command if the session is still valid.',
         evidence: [
           `commandId=${commandId}`,
           `status=${entry.status}`,
+          `outputTruncatedAfter=${outputState.truncatedAfter}`,
         ],
       }), [output.length > 0 ? output : '(no output captured)']);
     }
@@ -1924,6 +1940,8 @@ server.tool(
 
     let lastOutput = '';
     let lastExitCode: number | undefined;
+    let lastReadMore: ReturnType<typeof buildReadMoreHint> | undefined;
+    let lastOutputTruncatedAfter = false;
     let attempts = 0;
 
     for (let attempt = 0; attempt <= resolvedMaxRetries; attempt++) {
@@ -1979,14 +1997,25 @@ server.tool(
           sentinel: USE_SENTINEL_MARKER ? sentinelMarker : undefined,
         });
 
-        let output = target.read(beforeOffset, 16000).output;
-        output = cleanCommandOutput(output, command, {
+        const snapshot = cleanBufferSnapshot(target.read(beforeOffset, 16000), command, {
           sentinelMarker: USE_SENTINEL_MARKER ? sentinelMarker : undefined,
           sentinelSuffix,
         });
+        const output = snapshot.output;
+        const readMore = snapshot.truncatedAfter
+          ? buildReadMoreHint({
+            session: sessionReadRef(target),
+            offset: beforeOffset,
+            maxCharsSuggested: 16000,
+            availableStart: snapshot.availableStart,
+            availableEnd: snapshot.availableEnd,
+          })
+          : undefined;
 
         lastOutput = output;
         lastExitCode = completion.exitCode;
+        lastReadMore = readMore;
+        lastOutputTruncatedAfter = snapshot.truncatedAfter;
 
         if (successRe && successRe.test(output)) {
           return createJsonToolResponse(applyToolContract({
@@ -1996,15 +2025,22 @@ server.tool(
             exitCode: lastExitCode,
             sessionName: target.sessionName,
             sessionRef: sessionReadRef(target),
-            hint: `Command succeeded on attempt ${attempts}.`,
+            outputTruncatedAfter: snapshot.truncatedAfter,
+            readMore,
+            hint: snapshot.truncatedAfter
+              ? `Command succeeded on attempt ${attempts}, but the returned output is partial.`
+              : `Command succeeded on attempt ${attempts}.`,
           }, {
             resultStatus: 'success',
             summary: `Retry command succeeded after ${attempts} attempt(s).`,
-            nextAction: 'Inspect the output and continue with the next command.',
+            nextAction: snapshot.truncatedAfter
+              ? 'Inspect the partial output, then use ssh-session-read if you need more buffered text.'
+              : 'Inspect the output and continue with the next command.',
             evidence: [
               `sessionRef=${sessionReadRef(target)}`,
               `attempts=${attempts}`,
               `exitCode=${typeof lastExitCode === 'number' ? lastExitCode : '(none)'}`,
+              `outputTruncatedAfter=${snapshot.truncatedAfter}`,
             ],
           }), [output]);
         }
@@ -2021,15 +2057,22 @@ server.tool(
             exitCode: 0,
             sessionName: target.sessionName,
             sessionRef: sessionReadRef(target),
-            hint: `Command succeeded on attempt ${attempts}.`,
+            outputTruncatedAfter: snapshot.truncatedAfter,
+            readMore,
+            hint: snapshot.truncatedAfter
+              ? `Command succeeded on attempt ${attempts}, but the returned output is partial.`
+              : `Command succeeded on attempt ${attempts}.`,
           }, {
             resultStatus: 'success',
             summary: `Retry command succeeded after ${attempts} attempt(s).`,
-            nextAction: 'Inspect the output and continue with the next command.',
+            nextAction: snapshot.truncatedAfter
+              ? 'Inspect the partial output, then use ssh-session-read if you need more buffered text.'
+              : 'Inspect the output and continue with the next command.',
             evidence: [
               `sessionRef=${sessionReadRef(target)}`,
               `attempts=${attempts}`,
               'exitCode=0',
+              `outputTruncatedAfter=${snapshot.truncatedAfter}`,
             ],
           }), [output]);
         }
@@ -2041,14 +2084,21 @@ server.tool(
             attempts,
             sessionName: target.sessionName,
             sessionRef: sessionReadRef(target),
-            hint: `Command completed on attempt ${attempts} (no exit code available).`,
+            outputTruncatedAfter: snapshot.truncatedAfter,
+            readMore,
+            hint: snapshot.truncatedAfter
+              ? `Command completed on attempt ${attempts}, but the returned output is partial.`
+              : `Command completed on attempt ${attempts} (no exit code available).`,
           }, {
             resultStatus: 'success',
             summary: `Retry command completed after ${attempts} attempt(s).`,
-            nextAction: 'Inspect the output and continue with the next command.',
+            nextAction: snapshot.truncatedAfter
+              ? 'Inspect the partial output, then use ssh-session-read if you need more buffered text.'
+              : 'Inspect the output and continue with the next command.',
             evidence: [
               `sessionRef=${sessionReadRef(target)}`,
               `attempts=${attempts}`,
+              `outputTruncatedAfter=${snapshot.truncatedAfter}`,
             ],
           }), [output]);
         }
@@ -2070,16 +2120,23 @@ server.tool(
       exitCode: lastExitCode,
       sessionName: target.sessionName,
       sessionRef: sessionReadRef(target),
-      hint: `Command failed after ${attempts} attempts.`,
+      outputTruncatedAfter: lastOutputTruncatedAfter,
+      readMore: lastReadMore,
+      hint: lastOutputTruncatedAfter
+        ? `Command failed after ${attempts} attempts, and the returned output is partial.`
+        : `Command failed after ${attempts} attempts.`,
     }, {
       resultStatus: 'failure',
       summary: `Retry command failed after ${attempts} attempt(s).`,
       failureCategory: 'connection-failure',
-      nextAction: 'Inspect the last output, then decide whether to retry manually or fix the remote state.',
+      nextAction: lastOutputTruncatedAfter
+        ? 'Inspect the partial output, then use ssh-session-read if you need more buffered text before retrying manually.'
+        : 'Inspect the last output, then decide whether to retry manually or fix the remote state.',
       evidence: [
         `sessionRef=${sessionReadRef(target)}`,
         `attempts=${attempts}`,
         `exitCode=${typeof lastExitCode === 'number' ? lastExitCode : '(none)'}`,
+        `outputTruncatedAfter=${lastOutputTruncatedAfter}`,
       ],
     }), [lastOutput.length > 0 ? lastOutput : '(no output)']);
   },

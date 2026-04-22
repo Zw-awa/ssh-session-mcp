@@ -18,7 +18,7 @@ const previousEnv = {
 };
 
 beforeAll(async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'ssh-mcp-viewer-ui-'));
+  const dir = mkdtempSync(join(tmpdir(), 'ssh-mcp-viewer-lifecycle-'));
   const configPath = join(dir, 'ssh-session-mcp.config.json');
 
   writeFileSync(configPath, JSON.stringify({
@@ -61,36 +61,15 @@ afterAll(() => {
   }
 });
 
-describe('viewer UI contracts', () => {
-  it('keeps the home page layout responsive for narrow screens', () => {
+describe('viewer lifecycle contracts', () => {
+  it('cleans up the home page auto-refresh timer when the page closes', () => {
     const html = renderViewerHomePage();
 
-    expect(html).toContain('@media (max-width: 900px)');
-    expect(html).toContain('.session-header');
-    expect(html).toContain('flex-direction: column;');
-    expect(html).toContain('overflow-wrap: anywhere;');
+    expect(html).toContain('const refreshTimer = setTimeout(() => location.reload(), 1000);');
+    expect(html).toContain("window.addEventListener('pagehide', () => clearTimeout(refreshTimer), { once: true });");
   });
 
-  it('treats xterm common mode as an unlocked mode instead of coercing it to user lock', () => {
-    const html = renderXtermTerminalPage({
-      attachKind: 'session',
-      attachRef: 'demo-session',
-      baseUrl: 'http://127.0.0.1:8793',
-      footerLabel: 'Session ID',
-      footerValue: 'demo-session',
-      meta: 'orangepi@192.168.10.58:22',
-      subtitle: 'Shared SSH Terminal',
-      title: 'orange-board',
-    });
-
-    expect(html).toContain('function getLockMode()');
-    expect(html).toContain("function getInputActor()");
-    expect(html).toContain("if (lockMode === 'common')");
-    expect(html).toContain("sendJson({ type: 'lock', lock: 'none' });");
-    expect(html).not.toContain("var actor = getActor();");
-  });
-
-  it('keeps the legacy browser attach page polling loop and retry backoff intact', () => {
+  it('stops legacy browser polling and aborts pending fetches on page teardown', () => {
     const html = renderInteractiveAttachPage({
       actor: 'user',
       attachPath: '/api/attach/session/demo-session',
@@ -102,14 +81,14 @@ describe('viewer UI contracts', () => {
       title: 'orange-board',
     });
 
-    expect(html).toContain("if (state.polling) return;");
-    expect(html).toContain("await pollOnce(state.initialized ? refreshMs : 0);");
-    expect(html).toContain("Math.min(refreshMs, 800)");
-    expect(html).toContain("listen(window, 'load', handleWindowLoad);");
-    expect(html).toContain("scheduleResize();");
+    expect(html).toContain('state.stopped = true;');
+    expect(html).toContain('state.pollController.abort();');
+    expect(html).toContain('while (!state.stopped && !state.closed)');
+    expect(html).toContain("listen(window, 'pagehide', shutdown);");
+    expect(html).toContain("listen(window, 'beforeunload', shutdown);");
   });
 
-  it('keeps xterm websocket reconnect and raw-offset resume behavior intact', () => {
+  it('disposes xterm resources and blocks reconnect loops after teardown', () => {
     const html = renderXtermTerminalPage({
       attachKind: 'session',
       attachRef: 'demo-session',
@@ -121,9 +100,10 @@ describe('viewer UI contracts', () => {
       title: 'orange-board',
     });
 
-    expect(html).toContain("rawOffset=' + knownRawChars");
-    expect(html).toContain("knownRawChars += offsetDecoder.decode(chunk, { stream: true }).length;");
-    expect(html).toContain("reconnectTimer = setTimeout(connect, 2000);");
-    expect(html).toContain("ws.binaryType = 'arraybuffer';");
+    expect(html).toContain('destroyed = true;');
+    expect(html).toContain('closeSocket();');
+    expect(html).toContain('terminal.dispose();');
+    expect(html).toContain("listen(window, 'pagehide', shutdown);");
+    expect(html).toContain("listen(window, 'beforeunload', shutdown);");
   });
 });

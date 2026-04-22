@@ -15,6 +15,7 @@ import {
   type ResultStatus,
 } from './contracts.js';
 import {
+  type BufferSnapshot,
   delay,
   normalizePaneText,
   renderTerminalDashboard,
@@ -169,6 +170,10 @@ export interface RunningCommand {
   startTime: number;
   status: 'running' | 'completed' | 'interrupted';
   output?: string;
+  outputAvailableStart?: number;
+  outputAvailableEnd?: number;
+  outputTruncatedBefore?: boolean;
+  outputTruncatedAfter?: boolean;
   completedAt?: number;
   completionReason?: 'prompt' | 'idle' | 'timeout' | 'sentinel';
   exitCode?: number;
@@ -303,6 +308,7 @@ export const VIEWER_CLI_ENTRY_PATH = fileURLToPath(new URL('./viewer-cli.js', im
 
 export const viewerProcesses = new Map<string, ViewerProcessState>();
 export const viewerBindings = new Map<string, ViewerBindingState>();
+export const viewerClientSessions = new WeakMap<WebSocket, string>();
 export let viewerServer: HttpServer | undefined;
 export let viewerWss: WebSocketServer | undefined;
 export let viewerStateLoaded = false;
@@ -818,6 +824,47 @@ export function cleanCommandOutput(output: string, command: string, options: {
   return cleaned;
 }
 
+export function cleanBufferSnapshot(
+  snapshot: BufferSnapshot,
+  command: string,
+  options: {
+    sentinelMarker?: string;
+    sentinelSuffix?: string;
+  } = {},
+): BufferSnapshot {
+  return {
+    ...snapshot,
+    output: cleanCommandOutput(snapshot.output, command, options),
+  };
+}
+
+export function resolveCompletedCommandOutput(entry: RunningCommand, maxChars: number) {
+  const liveSession = sessions.get(entry.sessionId);
+  if (liveSession) {
+    const snapshot = cleanBufferSnapshot(liveSession.read(entry.startOffset, maxChars), entry.command, {
+      sentinelMarker: entry.sentinelMarker,
+      sentinelSuffix: entry.sentinelSuffix,
+    });
+
+    return {
+      output: snapshot.output,
+      availableStart: snapshot.availableStart,
+      availableEnd: snapshot.availableEnd,
+      truncatedBefore: snapshot.truncatedBefore,
+      truncatedAfter: snapshot.truncatedAfter,
+    };
+  }
+
+  const output = entry.output || '';
+  return {
+    output,
+    availableStart: entry.outputAvailableStart ?? entry.startOffset,
+    availableEnd: entry.outputAvailableEnd ?? ((entry.outputAvailableStart ?? entry.startOffset) + output.length),
+    truncatedBefore: entry.outputTruncatedBefore ?? false,
+    truncatedAfter: entry.outputTruncatedAfter ?? false,
+  };
+}
+
 export function startBackgroundMonitor(entry: RunningCommand, session: SSHSession): void {
   session.waitForCompletion({
     startOffset: entry.startOffset,
@@ -834,13 +881,16 @@ export function startBackgroundMonitor(entry: RunningCommand, session: SSHSessio
       return;
     }
 
-    const snapshot = session.read(entry.startOffset, 32000);
-    const output = cleanCommandOutput(snapshot.output, stored.command, {
+    const snapshot = cleanBufferSnapshot(session.read(entry.startOffset, 32000), stored.command, {
       sentinelMarker: stored.sentinelMarker,
       sentinelSuffix: stored.sentinelSuffix,
     });
     stored.status = 'completed';
-    stored.output = output;
+    stored.output = snapshot.output;
+    stored.outputAvailableStart = snapshot.availableStart;
+    stored.outputAvailableEnd = snapshot.availableEnd;
+    stored.outputTruncatedBefore = snapshot.truncatedBefore;
+    stored.outputTruncatedAfter = snapshot.truncatedAfter;
     stored.completedAt = Date.now();
     stored.completionReason = result.reason;
     stored.exitCode = result.exitCode;
@@ -1561,6 +1611,9 @@ export function broadcastLock(session: SSHSession) {
   if (!viewerWss) return;
   const msg = JSON.stringify({ type: 'lock', lock: session.inputLock });
   for (const client of viewerWss.clients) {
+    if (viewerClientSessions.get(client) !== session.sessionId) {
+      continue;
+    }
     if (client.readyState === WebSocket.OPEN) {
       try { client.send(msg); } catch { /* ignore */ }
     }

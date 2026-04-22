@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.5] - 2026-04-22
+
+### Changed
+- **Viewer architecture refactoring**: Completely restructured viewer modules for better separation of concerns:
+  - `src/viewer-html/` - HTML template components (home, terminal, binding pages)
+  - `src/viewer-http-handler.ts` - HTTP request handling and API endpoints
+  - `src/viewer-ws-handler.ts` - WebSocket connection management and real-time communication
+  - `src/viewer-routes.ts` - URL routing and request dispatching
+  - `src/viewer-server.ts` - Simplified server setup and lifecycle management
+- **HTML template organization**: Moved inline HTML/CSS/JS to modular template files for better maintainability
+- **WebSocket handler isolation**: Separated WebSocket logic from HTTP handler for cleaner architecture
+- **Project license**: Updated repository licensing metadata and documentation from MIT to Apache-2.0
+
+### Fixed
+- **Session method compatibility**: Fixed `session.shouldCloseForIdle` method references in viewer HTTP handler
+- **Lock broadcast synchronization**: Improved WebSocket lock change broadcasting to attached viewers
+- **Input validation**: Enhanced HTTP and WebSocket input validation with proper error messages
+- **Test coverage**: Added comprehensive tests for viewer HTTP handler, WebSocket handler, and routing logic
+
+### Added
+- **New test suites**: Added `test/viewer-http-handler.test.ts`, `test/viewer-ws-handler.test.ts`, `test/viewer-routes.test.ts`, `test/viewer-lifecycle-contracts.test.ts`, `test/viewer-script-helpers.test.ts`, `test/command-output.test.ts`
+- **Template component tests**: Enhanced viewer HTML template testing with better isolation
+- **HTTP API validation**: Added request body size limits (1 MiB) and structured error responses
+
 ## [2.6.4] - 2026-04-22
 
 ### Fixed

@@ -131,6 +131,7 @@ export function extractExitCodeFromText(text: string, sentinel: string): number 
 export class SSHConnection {
   private conn: Client | null = null;
   private isConnecting = false;
+  private isReady = false;
   private connectionPromise: Promise<void> | null = null;
 
   constructor(
@@ -153,6 +154,7 @@ export class SSHConnection {
           // ignore
         }
         this.conn = null;
+        this.isReady = false;
         this.isConnecting = false;
         this.connectionPromise = null;
         reject(new McpError(ErrorCode.InternalError, 'SSH connection timeout'));
@@ -160,6 +162,7 @@ export class SSHConnection {
 
       this.conn.on('ready', () => {
         clearTimeout(timeoutId);
+        this.isReady = true;
         this.isConnecting = false;
         resolve();
       });
@@ -167,6 +170,7 @@ export class SSHConnection {
       this.conn.on('error', (err: Error) => {
         clearTimeout(timeoutId);
         this.conn = null;
+        this.isReady = false;
         this.isConnecting = false;
         this.connectionPromise = null;
         reject(new McpError(ErrorCode.InternalError, `SSH connection error: ${err.message}`));
@@ -174,6 +178,7 @@ export class SSHConnection {
 
       this.conn.on('close', () => {
         this.conn = null;
+        this.isReady = false;
         this.isConnecting = false;
         this.connectionPromise = null;
       });
@@ -185,7 +190,7 @@ export class SSHConnection {
   }
 
   isConnected(): boolean {
-    return this.conn !== null && (this.conn as any)._sock && !(this.conn as any)._sock.destroyed;
+    return this.conn !== null && this.isReady;
   }
 
   getClient(): Client {
@@ -199,6 +204,7 @@ export class SSHConnection {
     if (!this.conn) return;
     const active = this.conn;
     this.conn = null;
+    this.isReady = false;
 
     try {
       active.end();
@@ -207,7 +213,7 @@ export class SSHConnection {
     }
 
     try {
-      (active as any).destroy?.();
+      active.destroy();
     } catch {
       // ignore
     }
@@ -264,10 +270,7 @@ export class SSHSession {
 
     stream.on('data', onData);
 
-    const stderr = (stream as any).stderr;
-    if (stderr?.on) {
-      stderr.on('data', onData);
-    }
+    stream.stderr.on('data', onData);
 
     stream.on('close', (code?: number, signal?: string) => {
       const detail = `channel closed${typeof code === 'number' ? ` code=${code}` : ''}${signal ? ` signal=${signal}` : ''}`;
@@ -448,27 +451,46 @@ export class SSHSession {
       .slice(-Math.max(1, maxEvents));
   }
 
-  async waitForChange(options: { outputOffset?: number; eventSeq?: number; waitMs: number }): Promise<void> {
-    const { outputOffset, eventSeq, waitMs } = options;
+  async waitForChange(options: { outputOffset?: number; eventSeq?: number; waitMs: number; signal?: AbortSignal }): Promise<void> {
+    const { outputOffset, eventSeq, waitMs, signal } = options;
     if (waitMs <= 0) return;
     if (typeof outputOffset !== 'number' && typeof eventSeq !== 'number') return;
     if (this.hasRequestedChange(outputOffset, eventSeq)) return;
+    if (signal?.aborted) return;
 
     await new Promise<void>(resolve => {
+      let settled = false;
       let waiter!: ChangeWaiter;
-      const timer = setTimeout(() => {
+      const finish = () => {
+        if (settled) {
+          return;
+        }
+        settled = true;
         this.waiters.delete(waiter);
+        clearTimeout(timer);
+        if (signal) {
+          signal.removeEventListener('abort', onAbort);
+        }
         resolve();
+      };
+      const timer = setTimeout(() => {
+        finish();
       }, waitMs);
+      const onAbort = () => {
+        finish();
+      };
 
       waiter = {
         outputOffset,
         eventSeq,
-        resolve,
+        resolve: finish,
         timer,
       };
 
       this.waiters.add(waiter);
+      if (signal) {
+        signal.addEventListener('abort', onAbort, { once: true });
+      }
     });
   }
 
@@ -507,10 +529,7 @@ export class SSHSession {
       throw new McpError(ErrorCode.InvalidParams, `Session is closed: ${this.closeReason || this.sessionId}`);
     }
 
-    const channel = this.stream as any;
-    if (typeof channel.setWindow === 'function') {
-      channel.setWindow(rows, cols, 480, 640);
-    }
+    this.stream.setWindow(rows, cols, 480, 640);
 
     this.cols = cols;
     this.rows = rows;
