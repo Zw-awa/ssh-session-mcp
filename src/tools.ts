@@ -59,6 +59,7 @@ import {
   buildViewerBindingKeyForSession,
   buildViewerBindingUrl,
   buildViewerSessionUrl,
+  appendSentinelToCommand,
   buildSentinelCommandSuffix,
   cleanBufferSnapshot,
   cleanCommandOutput,
@@ -1423,7 +1424,8 @@ server.tool(
 
     const beforeOffset = target.currentBufferEnd();
     const startedAt = new Date().toISOString();
-    const sentinelSuffix = useMarker ? buildSentinelCommandSuffix(sentinelMarker) : undefined;
+    const sentinelCommand = useMarker ? appendSentinelToCommand(command, sentinelMarker) : undefined;
+    const sentinelSuffix = sentinelCommand?.sentinelSuffix;
     logSessionEvent(target.sessionId, 'command.started', {
       operationMode: OPERATION_MODE,
       startedAt,
@@ -1432,7 +1434,7 @@ server.tool(
     });
     if (useMarker) {
       // Use __MCP_EC to capture exit code reliably even with pipes
-      target.write(`${command}${sentinelSuffix}\n`, 'agent');
+      target.write(`${sentinelCommand!.commandWithSentinel}\n`, 'agent');
     } else {
       target.write(`${command}\n`, 'agent');
     }
@@ -1981,10 +1983,11 @@ server.tool(
         const sentinelMarker = `___MCP_DONE_${sentinelId}_`;
         const beforeOffset = target.currentBufferEnd();
 
-        const sentinelSuffix = USE_SENTINEL_MARKER ? buildSentinelCommandSuffix(sentinelMarker) : undefined;
+        const sentinelCommand = USE_SENTINEL_MARKER ? appendSentinelToCommand(command, sentinelMarker) : undefined;
+        const sentinelSuffix = sentinelCommand?.sentinelSuffix;
 
         if (USE_SENTINEL_MARKER) {
-          target.write(`${command}${sentinelSuffix}\n`, 'agent');
+          target.write(`${sentinelCommand!.commandWithSentinel}\n`, 'agent');
         } else {
           target.write(`${command}\n`, 'agent');
         }

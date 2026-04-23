@@ -21,6 +21,7 @@ import {
 } from '../src/session';
 
 let buildSentinelCommandSuffix: typeof import('../src/index').buildSentinelCommandSuffix;
+let appendSentinelToCommand: typeof import('../src/index').appendSentinelToCommand;
 let parseArgv: typeof import('../src/index').parseArgv;
 let stripSentinelFromOutput: typeof import('../src/index').stripSentinelFromOutput;
 
@@ -51,6 +52,7 @@ beforeAll(async () => {
   process.env.BOARD_A_PASSWORD = 'dummy-password';
 
   const indexModule = await import('../src/index');
+  appendSentinelToCommand = indexModule.appendSentinelToCommand;
   buildSentinelCommandSuffix = indexModule.buildSentinelCommandSuffix;
   parseArgv = indexModule.parseArgv;
   stripSentinelFromOutput = indexModule.stripSentinelFromOutput;
@@ -187,8 +189,33 @@ describe('sentinel helpers', () => {
     const suffix = buildSentinelCommandSuffix('___MCP_DONE_deadbeef_');
 
     expect(suffix).toContain('printf');
+    expect(suffix).toContain('\\n');
     expect(suffix).toContain('${__MCP_EC}');
     expect(suffix).not.toContain('$__MCP_EC___');
+  });
+
+  it('appends sentinel trailers on a new line for multi-line commands', () => {
+    const rendered = appendSentinelToCommand("python - <<'PY'\nprint('ok')\nPY", '___MCP_DONE_deadbeef_');
+
+    expect(rendered.commandWithSentinel).toContain("PY\n__MCP_EC=$?; printf");
+    expect(rendered.sentinelSuffix).toBe('\n__MCP_EC=$?; printf "%s%s___\\n" "___MCP_DONE_deadbeef_" "\\${__MCP_EC}"'.replace('\\${', '\${'));
+  });
+
+  it('strips multi-line sentinel trailers from CR-delimited PTY output', () => {
+    const marker = '___MCP_DONE_deadbeef_';
+    const rendered = appendSentinelToCommand("python - <<'PY'\nprint('ok')\nPY", marker);
+    const output = [
+      rendered.commandWithSentinel.replace(/\n/g, '\r'),
+      '\rok\r',
+      `${marker}0___`,
+    ].join('');
+
+    const cleaned = stripSentinelFromOutput(output, marker, rendered.sentinelSuffix);
+
+    expect(cleaned).toContain("python - <<'PY'");
+    expect(cleaned).toContain("print('ok')");
+    expect(cleaned).not.toContain('__MCP_EC=$?');
+    expect(cleaned).not.toContain(marker);
   });
 
   it('removes sentinel artifacts without dropping real PTY output', () => {

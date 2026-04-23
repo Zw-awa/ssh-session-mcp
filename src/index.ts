@@ -90,7 +90,13 @@ if (isCliEnabled) {
 
 // ── Re-exports for tests ────────────────────────────────────────────────────
 
-export { buildSentinelCommandSuffix, parseArgv, stripSentinelFromOutput, validateConfig } from './server-state.js';
+export {
+  appendSentinelToCommand,
+  buildSentinelCommandSuffix,
+  parseArgv,
+  stripSentinelFromOutput,
+  validateConfig,
+} from './server-state.js';
 export {
   createBufferSnapshot,
   createEventSnapshot,

@@ -784,9 +784,37 @@ export function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-export function buildSentinelCommandSuffix(sentinelMarker: string): string {
+export function buildSentinelCommandTrailer(sentinelMarker: string): string {
   // Use braces so the shell expands __MCP_EC rather than looking up __MCP_EC___.
-  return `; __MCP_EC=$?; printf "%s%s___\n" "${sentinelMarker}" "\${__MCP_EC}"`;
+  // Keep \\n literal so the shell sees a newline escape rather than a real line break.
+  return `__MCP_EC=$?; printf "%s%s___\\n" "${sentinelMarker}" "\${__MCP_EC}"`;
+}
+
+export function buildSentinelCommandSuffix(sentinelMarker: string): string {
+  return `; ${buildSentinelCommandTrailer(sentinelMarker)}`;
+}
+
+export function appendSentinelToCommand(command: string, sentinelMarker: string): {
+  commandWithSentinel: string;
+  sentinelSuffix: string;
+} {
+  const trailer = buildSentinelCommandTrailer(sentinelMarker);
+  const hasLineBreak = /[\r\n]/.test(command);
+
+  if (!hasLineBreak) {
+    const sentinelSuffix = `; ${trailer}`;
+    return {
+      commandWithSentinel: `${command}${sentinelSuffix}`,
+      sentinelSuffix,
+    };
+  }
+
+  const separator = /(?:\r\n|\r|\n)$/.test(command) ? '' : '\n';
+  const sentinelSuffix = `${separator}${trailer}`;
+  return {
+    commandWithSentinel: `${command}${sentinelSuffix}`,
+    sentinelSuffix,
+  };
 }
 
 export function stripSentinelFromOutput(output: string, sentinelMarker: string, sentinelSuffix?: string): string {
@@ -794,7 +822,15 @@ export function stripSentinelFromOutput(output: string, sentinelMarker: string, 
 
   // Remove only the injected command suffix from the echoed command, not the whole line.
   if (sentinelSuffix) {
-    cleaned = cleaned.replaceAll(sentinelSuffix, '');
+    const suffixVariants = new Set([
+      sentinelSuffix,
+      sentinelSuffix.replace(/\n/g, '\r'),
+      sentinelSuffix.replace(/\n/g, '\r\n'),
+    ]);
+
+    for (const variant of suffixVariants) {
+      cleaned = cleaned.replaceAll(variant, '');
+    }
   }
 
   // Remove the actual sentinel output token. Keep everything else untouched even if PTY output

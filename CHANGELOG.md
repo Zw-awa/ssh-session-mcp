@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.8] - 2026-04-23
+
+### Fixed
+- **Multi-line command sentinel handling**: Fixed sentinel marker handling for multi-line commands (heredoc, Python scripts) with proper newline handling and CR/LF/CRLF line ending support
+- **Sentinel suffix stripping**: Improved sentinel suffix removal to handle different line ending variants (LF, CR, CRLF) in PTY output
+
 ## [2.6.7] - 2026-04-23
 
 ### Fixed
