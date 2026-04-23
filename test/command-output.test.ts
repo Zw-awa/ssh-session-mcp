@@ -10,6 +10,7 @@ let cleanBufferSnapshot: typeof import('../src/server-state.js').cleanBufferSnap
 let resolveCompletedCommandOutput: typeof import('../src/server-state.js').resolveCompletedCommandOutput;
 let sessions: typeof import('../src/server-state.js').sessions;
 let setViewerWss: typeof import('../src/server-state.js').setViewerWss;
+let viewerClientSessions: typeof import('../src/server-state.js').viewerClientSessions;
 
 const previousEnv = {
   SSH_MCP_DISABLE_MAIN: process.env.SSH_MCP_DISABLE_MAIN,
@@ -44,6 +45,7 @@ beforeAll(async () => {
   resolveCompletedCommandOutput = serverState.resolveCompletedCommandOutput;
   sessions = serverState.sessions;
   setViewerWss = serverState.setViewerWss;
+  viewerClientSessions = serverState.viewerClientSessions;
 });
 
 afterEach(() => {
@@ -130,11 +132,16 @@ describe('viewer lock broadcast', () => {
   it('only broadcasts lock changes to viewers attached to the same session', () => {
     const sendA = vi.fn();
     const sendB = vi.fn();
+    const clientA = { readyState: 1, send: sendA };
+    const clientB = { readyState: 1, send: sendB };
+
+    viewerClientSessions.set(clientA as any, 'session-a');
+    viewerClientSessions.set(clientB as any, 'session-b');
 
     setViewerWss({
       clients: new Set([
-        { readyState: 1, send: sendA, __sshMcpSessionId: 'session-a' },
-        { readyState: 1, send: sendB, __sshMcpSessionId: 'session-b' },
+        clientA as any,
+        clientB as any,
       ]),
     } as any);
 
