@@ -8,24 +8,38 @@ export function renderXtermSetupSection(options: {
   return `
   (function() {
     var wsPath = ${JSON.stringify(options.wsPath)};
-    var terminal = new window.Terminal({
-      cursorBlink: true,
-      convertEol: true,
-      fontSize: 14,
-      fontFamily: 'Consolas, "SFMono-Regular", "Courier New", monospace',
-      scrollback: 10000,
-      theme: {
-        background: '#0d1117',
-        foreground: '#e6edf3',
-        cursor: '#72d6d1',
-        selectionBackground: 'rgba(114,214,209,0.3)',
-      },
-      allowProposedApi: true,
-    });
-    var fitAddon = new window.FitAddon.FitAddon();
-    terminal.loadAddon(fitAddon);
-    terminal.open(document.getElementById('terminal-container'));
-    fitAddon.fit();
+    try {
+      if (!window.Terminal) throw new Error('xterm.js failed to load from CDN');
+      if (!window.FitAddon || !window.FitAddon.FitAddon) throw new Error('xterm-addon-fit failed to load from CDN');
+      var terminal = new window.Terminal({
+        cursorBlink: true,
+        convertEol: true,
+        fontSize: 14,
+        fontFamily: 'Consolas, "SFMono-Regular", "Courier New", monospace',
+        scrollback: 10000,
+        theme: {
+          background: '#0d1117',
+          foreground: '#e6edf3',
+          cursor: '#72d6d1',
+          selectionBackground: 'rgba(114,214,209,0.3)',
+        },
+      });
+      var fitAddon = new window.FitAddon.FitAddon();
+      terminal.loadAddon(fitAddon);
+      var tc = document.getElementById('terminal-container');
+      tc.innerHTML = '';
+      terminal.open(tc);
+      fitAddon.fit();
+    } catch (e) {
+      var container = document.getElementById('terminal-container');
+      if (container) {
+        container.innerHTML = '<div style="padding:40px;text-align:center;color:#f85149;font-family:monospace"><p><strong>Terminal failed to load</strong></p><p style="color:#91a0b3">' + (e.message || String(e)) + '</p><p style="color:#91a0b3;font-size:12px">Check browser console for details. The CDN scripts may be blocked by a firewall or proxy.</p></div>';
+      }
+      if (document.getElementById('statusBar')) {
+        document.getElementById('statusBar').textContent = 'Error: ' + (e.message || String(e));
+      }
+      return;
+    }
 
     var connDot = document.getElementById('connDot');
     var statusBar = document.getElementById('statusBar');
@@ -46,6 +60,8 @@ export function renderXtermSetupSection(options: {
     var destroyed = false;
     var settingModeFromServer = false;
     var settingLockFromServer = false;
+    var reconnectAttempt = 0;
+    var maxReconnectAttempts = 10;
 
     function addCleanup(fn) {
       cleanupFns.push(fn);
@@ -85,12 +101,18 @@ ${renderSharedViewerScriptHelpers({
       if (lock === 'agent') {
         lockBadge.textContent = 'AI active';
         lockBadge.className = 'lock-badge agent';
+        terminal.options.cursorBlink = false;
+        terminal.options.disableStdin = true;
       } else if (lock === 'user') {
         lockBadge.textContent = 'user active';
         lockBadge.className = 'lock-badge user-lock';
+        terminal.options.cursorBlink = true;
+        terminal.options.disableStdin = false;
       } else {
         lockBadge.textContent = 'unlocked';
         lockBadge.className = 'lock-badge none';
+        terminal.options.cursorBlink = true;
+        terminal.options.disableStdin = false;
       }
       settingLockFromServer = true;
       if (lock === 'user' && actorSelect.value !== 'user') {
@@ -164,6 +186,7 @@ export function renderXtermConnectionSection() {
         }
         connDot.className = 'conn-dot';
         if (isFirstConnect) { isFirstConnect = false; }
+        reconnectAttempt = 0;
         currentLine = '';
         setStatus('Connected in ' + getLockMode() + ' mode', '');
         scheduleScrollToBottom();
@@ -215,8 +238,15 @@ export function renderXtermConnectionSection() {
           setStatus('Session not found. The SSH session may have been closed or does not exist.', 'error');
           return;
         }
-        setStatus('Disconnected. Reconnecting...', 'error');
-        reconnectTimer = setTimeout(connect, 2000);
+        reconnectAttempt += 1;
+        if (reconnectAttempt > maxReconnectAttempts) {
+          setStatus('Connection lost after ' + maxReconnectAttempts + ' attempts. Please refresh the page.', 'error');
+          return;
+        }
+        var reason = (evt && evt.reason) ? ': ' + evt.reason : '';
+        setStatus('Disconnected' + reason + '. Reconnecting (' + reconnectAttempt + '/' + maxReconnectAttempts + ')...', 'error');
+        var delay = Math.min(2000 * Math.pow(1.5, reconnectAttempt - 1), 30000);
+        reconnectTimer = setTimeout(connect, delay);
       };
 
       ws.onerror = function() {};
@@ -262,7 +292,11 @@ export function renderXtermInputSection() {
     addCleanup(function () { dataDisposable.dispose(); });
 
     var binaryDisposable = terminal.onBinary(function(data) {
-      if (destroyed || isUserBlocked()) return;
+      if (destroyed) return;
+      if (isUserBlocked()) {
+        setStatus(getInputBlockedStatusText(), 'locked');
+        return;
+      }
       sendJson({ type: 'input', data: data, records: [] });
     });
     addCleanup(function () { binaryDisposable.dispose(); });
@@ -298,7 +332,7 @@ export function renderXtermLifecycleSection() {
       } else {
         sendJson({ type: 'lock', lock: 'agent' });
         updateLockUI('agent');
-        setStatus('Switched to ' + lockMode + ' mode. AI controls the terminal. Your input is blocked.', 'claude');
+        setStatus('Switched to agent mode. AI controls the terminal. Your input is blocked.', 'session');
       }
       terminal.focus();
     }

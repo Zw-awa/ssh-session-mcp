@@ -65,8 +65,9 @@ describe('viewer lifecycle contracts', () => {
   it('cleans up the home page auto-refresh timer when the page closes', () => {
     const html = renderViewerHomePage();
 
-    expect(html).toContain('const refreshTimer = setTimeout(() => location.reload(), 1000);');
-    expect(html).toContain("window.addEventListener('pagehide', () => clearTimeout(refreshTimer), { once: true });");
+    expect(html).toContain('fetch("/api/sessions")');
+    expect(html).toContain('function sr()');
+    expect(html).toContain("window.addEventListener(\"pagehide\"");
   });
 
   it('stops legacy browser polling and aborts pending fetches on page teardown', () => {

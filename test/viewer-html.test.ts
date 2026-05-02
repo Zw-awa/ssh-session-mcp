@@ -71,15 +71,83 @@ afterAll(() => {
 });
 
 describe('renderViewerHomePage', () => {
-  it('renders footer values with real interpolation instead of literal template placeholders', () => {
+  it('renders footer values correctly', () => {
     const html = renderViewerHomePage();
-
-    expect(html).toContain('SSH Session MCP • Auto‑refresh: 1000ms');
+    expect(html).toContain('Auto-refresh');
     expect(html).toContain('<code>http://127.0.0.1:8793</code>');
-    expect(html).toContain('const refreshTimer = setTimeout(() => location.reload(), 1000);');
-    expect(html).toContain("window.addEventListener('pagehide', () => clearTimeout(refreshTimer), { once: true });");
     expect(html).not.toContain('${refreshMs}');
     expect(html).not.toContain('${baseUrl}');
+  });
+
+  it('uses fetch to refresh sessions instead of full page reload', () => {
+    const html = renderViewerHomePage();
+    expect(html).toContain('fetch("/api/sessions")');
+    expect(html).not.toContain('location.reload()');
+  });
+
+  it('includes favicon link', () => {
+    const html = renderViewerHomePage();
+    expect(html).toContain('<link rel="icon"');
+    expect(html).toContain('base64');
+  });
+
+  it('renders Terminal, Details and Close buttons, no legacy Session/Binding View', () => {
+    sessions.clear();
+    const sess = createFakeSession();
+    sessions.set('demo-session', sess);
+    const html = renderViewerHomePage();
+    expect(html).toContain('Terminal');
+    expect(html).toContain('Details');
+    expect(html).toContain('Close');
+    expect(html).not.toContain('Session View');
+    expect(html).not.toContain('Binding View');
+  });
+});
+
+describe('debug mode API coverage', () => {
+  it('renders agent command input for ssh-run simulation', () => {
+    const html = renderViewerHomePage(true);
+    expect(html).toContain('Command as agent');
+    expect(html).toContain('agent-input');
+    expect(html).toContain('function sac(');
+  });
+
+  it('renders control key buttons for ssh-session-control', () => {
+    const html = renderViewerHomePage(true);
+    expect(html).toContain('function sck(');
+    ["ctrl_c","ctrl_d","enter","up","down","left","right","backspace","tab","esc"].forEach(k => {
+      expect(html).toContain("'"+k+"'");
+    });
+  });
+
+  it('renders Set Active button for ssh-session-set-active', () => {
+    const html = renderViewerHomePage(true);
+    expect(html).toContain('function sa(');
+    expect(html).toContain('set-active');
+  });
+
+  it('renders Details for ssh-session-diagnostics and ssh-session-history', () => {
+    const html = renderViewerHomePage(true);
+    expect(html).toContain('function td(');
+    expect(html).toContain('/diagnostics');
+    expect(html).toContain('/history');
+  });
+
+  it('renders Close button for ssh-session-close', () => {
+    const html = renderViewerHomePage(true);
+    expect(html).toContain('function cs(');
+    expect(html).toContain('/close');
+  });
+
+  it('renders New Local Session for ssh-quick-connect simulation', () => {
+    const html = renderViewerHomePage(true);
+    expect(html).toContain('function nls(');
+    // The HTML button only appears when LOCAL_MODE is true
+    // The client function nls() always exists
+  });
+
+  it('debug=true in client script', () => {
+    expect(renderViewerHomePage(true)).toContain('debug=true');
   });
 });
 
@@ -167,7 +235,8 @@ describe('xterm script guard flags', () => {
     const html = renderXtermSessionPage('demo-session');
     expect(html).toContain('evt.code === 4004');
     expect(html).toContain('Session not found');
-    expect(html).toContain('setTimeout(connect, 2000)');
+    expect(html).toContain('reconnectAttempt');
+    expect(html).toContain('maxReconnectAttempts');
   });
 });
 

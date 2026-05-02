@@ -123,7 +123,9 @@ describe('viewer UI contracts', () => {
 
     expect(html).toContain("rawOffset=' + knownRawChars");
     expect(html).toContain("knownRawChars += offsetDecoder.decode(chunk, { stream: true }).length;");
-    expect(html).toContain("reconnectTimer = setTimeout(connect, 2000);");
+    expect(html).toContain('reconnectAttempt += 1;');
+    expect(html).toContain('maxReconnectAttempts');
+    expect(html).toContain('Math.pow(1.5, reconnectAttempt - 1)');
     expect(html).toContain("ws.binaryType = 'arraybuffer';");
   });
 });

@@ -45,8 +45,7 @@ export function renderInteractiveAttachPage(options: InteractiveAttachPageOption
       <a href="${options.baseUrl}" class="btn">Home</a>
       <select id="actor" class="actor">
         <option value="user"${options.actor === 'user' ? ' selected' : ''}>user</option>
-        <option value="codex"${options.actor === 'codex' ? ' selected' : ''}>codex</option>
-        <option value="claude"${options.actor === 'claude' ? ' selected' : ''}>claude</option>
+        <option value="agent"${options.actor === 'agent' ? ' selected' : ''}>agent</option>
       </select>
       <button id="focusBtn" class="btn primary" type="button">Focus</button>
       <button data-control="ctrl_c" class="btn" type="button">Ctrl+C</button>
@@ -56,7 +55,7 @@ export function renderInteractiveAttachPage(options: InteractiveAttachPageOption
   </div>
 
   <div class="page">
-    <div class="notice">Browser attach beta: this page shares the same SSH PTY with AI and supports manual input, but it normalizes ANSI/cursor control for web display. For highest terminal fidelity, continue to use the terminal attach viewer.</div>
+    <div class="notice">Legacy browser view — this page is kept for compatibility. For the best experience, use the <a href="${options.baseUrl}" style="color:inherit;text-decoration:underline">Terminal</a> page instead.</div>
     <div class="terminal-shell" id="terminalShell">
       <div class="terminal-wrap" id="terminalWrap">
         <pre id="terminal" class="terminal" tabindex="0">Connecting...</pre>

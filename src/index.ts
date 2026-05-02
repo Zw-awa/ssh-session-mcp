@@ -13,6 +13,20 @@ import {
   removeServerInfoState,
   logServerEvent,
   DEFAULT_IDLE_SWEEP_MS,
+  LOCAL_MODE,
+  actualViewerPort,
+  sessions,
+  setActiveSession,
+  getViewerBaseUrl,
+  tuning,
+  buildSessionMetadata,
+  openSSHSession,
+  DEFAULT_COLS,
+  DEFAULT_ROWS,
+  DEFAULT_TERM,
+  DEFAULT_TIMEOUT,
+  DEFAULT_CLOSED_RETENTION_MS,
+  delay,
   WebSocket,
 } from './server-state.js';
 
@@ -31,6 +45,61 @@ async function main() {
 
   const transport = new StdioServerTransport();
   await server.connect(transport);
+
+  // ── Local debug mode: auto-create a session so the user can test immediately ──
+  if (LOCAL_MODE) {
+    try {
+      const sessionId = crypto.randomUUID();
+      const nm = 'local-' + sessionId.slice(0, 8);
+      const metadata = buildSessionMetadata({
+        profileSource: 'manual',
+        sessionId,
+        sessionName: nm,
+      });
+      const session = await openSSHSession({
+        cols: DEFAULT_COLS,
+        closedRetentionMs: DEFAULT_CLOSED_RETENTION_MS,
+        host: 'localhost',
+        idleTimeoutMs: DEFAULT_TIMEOUT,
+        metadata,
+        port: 0,
+        rows: DEFAULT_ROWS,
+        sessionId,
+        sessionName: nm,
+        term: DEFAULT_TERM,
+        user: process.env.USER || process.env.USERNAME || 'local',
+      });
+      sessions.set(sessionId, session);
+      setActiveSession(session);
+
+      // Warm up the local shell so the terminal shows output immediately.
+      // cmd.exe in pipe mode doesn't print a prompt or echo by default;
+      // sending a visible command proves the input/output chain works.
+      const isWin = process.platform === 'win32';
+      await delay(800);
+      session.write(
+        isWin ? 'echo === Local shell ready. Type commands below. ===\r\n' : 'echo "=== Local shell ready. Type commands below. ==="\n',
+        'system',
+      );
+
+      logServerEvent('session.opened', {
+        sessionId,
+        sessionRef: metadata.sessionRef,
+        profileSource: 'local',
+      });
+
+      const viewerUrl = getViewerBaseUrl();
+      if (viewerUrl) {
+        const terminalUrl = `${viewerUrl}/terminal/session/${encodeURIComponent(sessionId)}`;
+        const homeUrl = viewerUrl;
+        console.log(`\n  Local debug session ready.`);
+        console.log(`  Terminal:  ${terminalUrl}`);
+        console.log(`  Home page: ${homeUrl}\n`);
+      }
+    } catch (err) {
+      console.error('Failed to create local debug session:', err);
+    }
+  }
 
   const sweepTimer = setInterval(() => {
     try {

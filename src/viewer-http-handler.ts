@@ -1,34 +1,21 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { randomUUID } from 'node:crypto';
 
 import {
-  sessions,
-  actualViewerPort,
-  resolveSession,
-  resolveAttachTarget,
-  getViewerBaseUrl,
-  buildViewerSessionUrl,
-  createViewerPayload,
-  createViewerBindingPayload,
-  createAttachPayload,
-  parsePositiveQueryInt,
-  parseOptionalNonNegativeQueryInt,
-  parseNonNegativeQueryInt,
-  parseBooleanQuery,
-  readJsonRequestBody,
-  sanitizeActor,
-  sanitizePositiveInt,
-  logSessionEvent,
-  DEFAULT_DASHBOARD_WIDTH,
-  DEFAULT_DASHBOARD_HEIGHT,
-  DEFAULT_DASHBOARD_LEFT_CHARS,
-  DEFAULT_DASHBOARD_RIGHT_EVENTS,
-  INSTANCE_ID,
-  PROFILES,
-  sweepSessions,
-  refreshActiveSession,
-  type SessionWriteRecord,
-  McpError,
-  ErrorCode,
+  sessions, actualViewerPort, resolveSession, resolveAttachTarget,
+  getViewerBaseUrl, buildViewerSessionUrl, createViewerPayload,
+  createViewerBindingPayload, createAttachPayload,
+  parsePositiveQueryInt, parseOptionalNonNegativeQueryInt,
+  parseNonNegativeQueryInt, parseBooleanQuery, readJsonRequestBody,
+  sanitizeActor, sanitizePositiveInt, logSessionEvent,
+  DEFAULT_DASHBOARD_WIDTH, DEFAULT_DASHBOARD_HEIGHT,
+  DEFAULT_DASHBOARD_LEFT_CHARS, DEFAULT_DASHBOARD_RIGHT_EVENTS,
+  INSTANCE_ID, PROFILES, DEBUG_MODE, LOCAL_MODE,
+  sweepSessions, refreshActiveSession, buildSessionDiagnostics,
+  openSSHSession, buildSessionMetadata, setActiveSession,
+  DEFAULT_COLS, DEFAULT_ROWS, DEFAULT_TERM,
+  DEFAULT_TIMEOUT, DEFAULT_CLOSED_RETENTION_MS,
+  type SessionWriteRecord, McpError, ErrorCode,
 } from './server-state.js';
 import {
   renderViewerHomePage,
@@ -293,9 +280,79 @@ function handleSessionApiRequest(sessionRef: string, url: URL, writers: ViewerRe
   try {
     const session = resolveSession(sessionRef);
     writers.writeJson(200, createViewerPayload(session, parseViewerSnapshotOptions(url.searchParams)));
-  } catch (error) {
-    writers.writeError(404, error);
-  }
+  } catch (error) { writers.writeError(404, error); }
+}
+
+function handleSessionCloseRequest(sessionRef: string, writers: ViewerResponseWriters) {
+  try {
+    const s = resolveSession(sessionRef);
+    s.close(); sessions.delete(s.sessionId); sweepSessions();
+    writers.writeJson(200, { ok: true, closed: s.metadata.sessionRef || s.sessionId });
+  } catch (error) { writers.writeError(404, error); }
+}
+
+function handleSessionDiagnosticsRequest(sessionRef: string, writers: ViewerResponseWriters) {
+  try { writers.writeJson(200, buildSessionDiagnostics(resolveSession(sessionRef))); }
+  catch (error) { writers.writeError(404, error); }
+}
+
+function handleSessionHistoryRequest(sessionRef: string, url: URL, writers: ViewerResponseWriters) {
+  try {
+    const s = resolveSession(sessionRef);
+    const m = parsePositiveQueryInt(url.searchParams.get('maxLines'), 40);
+    const snap = s.readHistory(undefined, m);
+    writers.writeJson(200, { sessionRef: s.metadata.sessionRef, lines: snap.lines, view: snap.view,
+      availableStart: snap.availableStart, availableEnd: snap.availableEnd,
+      truncatedBefore: snap.truncatedBefore, truncatedAfter: snap.truncatedAfter });
+  } catch (error) { writers.writeError(404, error); }
+}
+
+async function handleSessionAgentInputRequest(sessionRef: string, writers: ViewerResponseWriters, request?: IncomingMessage) {
+  if (!DEBUG_MODE) { writers.writeError(403, new McpError(ErrorCode.InvalidRequest, 'debug only')); return; }
+  try {
+    const s = resolveSession(sessionRef);
+    const body = request ? await readJsonRequestBody(request) : {};
+    const cmd = typeof body.command === 'string' ? body.command.trim() : '';
+    if (!cmd) { writers.writeError(400, new McpError(ErrorCode.InvalidRequest, 'command required')); return; }
+    if (s.inputLock === 'user') { writers.writeError(403, new McpError(ErrorCode.InvalidRequest, 'Input locked by user. Switch to common or agent mode first.')); return; }
+    s.inputLock = 'agent';
+    s.write(cmd + '\n', 'agent');
+    s.inputLock = 'none';
+    writers.writeJson(200, { ok: true, sent: cmd, sessionRef: s.metadata.sessionRef });
+  } catch (error) { writers.writeError(404, error); }
+}
+
+async function handleSessionControlRequest(sessionRef: string, writers: ViewerResponseWriters, request?: IncomingMessage) {
+  if (!DEBUG_MODE) { writers.writeError(403, new McpError(ErrorCode.InvalidRequest, 'debug only')); return; }
+  try {
+    const s = resolveSession(sessionRef);
+    const body = request ? await readJsonRequestBody(request) : {};
+    const key = typeof body.key === 'string' ? body.key : '';
+    if (!['ctrl_c','ctrl_d','enter','tab','esc','up','down','left','right','backspace'].includes(key))
+      { writers.writeError(400, new McpError(ErrorCode.InvalidRequest, 'invalid key')); return; }
+    s.sendControl(key as any, 'agent');
+    writers.writeJson(200, { ok: true, key, sessionRef: s.metadata.sessionRef });
+  } catch (error) { writers.writeError(404, error); }
+}
+
+function handleSessionSetActiveRequest(sessionRef: string, writers: ViewerResponseWriters) {
+  try { setActiveSession(resolveSession(sessionRef)); writers.writeJson(200, { ok: true }); }
+  catch (error) { writers.writeError(404, error); }
+}
+
+async function handleSessionsCreateRequest(writers: ViewerResponseWriters) {
+  if (!LOCAL_MODE) { writers.writeError(400, new McpError(ErrorCode.InvalidRequest, 'local only')); return; }
+  try {
+    const sid = randomUUID();
+    const nm = 'local-' + sid.slice(0, 8);
+    const m = buildSessionMetadata({ profileSource: 'manual', sessionId: sid, sessionName: nm });
+    const s = await openSSHSession({ cols: DEFAULT_COLS, closedRetentionMs: DEFAULT_CLOSED_RETENTION_MS,
+      host: 'localhost', idleTimeoutMs: DEFAULT_TIMEOUT, metadata: m, port: 0,
+      rows: DEFAULT_ROWS, sessionId: sid, sessionName: nm, term: DEFAULT_TERM,
+      user: process.env.USER || process.env.USERNAME || 'local' });
+    sessions.set(sid, s); setActiveSession(s);
+    writers.writeJson(201, { ok: true, session: s.summary(), viewerUrl: buildViewerSessionUrl(s) });
+  } catch (error) { writers.writeError(500, error); }
 }
 
 function handleViewerBindingApiRequest(bindingKey: string, url: URL, writers: ViewerResponseWriters) {
@@ -346,7 +403,28 @@ export async function handleViewerHttpRequest(request: IncomingMessage, response
       writers.writeHtml(200, renderViewerBindingPage(route.bindingKey));
       return;
     case 'home-page':
-      writers.writeHtml(200, renderViewerHomePage());
+      writers.writeHtml(200, renderViewerHomePage(DEBUG_MODE));
+      return;
+    case 'session-close':
+      handleSessionCloseRequest(route.sessionRef, writers);
+      return;
+    case 'session-diagnostics':
+      handleSessionDiagnosticsRequest(route.sessionRef, writers);
+      return;
+    case 'session-history':
+      handleSessionHistoryRequest(route.sessionRef, url, writers);
+      return;
+    case 'session-agent-input':
+      await handleSessionAgentInputRequest(route.sessionRef, writers, request);
+      return;
+    case 'session-control':
+      await handleSessionControlRequest(route.sessionRef, writers, request);
+      return;
+    case 'session-set-active':
+      handleSessionSetActiveRequest(route.sessionRef, writers);
+      return;
+    case 'sessions-create':
+      await handleSessionsCreateRequest(writers);
       return;
     case 'not-found':
       writers.writeText(404, 'Not found');

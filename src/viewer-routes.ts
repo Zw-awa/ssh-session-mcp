@@ -8,6 +8,13 @@ export type ViewerHttpRoute =
   | { type: 'attach-input'; kind: ViewerAttachKind; ref: string }
   | { type: 'attach-resize'; kind: ViewerAttachKind; ref: string }
   | { type: 'session-api'; sessionRef: string }
+  | { type: 'session-close'; sessionRef: string }
+  | { type: 'session-diagnostics'; sessionRef: string }
+  | { type: 'session-history'; sessionRef: string }
+  | { type: 'session-agent-input'; sessionRef: string }
+  | { type: 'session-control'; sessionRef: string }
+  | { type: 'session-set-active'; sessionRef: string }
+  | { type: 'sessions-create' }
   | { type: 'viewer-binding-api'; bindingKey: string }
   | { type: 'terminal-session-page'; sessionRef: string }
   | { type: 'terminal-binding-page'; bindingKey: string }
@@ -60,6 +67,7 @@ export function matchViewerHttpRoute(method: string | undefined, pathname: strin
   }
 
   if (pathname === '/api/sessions') {
+    if (normalizedMethod === 'POST') return { type: 'sessions-create' };
     return { type: 'sessions-api' };
   }
 
@@ -85,10 +93,20 @@ export function matchViewerHttpRoute(method: string | undefined, pathname: strin
   }
 
   if (pathname.startsWith('/api/session/')) {
-    return {
-      type: 'session-api',
-      sessionRef: decodeURIComponent(pathname.slice('/api/session/'.length)),
-    };
+    const rest = decodeURIComponent(pathname.slice('/api/session/'.length));
+    if (rest.endsWith('/close') && normalizedMethod === 'POST')
+      return { type: 'session-close', sessionRef: rest.slice(0, -6) };
+    if (rest.endsWith('/diagnostics'))
+      return { type: 'session-diagnostics', sessionRef: rest.slice(0, -12) };
+    if (rest.endsWith('/history'))
+      return { type: 'session-history', sessionRef: rest.slice(0, -8) };
+    if (rest.endsWith('/agent-input') && normalizedMethod === 'POST')
+      return { type: 'session-agent-input', sessionRef: rest.slice(0, -12) };
+    if (rest.endsWith('/control') && normalizedMethod === 'POST')
+      return { type: 'session-control', sessionRef: rest.slice(0, -8) };
+    if (rest.endsWith('/set-active') && normalizedMethod === 'POST')
+      return { type: 'session-set-active', sessionRef: rest.slice(0, -11) };
+    return { type: 'session-api', sessionRef: rest };
   }
 
   if (pathname.startsWith('/api/viewer-binding/')) {

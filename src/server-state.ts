@@ -67,6 +67,7 @@ import {
 } from './validation.js';
 
 import { tryParseCommandOutput } from './parsers.js';
+import { LocalShellStream, LocalConnection } from './local-shell.js';
 
 // ── Re-exports for other modules ─────────────────────────────────────────────
 
@@ -286,6 +287,12 @@ export const LOG_CONFIG = resolveLoggerConfig(
   RUNTIME_PATHS.logDir,
 );
 export const SSH_CONNECT_TIMEOUT_MS = 30000;
+export const LOCAL_MODE = 'local' in argvConfig
+  || process.env.SSH_MCP_LOCAL === 'true'
+  || process.env.SSH_MCP_LOCAL === '1';
+export const DEBUG_MODE = 'debug' in argvConfig
+  || process.env.SSH_MCP_DEBUG === 'true'
+  || process.env.SSH_MCP_DEBUG === '1';
 export const AUTO_OPEN_TERMINAL = argvConfig.autoOpenTerminal === 'true'
   || argvConfig.autoOpenTerminal === '1'
   || process.env.AUTO_OPEN_TERMINAL === 'true'
@@ -341,6 +348,7 @@ export function validateConfig(config: Record<string, string | null>) {
     'autoOpenTerminal',
     'mode', 'useMarker',
     'instance', 'config',
+    'local', 'debug',
     'logMode', 'logDir',
   ]);
 
@@ -1165,6 +1173,29 @@ export async function openSSHSession(options: {
   term: string;
   user: string;
 }) {
+  // ── Local debug mode: spawn a local shell instead of connecting via SSH ──
+  if (LOCAL_MODE) {
+    const stream = new LocalShellStream();
+    const connection = new LocalConnection();
+
+    return new SSHSession(
+      options.sessionId,
+      options.sessionName,
+      options.metadata,
+      'localhost',
+      0,
+      process.env.USER || process.env.USERNAME || 'local',
+      options.cols,
+      options.rows,
+      options.term,
+      options.idleTimeoutMs,
+      options.closedRetentionMs,
+      tuning,
+      connection as unknown as SSHConnection,
+      stream as unknown as any,
+    );
+  }
+
   const sshConfig: SSHConfig = {
     host: options.host,
     port: options.port,

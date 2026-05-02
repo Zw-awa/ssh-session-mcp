@@ -60,6 +60,16 @@ describe('viewer routes', () => {
     expect(matchViewerHttpRoute('GET', '/missing')).toEqual({ type: 'not-found' });
   });
 
+  it('matches new debug session routes', () => {
+    expect(matchViewerHttpRoute('POST', '/api/session/abc/close')).toEqual({ type: 'session-close', sessionRef: 'abc' });
+    expect(matchViewerHttpRoute('GET', '/api/session/abc/diagnostics')).toEqual({ type: 'session-diagnostics', sessionRef: 'abc' });
+    expect(matchViewerHttpRoute('GET', '/api/session/abc/history')).toEqual({ type: 'session-history', sessionRef: 'abc' });
+    expect(matchViewerHttpRoute('POST', '/api/session/abc/agent-input')).toEqual({ type: 'session-agent-input', sessionRef: 'abc' });
+    expect(matchViewerHttpRoute('POST', '/api/sessions')).toEqual({ type: 'sessions-create' });
+    // Session API still matches bare path
+    expect(matchViewerHttpRoute('GET', '/api/session/abc')).toEqual({ type: 'session-api', sessionRef: 'abc' });
+  });
+
   it('matches websocket attach routes and rejects unrelated paths', () => {
     expect(matchViewerWsRoute('/ws/attach/session/demo%20session')).toEqual({
       kind: 'session',

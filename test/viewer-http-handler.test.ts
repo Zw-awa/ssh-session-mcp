@@ -604,4 +604,61 @@ describe('viewer http handler', () => {
     expect(missingState.headers['content-type']).toContain('text/plain');
     expect(missingState.body).toBe('Not found');
   });
+
+  it('handles session close, diagnostics, and history endpoints', async () => {
+    setActualViewerPort(8793);
+    const session = createMockSession({ close: vi.fn() });
+    sessions.set('demo-session', session as any);
+
+    // Close: removes session
+    const { response: closeRes, state: closeState } = createMockResponse();
+    await handleViewerHttpRequest(createMockRequest('/api/session/demo-session/close', { method: 'POST' }), closeRes);
+    expect(closeState.statusCode).toBe(200);
+    expect(JSON.parse(closeState.body).ok).toBe(true);
+    expect(sessions.has('demo-session')).toBe(false);
+
+    // Re-create for diagnostics test
+    const s2 = createMockSession();
+    (s2 as any).historyStats = vi.fn(() => ({ lineStart: 1, lineEnd: 2, pendingOutput: false }));
+    (s2 as any).buffer = '';
+    sessions.set('demo-session', s2 as any);
+
+    // Diagnostics: returns JSON
+    const { response: diagRes, state: diagState } = createMockResponse();
+    await handleViewerHttpRequest(createMockRequest('/api/session/demo-session/diagnostics'), diagRes);
+    expect(diagState.statusCode).toBe(200);
+    const diag = JSON.parse(diagState.body);
+    expect(diag.session).toBeDefined();
+    expect(diag.terminalMode).toBeDefined();
+
+    // History: requires readHistory mock
+    const s3 = createMockSession();
+    (s3 as any).readHistory = vi.fn(() => ({
+      lines: [{ line: 1, text: 'hello', type: 'output', at: '2026-01-01T00:00:00Z' }],
+      view: '    1  hello',
+      availableStart: 1, availableEnd: 2, truncatedBefore: false, truncatedAfter: false,
+    }));
+    sessions.set('demo-session', s3 as any);
+
+    const { response: histRes, state: histState } = createMockResponse();
+    await handleViewerHttpRequest(createMockRequest('/api/session/demo-session/history?maxLines=10'), histRes);
+    expect(histState.statusCode).toBe(200);
+    const hist = JSON.parse(histState.body);
+    expect(hist.sessionRef).toBeDefined();
+    expect(Array.isArray(hist.lines)).toBe(true);
+    expect(hist.lines.length).toBe(1);
+  });
+
+  it('blocks agent-input endpoint when --debug is not active', async () => {
+    const session = createMockSession();
+    sessions.set('demo-session', session as any);
+
+    const { response, state } = createMockResponse();
+    await handleViewerHttpRequest(
+      createMockRequest('/api/session/demo-session/agent-input', { method: 'POST', body: JSON.stringify({ command: 'echo test' }) }),
+      response,
+    );
+    expect(state.statusCode).toBe(403);
+    expect(JSON.parse(state.body).error).toContain('debug');
+  });
 });

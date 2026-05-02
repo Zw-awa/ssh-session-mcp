@@ -47,17 +47,16 @@ export function renderXtermTerminalPage(options: XtermTerminalPageOptions) {
       <select id="actorSelect" class="btn" title="Switch input mode: common = both can type, user = only you type (AI blocked), claude/codex = AI types (your input blocked)">
         <option value="common" selected>common</option>
         <option value="user">user</option>
-        <option value="codex">codex</option>
-        <option value="claude">claude</option>
+        <option value="agent">agent</option>
       </select>
       <select id="modeSelect" class="btn" title="Operation mode: safe = blocks dangerous commands, full = AI has full control">
         <option value="safe"${OPERATION_MODE === 'safe' ? ' selected' : ''}>safe</option>
         <option value="full"${OPERATION_MODE === 'full' ? ' selected' : ''}>full</option>
       </select>
-      <span id="lockBadge" class="lock-badge none">unlocked</span>
+      <span id="lockBadge" class="lock-badge none">connecting...</span>
     </div>
   </div>
-  <div id="terminal-container"></div>
+  <div id="terminal-container"><div style="display:flex;align-items:center;justify-content:center;height:100%;color:#91a0b3;font-family:monospace;font-size:14px">Loading terminal\u2026</div></div>
   <div class="status-bar" id="statusBar">Connecting...</div>`,
     bodyExtras: `  <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>

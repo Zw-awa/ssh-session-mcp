@@ -5,7 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [2.6.9] - 2026-04-23
+## [2.7.0] - 2026-04-23
+
+### Added
+- **Local debug mode**: Run with `--local` or `SSH_MCP_LOCAL=true` to spawn a local shell instead of SSH, enabling instant offline testing without a remote host
+- **Debug mode**: Run with `--debug` or `SSH_MCP_DEBUG=true` to enable in-browser agent input, control keys, and session management controls
+- **Viewer home page redesign**: Complete rewrite with AJAX-based soft refresh, session state badges (active/idle/stale/locked), per-session details panel with diagnostics and history, agent command input, and control key buttons (C-c, C-d, arrows, etc.)
+- **New session API endpoints**: `/api/session/:id/close`, `/diagnostics`, `/history`, `/agent-input`, `/control`, `/set-active` for full in-browser session management
+- **One-click local session creation**: "New Local Session" button on home page in local mode
+- **`.gitignore`/`.npmignore`**: Added `ssh-session-mcp.config.json` exclusion to prevent accidental credential leaks
+
+### Changed
+- **Viewer UI polish**: All pages now have smooth CSS animations (fadeIn, pulse, shakeIn), hover/active transitions, focus-visible outlines, and refined status badges
+- **Xterm terminal improvements**: Graceful CDN load failure handling, cursor blink/disableStdin tied to lock state, user-friendly status messages
+- **WebSocket reconnect**: Exponential backoff with 10-attempt cap and clear status messages, instead of unbounded retries
+- **Viewer CLI polling**: Minimum 2-second backoff when server is unavailable to avoid tight polling loops
+- **Instance ID resolution**: Default now uses `proc-<pid>` pattern instead of hardcoded `default`
 
 ### Fixed
 - **ssh-retry command validation**: Added full pre-flight checks (agent lock, command policy, terminal mode) to `ssh-retry` tool, preventing retries from executing during invalid terminal states
