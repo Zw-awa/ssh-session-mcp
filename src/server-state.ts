@@ -204,7 +204,11 @@ export function loadDotEnv() {
         const eqIdx = trimmed.indexOf('=');
         if (eqIdx === -1) continue;
         const key = trimmed.slice(0, eqIdx).trim();
-        const val = trimmed.slice(eqIdx + 1).trim();
+        let val = trimmed.slice(eqIdx + 1).trim();
+        // Strip surrounding single/double quotes from the value
+        if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+          val = val.slice(1, -1);
+        }
         if (key && val && !process.env[key]) {
           process.env[key] = val;
         }
@@ -901,7 +905,8 @@ export function resolveCompletedCommandOutput(entry: RunningCommand, maxChars: n
   };
 }
 
-export function startBackgroundMonitor(entry: RunningCommand, session: SSHSession): void {
+export function startBackgroundMonitor(entry: RunningCommand, session: SSHSession, depth = 0): void {
+  const MAX_BACKGROUND_RETRIES = 12;
   session.waitForCompletion({
     startOffset: entry.startOffset,
     maxWaitMs: 5 * 60 * 1000,
@@ -913,7 +918,19 @@ export function startBackgroundMonitor(entry: RunningCommand, session: SSHSessio
     if (!stored || stored.status !== 'running') return;
 
     if (result.reason === 'timeout') {
-      startBackgroundMonitor(stored, session);
+      if (depth < MAX_BACKGROUND_RETRIES) {
+        startBackgroundMonitor(stored, session, depth + 1);
+      } else {
+        stored.status = 'interrupted';
+        stored.completedAt = Date.now();
+        runningCommands.delete(entry.commandId);
+        logSessionEvent(stored.sessionId, 'command.interrupted', {
+          commandId: stored.commandId,
+          elapsedMs: stored.completedAt - stored.startTime,
+          status: stored.status,
+          ...summarizeCommandMeta(stored.command),
+        });
+      }
       return;
     }
 

@@ -26,7 +26,7 @@ function sanitizeLabel(raw, fallback) {
 }
 
 function resolveInstanceId(raw) {
-  return sanitizeLabel(raw || 'default', 'default');
+  return sanitizeLabel(raw || `proc-${process.pid}`, `proc-${process.pid}`);
 }
 
 function windowsConfigRoot() {

@@ -98,3 +98,5 @@ logs/
 
 .claude/
 Promotion/
+
+ssh-session-mcp.config.json

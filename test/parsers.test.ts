@@ -28,6 +28,21 @@ A  staged.txt
       const result = tryParseCommandOutput('ls -la', 'On branch main');
       expect(result).toBeNull();
     });
+
+    it('parses diverged branch status (ahead and behind)', () => {
+      const output = `On branch feature-x
+Your branch and 'origin/main' have diverged,
+and have 2 and 3 different commits each, respectively.
+  (use "git pull" if you want to integrate the remote branch with yours)
+`;
+      const result = tryParseCommandOutput('git status', output);
+      expect(result).not.toBeNull();
+      expect(result!.type).toBe('git_status');
+      const data = result!.data as any;
+      expect(data.branch).toBe('feature-x');
+      expect(data.ahead).toBe(2);
+      expect(data.behind).toBe(3);
+    });
   });
 
   describe('git log', () => {

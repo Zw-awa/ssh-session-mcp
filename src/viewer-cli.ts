@@ -753,7 +753,8 @@ async function main() {
         cleanupAndExit(0);
       }
 
-      await new Promise(resolve => setTimeout(resolve, Math.min(config.intervalMs, 500)));
+      // Minimum 2 s backoff when the server is unavailable — avoids a tight polling loop.
+      await new Promise(resolve => setTimeout(resolve, Math.max(2000, config.intervalMs)));
     }
   }
 }

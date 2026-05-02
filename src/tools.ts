@@ -1975,6 +1975,104 @@ server.tool(
         }));
       }
 
+      if (target.inputLock === 'agent') {
+        return createJsonToolResponse(applyToolContract({
+          error: 'AGENT_BUSY',
+          lock: 'agent',
+          message: 'Another agent command is already running on this session. Wait for it to complete or use ssh-command-status to check progress.',
+        }, {
+          resultStatus: 'blocked',
+          summary: 'Retry execution was blocked because another agent command is still active.',
+          failureCategory: 'runtime-state-abnormal',
+          nextAction: 'Wait for the running command to finish or check it with ssh-command-status.',
+          evidence: [
+            `sessionRef=${sessionReadRef(target)}`,
+            'inputLock=agent',
+          ],
+        }));
+      }
+
+      // Command validation
+      const retryValidation = validateCommand(command, OPERATION_MODE);
+      if (!retryValidation.allowed) {
+        logSessionEvent(target.sessionId, 'command.blocked', {
+          category: retryValidation.category,
+          operationMode: OPERATION_MODE,
+          ...summarizeCommandMeta(command),
+        });
+        return createJsonToolResponse(applyToolContract({
+          error: 'COMMAND_BLOCKED',
+          category: retryValidation.category,
+          message: retryValidation.message,
+          suggestion: retryValidation.suggestion,
+          operationMode: OPERATION_MODE,
+        }, {
+          resultStatus: 'blocked',
+          summary: 'Retry command blocked by operation mode policy.',
+          failureCategory: 'policy-blocked',
+          nextAction: retryValidation.suggestion || 'Adjust the command or switch the terminal to a more suitable mode.',
+          evidence: [
+            `sessionRef=${sessionReadRef(target)}`,
+            `operationMode=${OPERATION_MODE}`,
+            `category=${retryValidation.category}`,
+          ],
+        }));
+      }
+
+      // Terminal mode checks
+      const retryBufferTail = target.buffer.slice(-2000);
+      const retryTerminalMode = detectTerminalMode(retryBufferTail);
+
+      if (retryTerminalMode === 'password_prompt') {
+        logSessionEvent(target.sessionId, 'command.blocked_password_prompt', {
+          operationMode: OPERATION_MODE,
+          ...summarizeCommandMeta(command),
+        });
+        return createJsonToolResponse(applyToolContract({
+          error: 'PASSWORD_REQUIRED',
+          terminalMode: 'password_prompt',
+          message: 'Terminal is at a password prompt. DO NOT send commands — they will be typed as the password.',
+          suggestion: 'Options: (1) Ask the user to enter the password in the browser terminal. (2) Use ssh-session-control to send ctrl_c to cancel. (3) If you know the password, use ssh-session-send to type it directly.',
+          operationMode: OPERATION_MODE,
+        }, {
+          resultStatus: 'blocked',
+          summary: 'Retry execution was blocked because the terminal is currently waiting for a password.',
+          failureCategory: 'terminal-state-abnormal',
+          nextAction: 'Ask the user to resolve the password prompt or cancel it before continuing.',
+          evidence: [
+            `sessionRef=${sessionReadRef(target)}`,
+            'terminalMode=password_prompt',
+          ],
+        }));
+      }
+
+      if (OPERATION_MODE === 'safe' && (retryTerminalMode === 'editor' || retryTerminalMode === 'pager')) {
+        logSessionEvent(target.sessionId, 'command.blocked_terminal_mode', {
+          operationMode: OPERATION_MODE,
+          terminalMode: retryTerminalMode,
+          ...summarizeCommandMeta(command),
+        });
+        return createJsonToolResponse(applyToolContract({
+          error: 'WRONG_TERMINAL_MODE',
+          terminalMode: retryTerminalMode,
+          message: `Terminal is in ${retryTerminalMode} mode. Cannot execute commands in this state.`,
+          suggestion: retryTerminalMode === 'editor' ? 'Send ctrl_c or ctrl_d via ssh-session-control to exit the editor first.'
+            : 'Send "q" via ssh-session-control to exit the pager first.',
+          operationMode: OPERATION_MODE,
+        }, {
+          resultStatus: 'blocked',
+          summary: `Retry execution was blocked because the terminal is in ${retryTerminalMode} mode.`,
+          failureCategory: 'terminal-state-abnormal',
+          nextAction: retryTerminalMode === 'editor'
+            ? 'Exit the editor before issuing shell commands.'
+            : 'Exit the pager before issuing shell commands.',
+          evidence: [
+            `sessionRef=${sessionReadRef(target)}`,
+            `terminalMode=${retryTerminalMode}`,
+          ],
+        }));
+      }
+
       target.inputLock = 'agent';
       broadcastLock(target);
 

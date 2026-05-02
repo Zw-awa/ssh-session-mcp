@@ -54,10 +54,16 @@ function parseGitStatus(output: string): GitStatusResult | null {
     } else if (line.match(/^\s+new file:/)) {
       const f = line.replace(/^\s+new file:\s+/, '');
       result.staged.push(f);
-    } else if (line.match(/^\s+deleted:/)) {
+    } else     if (line.match(/^\s+deleted:/)) {
       const f = line.replace(/^\s+deleted:\s+/, '');
       result.deleted.push(f);
     }
+  }
+
+  // Diverged branches span two lines, check the full output text
+  if (result.ahead === undefined && result.behind === undefined) {
+    const diverged = /have diverged[,\n][\s\S]*?have (\d+) and (\d+) different commits/.exec(output);
+    if (diverged) { result.ahead = parseInt(diverged[1]); result.behind = parseInt(diverged[2]); }
   }
 
   return result;

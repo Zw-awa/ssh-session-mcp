@@ -44,6 +44,8 @@ export function renderXtermSetupSection(options: {
     var scrollTimer = null;
     var offsetDecoder = null;
     var destroyed = false;
+    var settingModeFromServer = false;
+    var settingLockFromServer = false;
 
     function addCleanup(fn) {
       cleanupFns.push(fn);
@@ -90,11 +92,13 @@ ${renderSharedViewerScriptHelpers({
         lockBadge.textContent = 'unlocked';
         lockBadge.className = 'lock-badge none';
       }
+      settingLockFromServer = true;
       if (lock === 'user' && actorSelect.value !== 'user') {
         actorSelect.value = 'user';
       } else if (lock === 'none' && actorSelect.value !== 'common') {
         actorSelect.value = 'common';
       }
+      settingLockFromServer = false;
     }
 
     function setStatus(text, theme) {
@@ -194,7 +198,9 @@ export function renderXtermConnectionSection() {
             updateLockUI(msg.lock);
           }
           if (msg.type === 'mode') {
+            settingModeFromServer = true;
             modeSelect.value = msg.mode;
+            settingModeFromServer = false;
           }
           if (msg.type === 'lock_rejected') {
             setStatus(getInputBlockedStatusText(), 'locked');
@@ -202,9 +208,13 @@ export function renderXtermConnectionSection() {
         } catch(e) {}
       };
 
-      ws.onclose = function() {
+      ws.onclose = function(evt) {
         if (destroyed) return;
         connDot.className = 'conn-dot disconnected';
+        if (evt && evt.code === 4004) {
+          setStatus('Session not found. The SSH session may have been closed or does not exist.', 'error');
+          return;
+        }
         setStatus('Disconnected. Reconnecting...', 'error');
         reconnectTimer = setTimeout(connect, 2000);
       };
@@ -275,7 +285,7 @@ export function renderXtermLifecycleSection() {
     }
 
     function handleActorChange() {
-      if (destroyed) return;
+      if (destroyed || settingLockFromServer) return;
       var lockMode = getLockMode();
       if (lockMode === 'common') {
         sendJson({ type: 'lock', lock: 'none' });
@@ -294,7 +304,7 @@ export function renderXtermLifecycleSection() {
     }
 
     function handleModeChange() {
-      if (destroyed) return;
+      if (destroyed || settingModeFromServer) return;
       var newMode = modeSelect.value;
       if (newMode === 'full') {
         var confirmed = confirm('Warning: Full mode allows AI to execute dangerous commands (rm -rf, mkfs, etc.) without blocking.\\n\\nAre you sure you want to switch to full mode?');

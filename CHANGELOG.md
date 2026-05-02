@@ -5,7 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [2.6.8] - 2026-04-23
+## [2.6.9] - 2026-04-23
+
+### Fixed
+- **ssh-retry command validation**: Added full pre-flight checks (agent lock, command policy, terminal mode) to `ssh-retry` tool, preventing retries from executing during invalid terminal states
+- **Background command timeout**: Added retry cap (12 attempts) to background command monitor, preventing infinite retry loops on persistent timeouts
+- **Command validation regex**: Improved `rm -rf`/`nohup`/`&` pattern matching to reduce false positives with long options and quoted strings
+- **WebSocket mode broadcast**: Fixed `broadcastModeChange` to only notify clients attached to the matching session instead of every connected viewer
+- **Viewer UI setting loops**: Added `settingModeFromServer`/`settingLockFromServer` guards to prevent UI event handlers from firing during server-initiated changes
+- **Viewer reconnect handling**: Added proper handling for WebSocket close code 4004 (session not found) with user-friendly message
+- **.env value parsing**: Stripped surrounding quotes from `.env` values to correctly load quoted environment variables
+
+### Added
+- **Git status diverged branch detection**: `parseGitStatus` now detects diverged branch states from git output
 
 ### Fixed
 - **Multi-line command sentinel handling**: Fixed sentinel marker handling for multi-line commands (heredoc, Python scripts) with proper newline handling and CR/LF/CRLF line ending support

@@ -190,3 +190,5 @@ logs/
 # Release documentation (auto-generated)
 releases/
 Promotion/
+
+ssh-session-mcp.config.json

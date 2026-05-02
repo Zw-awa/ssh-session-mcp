@@ -80,15 +80,41 @@ describe('validateCommand', () => {
       expect(result.suggestion).toBeDefined();
     });
 
+    it('blocks rm -fr variant', () => {
+      expect(validateCommand('rm -fr /tmp/cache', 'safe').allowed).toBe(false);
+      expect(validateCommand('rm -Rf /tmp/cache', 'safe').allowed).toBe(false);
+    });
+
+    it('does not block rm with long option containing r and f', () => {
+      // Regression: --reference contains -ref which has 'r' then 'f' but is not -rf
+      expect(validateCommand('rm file --reference=foo', 'safe').allowed).toBe(true);
+    });
+
     it('blocks tail -f', () => {
       const result = validateCommand('tail -f /var/log/syslog', 'safe');
       expect(result.allowed).toBe(false);
       expect(result.category).toBe('streaming');
     });
 
-    it('blocks nohup', () => {
+    it('blocks nohup at command start', () => {
       const result = validateCommand('nohup ./server &', 'safe');
       expect(result.allowed).toBe(false);
+    });
+
+    it('does not block nohup inside quoted strings', () => {
+      // Regression: "echo nohup" should not be treated as a background command
+      expect(validateCommand('echo "nohup"', 'safe').allowed).toBe(true);
+      expect(validateCommand("echo something about nohup", 'safe').allowed).toBe(true);
+    });
+
+    it('blocks trailing & for background processes', () => {
+      expect(validateCommand('./server &', 'safe').allowed).toBe(false);
+      expect(validateCommand('sleep 100 &', 'safe').allowed).toBe(false);
+    });
+
+    it('does not block trailing & inside quotes', () => {
+      // Regression: & inside quoted strings should not be treated as background indicator
+      expect(validateCommand('echo "foo & bar"', 'safe').allowed).toBe(true);
     });
 
     it('blocks interactive editors', () => {

@@ -99,6 +99,7 @@ function createMockSession(overrides: Partial<Record<string, unknown>> = {}) {
 let handleWsAttach: typeof import('../src/viewer-ws-handler.js').handleWsAttach;
 let sessions: typeof import('../src/server-state.js').sessions;
 let viewerBindings: typeof import('../src/server-state.js').viewerBindings;
+let viewerClientSessions: typeof import('../src/server-state.js').viewerClientSessions;
 let setViewerWss: typeof import('../src/server-state.js').setViewerWss;
 let setOperationMode: typeof import('../src/server-state.js').setOperationMode;
 
@@ -131,6 +132,7 @@ beforeAll(async () => {
   const serverState = await import('../src/server-state.js');
   sessions = serverState.sessions;
   viewerBindings = serverState.viewerBindings;
+  viewerClientSessions = serverState.viewerClientSessions;
   setViewerWss = serverState.setViewerWss;
   setOperationMode = serverState.setOperationMode;
 
@@ -412,19 +414,21 @@ describe('viewer ws handler', () => {
     expect(peerPayloads.some(payload => payload.type === 'lock')).toBe(false);
   });
 
-  it('broadcasts mode changes to other open viewer websocket clients', () => {
+  it('broadcasts mode changes only to viewers attached to the same session', () => {
     const session = createMockSession();
     sessions.set('demo-session', session as any);
     const ws = new FakeWebSocket();
     const sendA = vi.fn();
     const sendB = vi.fn();
 
+    // Register both clients in viewerClientSessions so broadcastModeChange can filter
+    const clientA = { readyState: 1, send: sendA };
+    const clientB = { readyState: 0, send: sendB };
     setViewerWss({
-      clients: new Set([
-        { readyState: 1, send: sendA },
-        { readyState: 0, send: sendB },
-      ]),
+      clients: new Set([clientA, clientB]),
     } as any);
+    // Client A belongs to this session, client B does not
+    viewerClientSessions.set(clientA as any, 'demo-session');
 
     handleWsAttach(ws as any, 'session', 'demo-session');
     ws.emit('message', Buffer.from(JSON.stringify({

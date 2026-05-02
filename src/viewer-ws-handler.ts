@@ -106,6 +106,10 @@ function broadcastModeChange(sessionId: string) {
     if (client.readyState !== WebSocket.OPEN) {
       continue;
     }
+    // Only notify clients attached to the same session, not every connected viewer.
+    if (viewerClientSessions.get(client) !== sessionId) {
+      continue;
+    }
     try {
       client.send(modeMsg);
     } catch {

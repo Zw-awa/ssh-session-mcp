@@ -58,11 +58,16 @@ const ALWAYS_BLOCKED: PatternEntry[] = [
 ];
 
 const SAFE_MODE_BLOCKED: PatternEntry[] = [
-  { pattern: /\brm\s+.*-[a-zA-Z]*r[a-zA-Z]*f/, category: 'dangerous', message: 'Recursive force delete', suggestion: 'Ask the user to run this command manually in the browser terminal.' },
+  // Match rm with a single short flag containing both r and f (e.g. -rf, -fr, -Rf).
+  // Uses a negative lookahead to skip long options like --reference.
+  { pattern: /\brm\s+.*-(?![a-zA-Z]{4,})(?=[a-zA-Z]*[rR])[a-zA-Z]*[fF]/, category: 'dangerous', message: 'Recursive force delete', suggestion: 'Ask the user to run this command manually in the browser terminal.' },
   { pattern: /\bmkfs\b/, category: 'dangerous', message: 'Filesystem format command', suggestion: 'Ask the user to run this command manually.' },
   { pattern: /\btail\s+.*-[a-zA-Z]*f/, category: 'streaming', message: 'Streaming tail command will not terminate', suggestion: 'Use tail without -f, or use tail -n to get last N lines.' },
-  { pattern: /\bnohup\b/, category: 'long_running', message: 'Background process via nohup', suggestion: 'Ask the user to run background processes manually in the browser terminal.' },
-  { pattern: /&\s*$/, category: 'long_running', message: 'Background process (trailing &)', suggestion: 'Remove the trailing & or ask the user to run it manually.' },
+  // Only match nohup at the start of a command, not inside quoted strings or comments.
+  { pattern: /^\s*nohup\b/, category: 'long_running', message: 'Background process via nohup', suggestion: 'Ask the user to run background processes manually in the browser terminal.' },
+  // Trailing & as background indicator: must not be inside quotes. Use negative lookbehind
+  // to avoid matching & when preceded by a quote char on the same line.
+  { pattern: /(?<![`"'])\s*&\s*$/, category: 'long_running', message: 'Background process (trailing &)', suggestion: 'Remove the trailing & or ask the user to run it manually.' },
   { pattern: /\bwatch\s+/, category: 'streaming', message: 'watch command runs indefinitely', suggestion: 'Run the underlying command once instead of using watch.' },
 ];
 
