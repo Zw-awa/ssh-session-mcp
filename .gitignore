@@ -192,5 +192,7 @@ releases/
 Promotion/
 
 ssh-session-mcp.config.json
-docs/
+docs/*
+!docs/examples/
+!docs/examples/**
 releases/

@@ -49,7 +49,9 @@ local.config.json
 dev.config.json
 
 # Local design docs
-docs/
+docs/*
+!docs/examples/
+!docs/examples/**
 
 .github/
 .vscode/
@@ -100,5 +102,7 @@ logs/
 Promotion/
 
 ssh-session-mcp.config.json
-docs/
+docs/*
+!docs/examples/
+!docs/examples/**
 releases/
