@@ -7,62 +7,96 @@
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.9.2-blue)](https://www.typescriptlang.org/)
 [![npm version](https://img.shields.io/npm/v/ssh-session-mcp)](https://www.npmjs.com/package/ssh-session-mcp)
 
-Persistent SSH PTY session manager for MCP clients. Users and AI agents share one SSH terminal — AI sends commands via MCP tools, users type in the browser terminal, input sources are visually distinguished.
+`ssh-session-mcp` is a persistent SSH PTY session manager for MCP clients. It gives the user and the AI the same terminal session, adds a browser viewer, tracks who typed what, and keeps long-running SSH work manageable instead of stateless.
 
-## Features
+![ssh-session-mcp hero demo](https://raw.githubusercontent.com/Zw-awa/ssh-session-mcp/main/site/assets/hero-loop.gif)
 
-- **Shared SSH Terminal**: One PTY, shared by user and AI, with input lock to prevent conflicts
-- **Multi-device / Multi-connection**: One MCP instance can manage multiple device profiles, and each device can keep multiple named SSH connections
-- **Per-AI isolation by instance**: Run separate stdio MCP processes with different `SSH_MCP_INSTANCE` values so multiple AI agents do not interfere with each other
-- **Terminal / Browser split**: Terminal mode is raw PTY passthrough; browser mode provides richer controls and status UI
-- **xterm.js Browser Terminal**: Real terminal emulator in the browser with WebSocket streaming
-- **Intelligent Command Completion**: Prompt detection + idle timeout + deterministic sentinel markers for reliable output capture
-- **Safety Modes**: Safe/Full operation modes with dangerous command blocking and terminal state awareness
-- **Async Command Tracking**: Long-running commands auto-transition to async with polling support
-- **Structured Output Parsing**: Automatic JSON parsing for common commands (git status, git log, ls -la)
-- **Retry with Backoff**: Built-in `ssh-retry` tool for flaky commands with exponential/fixed backoff
-- **Session Diagnostics**: `ssh-session-diagnostics` reports terminal mode, lock state, viewer state, running command metadata, and buffer trim warnings
-- **Line History Recall**: `ssh-session-history` provides line-numbered history across SSH output, agent input, user input, and lifecycle events
-- **File-Only Meta Logging**: Optional JSONL logs record session/viewer/command metadata locally without writing transcripts to MCP stdio
-- **Input Lock**: User/AI/Common mode switch prevents simultaneous input conflicts
-- **Actor Tracking**: Color-coded input source markers (user/codex/claude) in the status bar
-- **Auto Cleanup**: Idle timeout, graceful shutdown, no orphan processes
+## Why It Exists
+
+Most SSH-oriented MCP servers can execute commands, but they do not manage terminal state well enough for real collaboration.
+
+`ssh-session-mcp` focuses on the missing runtime layer:
+
+- One shared PTY for both the human and the AI
+- Browser terminal for live inspection and manual intervention
+- Input lock so the AI does not type over the user
+- Safe/full execution modes for risky commands
+- Async command tracking for long-running remote work
+- Multi-device and multi-connection profile support
+- Local debug mode for demos, offline testing, and prompt iteration
+
+## Best Fit
+
+- AI-assisted remote development on Linux boards and SSH servers
+- Embedded, ROS, training, and deployment hosts that need a real terminal
+- Users who want the AI to help, but do not want to surrender the terminal
+- MCP Marketplace listings where the install and demo path must be clear
 
 ## Quick Start
 
-### 1. Install
+### 1. Fastest Local Demo
 
 ```bash
 npm install -g ssh-session-mcp
+ssh-session-mcp-ctl launch --local --viewerPort=auto
 ```
 
-Or from source:
+This starts a local shell instead of SSH and opens the browser terminal, which is the easiest way to test the MCP runtime before touching a real server.
+
+### 2. Register As An MCP Server
+
+Use the MCP server binary directly when wiring a client:
 
 ```bash
-git clone https://github.com/Zw-awa/ssh-session-mcp.git
-cd ssh-session-mcp
-npm install && npm run build
+# Global install
+npm install -g ssh-session-mcp
+
+# Server command used by MCP clients
+ssh-session-mcp --viewerPort=auto
 ```
 
-### 2. Configure
+```bash
+# Claude Code
+claude mcp add --transport stdio ssh-session-mcp -- ssh-session-mcp --viewerPort=auto
+
+# Codex CLI
+codex mcp add ssh-session-mcp -- ssh-session-mcp --viewerPort=auto
+```
+
+If you prefer `npx` instead of a global install:
+
+```bash
+npx -y ssh-session-mcp --viewerPort=auto
+```
+
+### 3. Connect To A Real SSH Target
+
+Create `.env` from `.env.example`:
 
 ```bash
 cp .env.example .env
-# Edit .env with your SSH credentials
 ```
 
 ```ini
 SSH_HOST=192.168.1.100
 SSH_PORT=22
 SSH_USER=username
-SSH_PASSWORD=your-password
-# Or use SSH_KEY=/path/to/private/key (recommended)
+SSH_PASSWORD=
+SSH_KEY=
 VIEWER_PORT=auto
 AUTO_OPEN_TERMINAL=false
 SSH_MCP_MODE=safe
 ```
 
-Optional multi-device config:
+Then launch:
+
+```bash
+ssh-session-mcp-ctl launch --viewerPort=auto
+```
+
+### 4. Multi-Device Config
+
+For multiple boards or named targets, create `ssh-session-mcp.config.json`:
 
 ```json
 {
@@ -86,301 +120,195 @@ Optional multi-device config:
 }
 ```
 
-Save it as `ssh-session-mcp.config.json` in the repo root, or pass `--config=/path/to/config.json`.
+Discovery order:
+
+1. `--config=/path/to/config.json`
+2. Workspace `ssh-session-mcp.config.json`
+3. User-global config
+4. Legacy `.env` fallback
 
 Important:
 
-- Auto-discovery is based on the MCP process working directory, not on arbitrary project folders elsewhere on disk.
-- If the MCP process is started in `E:\\XSmartcar\\tools\\ssh-mcp`, then `E:\\other-project\\ssh-session-mcp.config.json` will not be discovered automatically.
-- For a config file outside the current working directory, set `SSH_MCP_CONFIG=/path/to/config.json` or start the server with `--config=/path/to/config.json`.
-- Device auth currently supports only `auth.passwordEnv` and `auth.keyPath`.
-- Raw inline passwords such as `"auth": { "password": "secret" }` are invalid and will fail schema validation.
-- When using `passwordEnv`, put the real secret in `.env` or the parent process environment, for example `BOARD_A_PASSWORD=orangepi`.
+- Config discovery is based on the MCP process working directory.
+- `auth.password` is intentionally unsupported. Use `auth.passwordEnv` or `auth.keyPath`.
+- Secrets belong in `.env` or the parent environment, not in repo-tracked JSON.
 
-Config resolution order:
+## Viewer And Collaboration Model
 
-1. Explicit `--config=/path/to/config.json`
-2. Workspace `ssh-session-mcp.config.json`
-3. User-global config at the platform default location
-4. Legacy `.env` single-device fallback
+The browser viewer is not decorative. It is part of the workflow:
 
-This means a config file stored in another workspace is ignored unless you point to it explicitly with `SSH_MCP_CONFIG` or `--config`.
+- The user can see exactly what the AI did.
+- The AI can pause when the user takes over.
+- Password prompts, pagers, and editors become visible state instead of hidden failure modes.
+- Session diagnostics and history turn terminal debugging into something inspectable.
 
-Manage config from the compiled CLI:
+## Marketplace-Friendly Flow
 
-```bash
-npm run config -- path
-npm run config -- show --scope=merged
-npm run config -- device list --scope=merged
-npm run config -- device set board-a --host=192.168.10.58 --user=orangepi --password-env=BOARD_A_PASSWORD
-npm run config -- defaults set viewerPort auto
+For users:
+
+```text
+install -> launch viewer -> connect once -> keep the session alive -> let the AI help
 ```
 
-### 3. Launch (for users)
+For agents:
 
-```bash
-npm run launch    # Start MCP + SSH + open browser terminal
-npm run status    # Check server/session status
-npm run devices   # List configured device profiles
-npm run kill      # Kill leftover processes
-npm run cleanup   # Kill + clean state files
-npm run logs      # View local JSONL metadata logs
+```text
+ssh-quick-connect -> ssh-run -> inspect output -> ssh-command-status if needed -> ssh-run again
 ```
 
-### 4. Register MCP (for AI agents)
+Use [AGENT.md](AGENT.md) when you want the AI to install, inspect config, connect devices, and help the user end-to-end. Compatibility notes for older agent setups remain in [AI_AGENT_GUIDE.md](AI_AGENT_GUIDE.md).
 
-```bash
-# Claude Code
-claude mcp add --transport stdio ssh-session-mcp -- node /path/to/build/index.js
+## Core Differences From A Stateless MCP SSH Wrapper
 
-# Codex CLI
-codex mcp add ssh-session-mcp -- node /path/to/build/index.js
-```
-
-No need to pass SSH credentials on the command line — they are read from `.env`.
-
-## AI Agent Usage
-
-See [AI_AGENT_GUIDE.md](AI_AGENT_GUIDE.md) for the full guide.
-
-### Core workflow
-
-```
-ssh-quick-connect → ssh-run → read output → decide → ssh-run → ...
-```
-
-### Simplified tools (recommended)
-
-| Tool | Purpose |
-|------|---------|
-| `ssh-quick-connect` | Connect SSH + open browser terminal (once per conversation) |
-| `ssh-device-list` | List configured device profiles and defaults |
-| `ssh-run` | Execute command, return output with exit code (repeat as needed) |
-| `ssh-status` | Check sessions, terminal mode, and operation mode |
-| `ssh-session-set-active` | Switch the active session used when `session` is omitted |
-| `ssh-session-diagnostics` | Inspect lock state, viewer state, running command metadata, and trim warnings |
-| `ssh-session-history` | Read line-numbered mixed history of output and user/agent actions |
-| `ssh-command-status` | Poll async command progress |
-| `ssh-retry` | Retry flaky commands with backoff |
-
-### Example
-
-```
-AI: ssh-quick-connect()
-→ "Connected. Terminal at http://127.0.0.1:8793/terminal/session/..."
-
-AI: ssh-run({ command: "uname -a" })
-→ { exitCode: 0, completionReason: "sentinel" }
-   "Linux board 5.10.160-rockchip-rk3588 aarch64"
-
-AI: ssh-run({ command: "apt update" })
-→ { async: true, commandId: "abc123", hint: "Use ssh-command-status to check" }
-
-AI: ssh-command-status({ commandId: "abc123" })
-→ { status: "completed", exitCode: 0 }
-```
+- Shared PTY instead of one-off command execution
+- Actor-aware transcript markers for user, system, and agent input
+- Terminal-state checks before dangerous or nonsensical writes
+- Auto cleanup for sessions and viewer processes
+- Session-scoped browser viewer with diagnostics and history
+- Local debug mode with `--local` for offline testing
 
 ## Operation Modes
 
-The browser terminal has a **safe/full** mode selector (top-right):
-
 | Mode | Behavior |
 |------|----------|
-| **safe** (default) | Blocks dangerous commands (rm -rf, mkfs), interactive programs (vim, htop), and streaming commands (tail -f). Returns suggestions for alternatives. |
-| **full** | AI has full control. Only blocks extreme threats (fork bombs, dd to disk). Other dangerous commands execute with warnings. |
-
-Switching to Full mode requires confirmation via browser dialog.
-
-Configure via `SSH_MCP_MODE=safe|full` env var or `--mode=safe|full` flag.
+| `safe` | Default. Blocks obviously dangerous, interactive, or streaming commands when they are a poor fit for autonomous execution. |
+| `full` | Allows broader control and warns less, while still blocking extreme cases such as obvious destructive abuse. |
 
 ## Input Lock
 
-The browser terminal has a mode selector (top-right dropdown):
-
 | Mode | Who can type |
 |------|-------------|
-| **common** (default) | Both user and AI |
-| **user** | Only user. AI's `ssh-run` returns `INPUT_LOCKED` error. |
-| **claude/codex** | Only AI. User keyboard input is blocked. |
+| `common` | User and AI |
+| `user` | Only the user |
+| `claude` / `codex` | Only the selected agent |
 
-The AI automatically acquires/releases the lock when calling `ssh-run`.
+If the terminal is locked by the user, `ssh-run`, `ssh-session-send`, and `ssh-session-control` return a blocked response instead of forcing input into the PTY.
 
-## All MCP Tools
+## MCP Tools
 
-### Simplified (for AI agents)
+### Recommended Daily Tools
 
-| Tool | Description |
-|------|-------------|
-| `ssh-quick-connect` | One-step connect + open terminal. Reuses existing sessions. |
-| `ssh-run` | Execute command with intelligent completion detection. Returns exit code. |
-| `ssh-status` | List active sessions, terminal mode, and operation mode. |
-| `ssh-command-status` | Check status of async long-running commands. |
-| `ssh-retry` | Execute command with automatic retry and backoff on failure. |
-
-### Full control
-
-| Tool | Description |
-|------|-------------|
-| `ssh-session-open` | Open session with custom parameters |
-| `ssh-session-send` | Send raw input without waiting |
-| `ssh-session-read` | Read output with offset-based pagination |
-| `ssh-session-history` | Read line-numbered history snapshots |
-| `ssh-session-watch` | Long-poll for changes, render dashboard |
-| `ssh-session-control` | Send control keys (Ctrl+C, arrows, etc.) |
-| `ssh-session-resize` | Resize PTY window |
-| `ssh-session-list` | List all sessions |
-| `ssh-device-list` | List configured device profiles |
-| `ssh-session-set-active` | Set or clear the active session |
-| `ssh-session-close` | Close a session |
-| `ssh-viewer-ensure` | Open viewer window |
-| `ssh-viewer-list` | List viewer processes |
-
-## Configuration
-
-### Environment variables (.env)
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `SSH_HOST` | SSH host address | (required) |
-| `SSH_PORT` | SSH port | 22 |
-| `SSH_USER` | SSH username | (required) |
-| `SSH_PASSWORD` | SSH password | - |
-| `SSH_KEY` | Path to SSH private key | - |
-| `SSH_MCP_INSTANCE` | Instance id for per-AI runtime isolation | auto (`proc-<pid>`) |
-| `SSH_MCP_CONFIG` | Path to `ssh-session-mcp.config.json` | auto-discovery |
-| `VIEWER_HOST` | Viewer server bind address | 127.0.0.1 |
-| `VIEWER_PORT` | Viewer server port (`0` = disabled, `auto` = random free port) | `0` |
-| `AUTO_OPEN_TERMINAL` | Auto-open browser on connect | false |
-| `SSH_MCP_MODE` | Operation mode: safe or full | safe |
-| `SSH_MCP_USE_MARKER` | Enable sentinel completion markers | true |
-| `SSH_MCP_LOG_MODE` | Local log mode: `off` or `meta` | `off` |
-| `SSH_MCP_LOG_DIR` | Local JSONL log directory | per-instance runtime dir |
-
-### Command-line parameters
-
-All env variables can be overridden with `--` flags:
-
-```bash
-node build/index.js --host=192.168.1.100 --user=username --viewerPort=8793 --mode=full
-```
-
-### Config files
-
-- Workspace config: `./ssh-session-mcp.config.json`
-- User-global config:
-  - Windows: `%APPDATA%\\ssh-session-mcp\\config.json`
-  - Linux/macOS: `$XDG_CONFIG_HOME/ssh-session-mcp/config.json` or `~/.config/ssh-session-mcp/config.json`
-- Explicit config: `SSH_MCP_CONFIG=/path/to/config.json` or `--config=/path/to/config.json`
-
-Config files support top-level `defaults`, `defaultDevice`, and `devices`. A workspace config replaces matching devices from the global config by `id`, while top-level `defaults` are shallow-merged.
-
-Discovery rule:
-
-- The workspace config path is always resolved from the current MCP process working directory.
-- A file in some other directory is not auto-discovered just because it exists on the machine.
-- If you want to reuse a config from another project folder, pass it explicitly with `SSH_MCP_CONFIG` or `--config`.
-
-Auth schema rule:
-
-- Supported: `auth.passwordEnv`, `auth.keyPath`
-- Not supported: `auth.password`
-- Recommended password pattern:
-
-```json
-{
-  "auth": {
-    "passwordEnv": "BOARD_A_PASSWORD"
-  }
-}
-```
-
-```ini
-BOARD_A_PASSWORD=orangepi
-```
-
-Reference example: [docs/examples/ssh-session-mcp.config.example.json](docs/examples/ssh-session-mcp.config.example.json)
-
-## Tool Response Contract
-
-Structured tool responses may include these extra top-level fields:
-
-| Field | Meaning |
+| Tool | Purpose |
 |------|---------|
-| `resultStatus` | Normalized outcome: `success`, `partial_success`, `blocked`, `failure` |
-| `summary` | Short human/agent readable summary |
-| `failureCategory` | Normalized failure type when blocked or failed |
-| `nextAction` | Suggested next step |
-| `evidence` | Short supporting facts |
+| `ssh-quick-connect` | Connect or reuse the default target and optionally open the viewer |
+| `ssh-run` | Execute a command with completion detection and exit-code capture |
+| `ssh-status` | Inspect sessions, viewer state, and operation mode |
+| `ssh-command-status` | Poll async command progress |
+| `ssh-retry` | Retry flaky commands with backoff |
 
-Compatibility note:
+### Full Tool Catalog
 
-- Existing tool payloads remain compatible.
-- `resultStatus` is the cross-tool decision field.
-- Top-level `status` is still used by some tools for lifecycle values such as `running` or `completed`.
+| Tool | Purpose |
+|------|---------|
+| `ssh-session-open` | Open a session with explicit SSH parameters |
+| `ssh-session-send` | Send raw PTY input |
+| `ssh-device-list` | List configured devices and defaults |
+| `ssh-session-read` | Read buffered terminal output by offset |
+| `ssh-session-watch` | Long-poll for output and dashboard changes |
+| `ssh-session-history` | Read line-numbered mixed terminal history |
+| `ssh-session-control` | Send control keys such as `ctrl_c`, arrows, or `tab` |
+| `ssh-session-resize` | Resize the PTY |
+| `ssh-session-list` | List tracked sessions |
+| `ssh-session-diagnostics` | Inspect lock state, warnings, running command state, and viewer health |
+| `ssh-session-set-active` | Choose the default session |
+| `ssh-viewer-ensure` | Open or reuse the local viewer |
+| `ssh-viewer-list` | List tracked viewer processes |
+| `ssh-session-close` | Close a session cleanly |
+| `ssh-quick-connect` | One-step connect flow for agents |
+| `ssh-run` | Main command execution tool |
+| `ssh-status` | Runtime overview |
+| `ssh-command-status` | Async poller |
+| `ssh-retry` | Retry executor |
 
-Reference docs:
+## Local Operator Commands
 
-- [docs/contracts.md](docs/contracts.md)
-- [docs/failure-taxonomy.md](docs/failure-taxonomy.md)
-
-## CLI Commands
+These helpers are for humans on the workstation that owns the viewer:
 
 ```bash
-npm run launch    # Start server + connect SSH + open browser
-npm run config -- show --scope=merged
-npm run status    # Check server and session status
-npm run devices   # List configured device profiles
-npm run kill      # Kill process on viewer port
-npm run cleanup   # Kill + remove state files
-npm run logs      # Inspect local server/session JSONL logs
-npm run validate:repo  # Validate repo docs/config contract coverage
-npm run build     # Compile TypeScript
-npm run test      # Run unit tests
-npm run inspect   # Open MCP inspector
+ssh-session-mcp-ctl status
+ssh-session-mcp-ctl devices
+ssh-session-mcp-ctl launch --viewerPort=auto
+ssh-session-mcp-ctl launch --local --viewerPort=auto
+ssh-session-mcp-ctl logs --tail=60
+ssh-session-mcp-ctl cleanup
 ```
 
-Useful flags:
+Equivalent repo-local commands also exist:
 
 ```bash
-node scripts/ctl.mjs launch --instance=codex-a --device=board-a --connection=main
-node scripts/ctl.mjs status --instance=codex-a
-node scripts/ctl.mjs logs --instance=codex-a --session=board-a/main
+npm run launch
+npm run status
+npm run devices
+npm run logs
+npm run cleanup
 ```
 
-## Viewer Modes
+## Configuration Summary
 
-- **Terminal mode**
-  - Designed to behave like a normal SSH terminal window
-  - Uses raw PTY passthrough and leaves rendering to your local terminal emulator
-  - Best when you want stable scrolling, shell-native behavior, and fewer local UI overlays
+Key environment variables:
 
-- **Browser mode**
-  - Keeps the richer UI layer
-  - Supports lock switching, safe/full mode switching, and more session-oriented controls
-  - Best when user and AI need to observe and coordinate in the same page
+| Variable | Meaning | Default |
+|----------|---------|---------|
+| `SSH_HOST` | Legacy single-target SSH host | required in legacy mode |
+| `SSH_PORT` | Legacy single-target SSH port | `22` |
+| `SSH_USER` | Legacy single-target SSH user | required in legacy mode |
+| `SSH_PASSWORD` | Password auth | empty |
+| `SSH_KEY` | Local private key path | empty |
+| `SSH_MCP_INSTANCE` | Runtime isolation key | `proc-<pid>` or helper-selected |
+| `SSH_MCP_CONFIG` | Explicit config file path | auto-discovery |
+| `VIEWER_HOST` | Viewer bind host | `127.0.0.1` |
+| `VIEWER_PORT` | Viewer port or `auto` | `0` unless configured |
+| `SSH_MCP_MODE` | `safe` or `full` | `safe` |
+| `SSH_MCP_LOCAL` | Launch a local shell instead of SSH | `false` |
+| `SSH_MCP_DEBUG` | Enable debug browser actions | `false` |
+| `AUTO_OPEN_TERMINAL` | Auto-open browser terminal | `false` |
+| `SSH_MCP_LOG_MODE` | `off` or `meta` JSONL logging | `off` |
+
+Example config file: [docs/examples/ssh-session-mcp.config.example.json](docs/examples/ssh-session-mcp.config.example.json)
 
 ## Security
 
-- SSH credentials are stored in `.env` only, excluded from git and npm
-- Viewer server binds to `127.0.0.1` by default (local only)
-- Safe mode blocks dangerous commands by default
-- No data is uploaded to external servers
-- Use `SSH_KEY` instead of `SSH_PASSWORD` when possible
+- The package never requires raw passwords inside tracked JSON config.
+- `.env` is ignored by git and npm.
+- Viewer HTTP binds to localhost by default.
+- The MCP server treats terminal mode and input lock as first-class safety signals.
 
-## Docs and Validation
+See [SECURITY.md](SECURITY.md) for the full policy.
 
-- [docs/contracts.md](docs/contracts.md): normalized tool response fields
-- [docs/failure-taxonomy.md](docs/failure-taxonomy.md): stable failure categories
-- [docs/acceptance-scenarios.md](docs/acceptance-scenarios.md): regression checklist for the current architecture
-- [docs/platform-compatibility.md](docs/platform-compatibility.md): host/target/runtime support notes
-- `npm run validate:repo`: checks required docs, example config validity, acceptance scenario ids, `.env.example`, and MCP tool coverage in docs
+## Platform Notes
 
-## Scope Boundary
+- Windows 10/11: first-class host environment
+- Linux: strong fit for headless MCP + browser viewer workflows
+- macOS: standard Node.js path supported
+- Remote Linux hosts: first-class target
 
-This repository stays focused on the SSH transport/runtime layer: sessions, viewers, targeting, locks, logging, and tool contracts. Project-specific prompts, ROS workflows, board-role logic, model pipelines, and higher-level agent skills should live outside this repo.
+More detail: [docs/platform-compatibility.md](docs/platform-compatibility.md)
+
+## Docs
+
+- [AGENT.md](AGENT.md)
+- [AI_AGENT_GUIDE.md](AI_AGENT_GUIDE.md)
+- [docs/contracts.md](docs/contracts.md)
+- [docs/failure-taxonomy.md](docs/failure-taxonomy.md)
+- [docs/acceptance-scenarios.md](docs/acceptance-scenarios.md)
+- [CHANGELOG.md](CHANGELOG.md)
+
+## Development
+
+```bash
+npm install
+npm run build
+npm run test
+npm run validate:repo
+npm run build:site
+```
+
+GitHub Actions included in this repo can:
+
+- run CI on push and pull request
+- deploy a GitHub Pages landing page from `dist/`
+- build a tagged GitHub Release with the npm package tarball attached
 
 ## License
 
-This repository is licensed under the [Apache License 2.0](LICENSE).
-
-See also [NOTICE](NOTICE) for project attribution metadata.
+Apache-2.0. See [LICENSE](LICENSE).

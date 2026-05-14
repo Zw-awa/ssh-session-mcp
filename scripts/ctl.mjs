@@ -9,8 +9,10 @@ import { fileURLToPath } from 'node:url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const ROOT = resolve(__dirname, '..');
+const WORKSPACE_ROOT = process.cwd();
 const ENV_PATH = resolve(ROOT, '.env');
 const BUILD_ENTRY = resolve(ROOT, 'build', 'index.js');
+const PACKAGE_VERSION = JSON.parse(readFileSync(resolve(ROOT, 'package.json'), 'utf8')).version || '0.0.0';
 
 function sanitizeLabel(raw, fallback) {
   const trimmed = String(raw || '').trim();
@@ -71,24 +73,32 @@ function resolveRuntimePaths(instanceId) {
 
 function resolveDefaultConfigPath() {
   return {
-    cwdConfigPath: join(ROOT, 'ssh-session-mcp.config.json'),
+    cwdConfigPath: join(WORKSPACE_ROOT, 'ssh-session-mcp.config.json'),
     userConfigPath: join(getUserConfigDir(), 'config.json'),
   };
 }
 
 function loadEnv() {
   const env = {};
-  try {
-    const content = readFileSync(ENV_PATH, 'utf8');
-    for (const line of content.split('\n')) {
-      const trimmed = line.trim();
-      if (!trimmed || trimmed.startsWith('#')) continue;
-      const eq = trimmed.indexOf('=');
-      if (eq === -1) continue;
-      env[trimmed.slice(0, eq).trim()] = trimmed.slice(eq + 1).trim();
+  const candidatePaths = [
+    join(WORKSPACE_ROOT, '.env'),
+    ENV_PATH,
+  ];
+
+  for (const envPath of candidatePaths) {
+    try {
+      const content = readFileSync(envPath, 'utf8');
+      for (const line of content.split('\n')) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith('#')) continue;
+        const eq = trimmed.indexOf('=');
+        if (eq === -1) continue;
+        env[trimmed.slice(0, eq).trim()] = trimmed.slice(eq + 1).trim();
+      }
+      break;
+    } catch {
+      // ignore missing .env candidates
     }
-  } catch {
-    // ignore missing .env
   }
   return env;
 }
@@ -505,25 +515,23 @@ async function cmdLaunch(ctx) {
   if (ctx.configPath) {
     childArgs.push(`--config=${ctx.configPath}`);
   }
-
-  const viewerHost = getRequestedViewerHost(ctx.flags, ctx.env);
-  const viewerPort = getRequestedViewerPort(ctx.flags, ctx.env);
-  childArgs.push(`--viewerHost=${viewerHost}`);
-  childArgs.push(`--viewerPort=${viewerPort}`);
-
-  if (ctx.flags.logDir) {
-    childArgs.push(`--logDir=${ctx.flags.logDir}`);
+  const forwardedFlagExclusions = new Set(['config', 'connection', 'connectionName', 'device', 'follow', 'instance', 'session', 'tail']);
+  for (const [key, value] of Object.entries(ctx.flags)) {
+    if (forwardedFlagExclusions.has(key)) {
+      continue;
+    }
+    childArgs.push(value === 'true' ? `--${key}` : `--${key}=${value}`);
   }
-  if (ctx.flags.logMode) {
-    childArgs.push(`--logMode=${ctx.flags.logMode}`);
+  if (!('viewerHost' in ctx.flags)) {
+    childArgs.push(`--viewerHost=${getRequestedViewerHost(ctx.flags, ctx.env)}`);
   }
-  if (ctx.flags.mode) {
-    childArgs.push(`--mode=${ctx.flags.mode}`);
+  if (!('viewerPort' in ctx.flags)) {
+    childArgs.push(`--viewerPort=${getRequestedViewerPort(ctx.flags, ctx.env)}`);
   }
 
   const child = spawn(process.execPath, childArgs, {
     stdio: ['pipe', 'pipe', 'inherit'],
-    cwd: ROOT,
+    cwd: WORKSPACE_ROOT,
     windowsHide: true,
   });
 
@@ -588,7 +596,7 @@ async function cmdLaunch(ctx) {
   send('initialize', {
     protocolVersion: '2024-11-05',
     capabilities: {},
-    clientInfo: { name: 'ctl-launch', version: '2.4.0' },
+    clientInfo: { name: 'ctl-launch', version: PACKAGE_VERSION },
   });
   setTimeout(() => send('notifications/initialized', {}, true), 300);
   setTimeout(() => {
@@ -691,6 +699,8 @@ if (!commands[cmd]) {
   console.log('  --device=<id>        device profile for launch');
   console.log('  --connection=<name>  profile connection name for launch');
   console.log('  --session=<name>     logical session name for launch/logs');
+  console.log('  --local              launch a local shell instead of SSH');
+  console.log('  --debug              enable browser-side debug controls');
   process.exit(1);
 }
 

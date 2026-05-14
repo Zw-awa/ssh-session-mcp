@@ -1,0 +1,96 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Verify tag matches package version
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          PACKAGE_VERSION=$(node -pe "JSON.parse(require('fs').readFileSync('./package.json', 'utf8')).version")
+          echo "tag=$TAG_VERSION"
+          echo "package.json=$PACKAGE_VERSION"
+          test "$TAG_VERSION" = "$PACKAGE_VERSION"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build project
+        run: npm run build
+
+      - name: Run tests
+        run: npm run test
+
+      - name: Validate repository contract
+        run: npm run validate:repo
+
+      - name: Build static site
+        run: npm run build:site
+
+      - name: Publish to npm when token is configured
+        shell: bash
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -n "${NODE_AUTH_TOKEN:-}" ]; then
+            npm publish --access public
+          else
+            echo "Skipping npm publish because NPM_TOKEN is not configured."
+          fi
+
+      - name: Package npm tarball
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release-assets
+          npm pack --pack-destination release-assets
+          tar -czf "release-assets/${GITHUB_REPOSITORY##*/}-site.tar.gz" -C dist .
+
+      - name: Select release notes
+        shell: bash
+        run: |
+          set -euo pipefail
+          NOTES_FILE="releases/${GITHUB_REF_NAME}.md"
+          if [ -f "$NOTES_FILE" ]; then
+            cp "$NOTES_FILE" release-notes.md
+          else
+            {
+              echo "# ${GITHUB_REF_NAME}"
+              echo
+              echo "Automated release for ${GITHUB_REF_NAME}."
+            } > release-notes.md
+          fi
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          body_path: release-notes.md
+          files: |
+            release-assets/*

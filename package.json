@@ -15,6 +15,7 @@
   },
   "bin": {
     "ssh-session-mcp": "build/index.js",
+    "ssh-session-mcp-ctl": "scripts/ctl.mjs",
     "ssh-session-mcp-view": "build/viewer-cli.js",
     "ssh-session-mcp-config": "build/config-cli.js",
     "ssh-session-mcp-validate-repo": "build/validate-repo.js"
@@ -22,6 +23,7 @@
   "scripts": {
     "prepare": "npm run build",
     "build": "tsc && shx chmod +x build/*.js",
+    "build:site": "node scripts/build-site.mjs",
     "config": "node build/config-cli.js",
     "launch": "node scripts/ctl.mjs launch",
     "status": "node scripts/ctl.mjs status",
@@ -36,7 +38,13 @@
     "coverage": "cross-env SSH_MCP_DISABLE_MAIN=1 vitest --run --coverage"
   },
   "files": [
-    "build"
+    "build",
+    "scripts/ctl.mjs",
+    "docs/examples",
+    ".env.example",
+    "AGENT.md",
+    "AI_AGENT_GUIDE.md",
+    "README.zh-CN.md"
   ],
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.17.5",

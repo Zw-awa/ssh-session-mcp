@@ -91,6 +91,7 @@ CONTRIBUTING.md
 
 # Scripts (contain local dev helpers, not needed for npm package)
 scripts/
+!scripts/ctl.mjs
 
 # Environment files
 logs/

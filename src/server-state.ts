@@ -222,6 +222,16 @@ export function loadDotEnv() {
 
 loadDotEnv();
 
+function loadPackageVersion() {
+  try {
+    const packageJsonPath = pathResolve(dirname(fileURLToPath(import.meta.url)), '..', 'package.json');
+    const parsed = JSON.parse(readFileSync(packageJsonPath, 'utf8'));
+    return typeof parsed.version === 'string' ? parsed.version : '0.0.0';
+  } catch {
+    return '0.0.0';
+  }
+}
+
 export function parseArgv() {
   const args = process.argv.slice(2);
   const config: Record<string, string | null> = {};
@@ -242,6 +252,7 @@ export function parseArgv() {
 // ── Configuration constants ──────────────────────────────────────────────────
 
 export const isCliEnabled = process.env.SSH_MCP_DISABLE_MAIN !== '1';
+export const PACKAGE_VERSION = loadPackageVersion();
 const argvConfig = isCliEnabled ? parseArgv() : {} as Record<string, string>;
 
 export const DEFAULT_HOST = argvConfig.host || process.env.SSH_HOST;
@@ -384,7 +395,7 @@ export const runningCommands = new Map<string, RunningCommand>();
 
 export const server = new McpServer({
   name: 'ssh-session-mcp',
-  version: '2.4.0',
+  version: PACKAGE_VERSION,
   capabilities: {
     resources: {},
     tools: {},
