@@ -194,6 +194,10 @@ Promotion/
 
 ssh-session-mcp.config.json
 docs/*
+!docs/contracts.md
+!docs/failure-taxonomy.md
+!docs/acceptance-scenarios.md
+!docs/platform-compatibility.md
 !docs/examples/
 !docs/examples/**
 releases/
