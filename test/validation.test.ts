@@ -46,6 +46,12 @@ describe('detectTerminalMode', () => {
   it('handles ANSI escape codes', () => {
     expect(detectTerminalMode('\x1b[32muser@host\x1b[0m:~$ ')).toBe('shell');
   });
+
+  it('detects dirty terminal states even with ANSI noise', () => {
+    expect(detectTerminalMode('\x1b[31mPassword:\x1b[0m ')).toBe('password_prompt');
+    expect(detectTerminalMode('\x1b[2J\x1b[HGNU nano 5.4\n^G Get Help')).toBe('editor');
+    expect(detectTerminalMode('\x1b[7mcontent\x1b[0m\n\x1b[33m(END)\x1b[0m')).toBe('pager');
+  });
 });
 
 describe('validateCommand', () => {

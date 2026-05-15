@@ -89,6 +89,9 @@ describe('viewer UI contracts', () => {
     expect(html).toContain("sendJson({ type: 'lock', lock: 'none' });");
     expect(html).toContain('<option value="auto">auto</option>');
     expect(html).toContain("sendJson({ type: 'draft_state', active: active });");
+    expect(html).toContain('function updateLockPolicy(policy)');
+    expect(html).toContain("if (s.lockPolicy) { updateLockPolicy(s.lockPolicy); }");
+    expect(html).toContain("if (msg.lockPolicy) { updateLockPolicy(msg.lockPolicy); }");
     expect(html).not.toContain("var actor = getActor();");
   });
 

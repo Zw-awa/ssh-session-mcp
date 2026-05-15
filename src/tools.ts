@@ -1353,7 +1353,10 @@ server.tool(
     // Password prompt blocks in ALL modes — sending a command here would type it as password
     if (terminalMode === 'password_prompt') {
       logSessionEvent(target.sessionId, 'command.blocked_password_prompt', {
+        actor: 'agent',
+        lockPolicy: target.lockPolicy,
         operationMode: OPERATION_MODE,
+        userDraftActive: target.userDraftActive,
         ...commandMeta,
       });
       return createJsonToolResponse(applyToolContract({
@@ -1377,8 +1380,11 @@ server.tool(
     // Editor/pager check — only blocks in safe mode
     if (OPERATION_MODE === 'safe' && (terminalMode === 'editor' || terminalMode === 'pager')) {
       logSessionEvent(target.sessionId, 'command.blocked_terminal_mode', {
+        actor: 'agent',
+        lockPolicy: target.lockPolicy,
         operationMode: OPERATION_MODE,
         terminalMode,
+        userDraftActive: target.userDraftActive,
         ...commandMeta,
       });
       return createJsonToolResponse(applyToolContract({
@@ -1853,10 +1859,11 @@ server.tool(
     if (!session) {
       entry.status = 'interrupted';
       entry.completedAt = Date.now();
-      logSessionEvent(entry.sessionId, 'command.interrupted', {
-        commandId: entry.commandId,
-        elapsedMs: entry.completedAt - entry.startTime,
-        status: entry.status,
+        logSessionEvent(entry.sessionId, 'command.interrupted', {
+          actor: 'agent',
+          commandId: entry.commandId,
+          elapsedMs: entry.completedAt - entry.startTime,
+          status: entry.status,
         ...summarizeCommandMeta(entry.command),
       });
       runningCommands.delete(commandId);
@@ -2033,7 +2040,10 @@ server.tool(
 
       if (retryTerminalMode === 'password_prompt') {
         logSessionEvent(target.sessionId, 'command.blocked_password_prompt', {
+          actor: 'agent',
+          lockPolicy: target.lockPolicy,
           operationMode: OPERATION_MODE,
+          userDraftActive: target.userDraftActive,
           ...summarizeCommandMeta(command),
         });
         return createJsonToolResponse(applyToolContract({
@@ -2056,8 +2066,11 @@ server.tool(
 
       if (OPERATION_MODE === 'safe' && (retryTerminalMode === 'editor' || retryTerminalMode === 'pager')) {
         logSessionEvent(target.sessionId, 'command.blocked_terminal_mode', {
+          actor: 'agent',
+          lockPolicy: target.lockPolicy,
           operationMode: OPERATION_MODE,
           terminalMode: retryTerminalMode,
+          userDraftActive: target.userDraftActive,
           ...summarizeCommandMeta(command),
         });
         return createJsonToolResponse(applyToolContract({

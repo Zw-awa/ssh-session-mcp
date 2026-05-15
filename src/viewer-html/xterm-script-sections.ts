@@ -55,6 +55,7 @@ export function renderXtermSetupSection(options: {
     var knownRawChars = 0;
     var isFirstConnect = true;
     var currentLock = 'none';
+    var currentLockPolicy = 'common';
     var scrollTimer = null;
     var offsetDecoder = null;
     var destroyed = false;
@@ -111,7 +112,7 @@ ${renderSharedViewerScriptHelpers({
         terminal.options.cursorBlink = false;
         terminal.options.disableStdin = true;
       } else if (lock === 'user') {
-        lockBadge.textContent = actorSelect.value === 'auto' ? 'user drafting' : 'user active';
+        lockBadge.textContent = currentLockPolicy === 'auto' ? 'user drafting' : 'user active';
         lockBadge.className = 'lock-badge user-lock';
         terminal.options.cursorBlink = true;
         terminal.options.disableStdin = false;
@@ -122,12 +123,24 @@ ${renderSharedViewerScriptHelpers({
         terminal.options.disableStdin = false;
       }
       settingLockFromServer = true;
-      if (lock === 'user' && actorSelect.value !== 'user' && actorSelect.value !== 'auto') {
+      if (currentLockPolicy === 'auto') {
+        actorSelect.value = 'auto';
+      } else if (lock === 'user' && actorSelect.value !== 'user') {
         actorSelect.value = 'user';
-      } else if (lock === 'none' && actorSelect.value !== 'common' && actorSelect.value !== 'auto') {
+      } else if (lock === 'none' && actorSelect.value !== 'common') {
         actorSelect.value = 'common';
       }
       settingLockFromServer = false;
+    }
+
+    function updateLockPolicy(policy) {
+      currentLockPolicy = policy || 'common';
+      settingLockFromServer = true;
+      actorSelect.value = currentLockPolicy === 'common' ? 'common' : currentLockPolicy;
+      settingLockFromServer = false;
+      if (currentLock === 'user' || currentLock === 'none') {
+        updateLockUI(currentLock);
+      }
     }
 
     function setStatus(text, theme) {
@@ -221,13 +234,17 @@ export function renderXtermConnectionSection() {
             headerTitle.textContent = (s.sessionName || s.sessionId || 'SSH') + ' ' + s.user + '@' + s.host + ':' + s.port;
             headerMeta.textContent = s.user + '@' + s.host + ':' + s.port;
             document.title = headerTitle.textContent + ' \\u2022 SSH Terminal';
+            if (s.lockPolicy) { updateLockPolicy(s.lockPolicy); }
             if (s.inputLock) { updateLockUI(s.inputLock); }
+            if (s.userDraftActive === true) { draftActive = true; }
             scheduleScrollToBottom();
           }
           if (msg.type === 'event') {
             setStatus(getEventTimePrefix(msg.at) + summarizeEvent(msg), eventTheme(msg));
           }
           if (msg.type === 'lock') {
+            if (msg.lockPolicy) { updateLockPolicy(msg.lockPolicy); }
+            draftActive = msg.userDraftActive === true;
             updateLockUI(msg.lock);
           }
           if (msg.type === 'mode') {
