@@ -18,26 +18,48 @@ concurrency:
 
 jobs:
   sync:
-    if: ${{ secrets.GITEE_USERNAME != '' && secrets.GITEE_TOKEN != '' }}
     runs-on: ubuntu-latest
+    env:
+      GITEE_USERNAME: ${{ secrets.GITEE_USERNAME }}
+      GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
 
     steps:
+      - name: Check whether Gitee secrets are configured
+        id: config
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ -n "${GITEE_USERNAME:-}" ] && [ -n "${GITEE_TOKEN:-}" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Skip when Gitee secrets are missing
+        if: steps.config.outputs.enabled != 'true'
+        run: echo "Skipping Gitee sync because GITEE_USERNAME or GITEE_TOKEN is not configured."
+
       - name: Checkout
+        if: steps.config.outputs.enabled == 'true'
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
           persist-credentials: false
 
       - name: Configure git
+        if: steps.config.outputs.enabled == 'true'
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
       - name: Add gitee remote
+        if: steps.config.outputs.enabled == 'true'
         run: |
           git remote add gitee-sync "https://${{ secrets.GITEE_USERNAME }}:${{ secrets.GITEE_TOKEN }}@gitee.com/Zw-awa/ssh-session-mcp.git"
 
       - name: Sync branch or tag to Gitee
+        if: steps.config.outputs.enabled == 'true'
         shell: bash
         run: |
           set -euo pipefail
