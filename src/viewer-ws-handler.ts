@@ -149,7 +149,7 @@ function collectInputRecords(rawRecords: unknown): SessionWriteRecord[] {
   return records;
 }
 
-function handleViewerSocketMessage(ws: WebSocket, session: SSHSession, data: WebSocket.RawData, isBinary: boolean) {
+function handleViewerSocketMessage(ws: WebSocket, session: SSHSession, viewerId: string, data: WebSocket.RawData, isBinary: boolean) {
   if (isBinary) {
     return;
   }
@@ -167,7 +167,7 @@ function handleViewerSocketMessage(ws: WebSocket, session: SSHSession, data: Web
     }
 
     if (msg.type === 'draft_state' && typeof msg.active === 'boolean') {
-      session.setUserDraftActive(msg.active);
+      session.setViewerDraftState(viewerId, msg.active);
       broadcastLock(session);
       return;
     }
@@ -227,6 +227,7 @@ function handleViewerSocketMessage(ws: WebSocket, session: SSHSession, data: Web
 export function handleWsAttach(ws: WebSocket, kind: ViewerAttachKind, ref: string, rawOffset?: number) {
   let session: SSHSession;
   let bindingKey: string | undefined;
+  const viewerId = `viewer-${Math.random().toString(36).slice(2, 10)}`;
 
   try {
     const target = resolveAttachTarget(kind, ref);
@@ -263,7 +264,7 @@ export function handleWsAttach(ws: WebSocket, kind: ViewerAttachKind, ref: strin
   });
 
   const onMessage = (data: WebSocket.RawData, isBinary: boolean) => {
-    handleViewerSocketMessage(ws, session, data, isBinary);
+    handleViewerSocketMessage(ws, session, viewerId, data, isBinary);
   };
   ws.on('message', onMessage);
 
@@ -273,7 +274,7 @@ export function handleWsAttach(ws: WebSocket, kind: ViewerAttachKind, ref: strin
       return;
     }
     cleanedUp = true;
-    session.clearUserDraft();
+    session.clearViewerDraftState(viewerId);
     broadcastLock(session);
     ws.off('message', onMessage);
     ws.off('close', cleanup);

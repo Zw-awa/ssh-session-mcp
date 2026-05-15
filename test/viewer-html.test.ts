@@ -126,6 +126,13 @@ describe('debug mode API coverage', () => {
     expect(html).toContain('set-active');
   });
 
+  it('includes lock policy and draft-aware diagnostics rendering hooks', () => {
+    const html = renderViewerHomePage(true);
+    expect(html).toContain('diag.session&&diag.session.inputLock');
+    expect(html).toContain('diag.session.lockPolicy');
+    expect(html).toContain('diag.session.userDraftActive');
+  });
+
   it('renders Details for ssh-session-diagnostics and ssh-session-history', () => {
     const html = renderViewerHomePage(true);
     expect(html).toContain('function td(');

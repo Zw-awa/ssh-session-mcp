@@ -956,15 +956,18 @@ export function startBackgroundMonitor(entry: RunningCommand, session: SSHSessio
       if (depth < MAX_BACKGROUND_RETRIES) {
         startBackgroundMonitor(stored, session, depth + 1);
       } else {
-        stored.status = 'interrupted';
-        stored.completedAt = Date.now();
-        runningCommands.delete(entry.commandId);
-        logSessionEvent(stored.sessionId, 'command.interrupted', {
-          commandId: stored.commandId,
-          elapsedMs: stored.completedAt - stored.startTime,
-          status: stored.status,
-          ...summarizeCommandMeta(stored.command),
-        });
+          stored.status = 'interrupted';
+          stored.completedAt = Date.now();
+          runningCommands.delete(entry.commandId);
+          logSessionEvent(stored.sessionId, 'command.interrupted', {
+            actor: 'agent',
+            commandId: stored.commandId,
+            elapsedMs: stored.completedAt - stored.startTime,
+            lockPolicy: session.lockPolicy,
+            status: stored.status,
+            userDraftActive: session.userDraftActive,
+            ...summarizeCommandMeta(stored.command),
+          });
       }
       return;
     }
@@ -983,11 +986,14 @@ export function startBackgroundMonitor(entry: RunningCommand, session: SSHSessio
     stored.completionReason = result.reason;
     stored.exitCode = result.exitCode;
     logSessionEvent(stored.sessionId, 'command.completed', {
+      actor: 'agent',
       commandId: stored.commandId,
       completionReason: stored.completionReason,
       exitCode: stored.exitCode,
       elapsedMs: stored.completedAt - stored.startTime,
+      lockPolicy: session.lockPolicy,
       status: stored.status,
+      userDraftActive: session.userDraftActive,
       ...summarizeCommandMeta(stored.command),
     });
   }).catch(() => {
@@ -996,9 +1002,12 @@ export function startBackgroundMonitor(entry: RunningCommand, session: SSHSessio
       stored.status = 'interrupted';
       stored.completedAt = Date.now();
       logSessionEvent(stored.sessionId, 'command.interrupted', {
+        actor: 'agent',
         commandId: stored.commandId,
         elapsedMs: stored.completedAt - stored.startTime,
+        lockPolicy: session.lockPolicy,
         status: stored.status,
+        userDraftActive: session.userDraftActive,
         ...summarizeCommandMeta(stored.command),
       });
     }
@@ -1033,22 +1042,24 @@ export function sweepSessions(nowMs = Date.now()) {
       continue;
     }
     // Clean completed entries after 5 minutes (reduced from 10)
-    if (entry.status !== 'running' && entry.completedAt && nowMs - entry.completedAt > 5 * 60 * 1000) {
-      logSessionEvent(entry.sessionId, 'command.evicted', {
-        commandId: entry.commandId,
-        status: entry.status,
-      });
+      if (entry.status !== 'running' && entry.completedAt && nowMs - entry.completedAt > 5 * 60 * 1000) {
+        logSessionEvent(entry.sessionId, 'command.evicted', {
+          actor: 'agent',
+          commandId: entry.commandId,
+          status: entry.status,
+        });
       runningCommands.delete(cmdId);
       continue;
     }
     // Clean stuck running entries after 10 minutes (safety net)
-    if (entry.status === 'running' && nowMs - entry.startTime > 10 * 60 * 1000) {
-      entry.status = 'interrupted';
-      entry.completedAt = nowMs;
-      logSessionEvent(entry.sessionId, 'command.interrupted', {
-        commandId: entry.commandId,
-        elapsedMs: entry.completedAt - entry.startTime,
-        status: entry.status,
+      if (entry.status === 'running' && nowMs - entry.startTime > 10 * 60 * 1000) {
+        entry.status = 'interrupted';
+        entry.completedAt = nowMs;
+        logSessionEvent(entry.sessionId, 'command.interrupted', {
+          actor: 'agent',
+          commandId: entry.commandId,
+          elapsedMs: entry.completedAt - entry.startTime,
+          status: entry.status,
         ...summarizeCommandMeta(entry.command),
       });
       runningCommands.delete(cmdId);

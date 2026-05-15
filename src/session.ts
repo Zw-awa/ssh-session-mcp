@@ -249,6 +249,7 @@ export class SSHSession {
   private readonly outputNotifyListeners = new Set<() => void>();
   private readonly history: SessionHistory;
   private lastActivityMs = Date.now();
+  private readonly activeUserDraftViewers = new Set<string>();
 
   constructor(
     public readonly sessionId: string,
@@ -650,7 +651,22 @@ export class SSHSession {
     }
   }
 
+  setViewerDraftState(viewerId: string, active: boolean) {
+    if (active) {
+      this.activeUserDraftViewers.add(viewerId);
+    } else {
+      this.activeUserDraftViewers.delete(viewerId);
+    }
+    this.setUserDraftActive(this.activeUserDraftViewers.size > 0);
+  }
+
+  clearViewerDraftState(viewerId: string) {
+    this.activeUserDraftViewers.delete(viewerId);
+    this.setUserDraftActive(this.activeUserDraftViewers.size > 0);
+  }
+
   clearUserDraft() {
+    this.activeUserDraftViewers.clear();
     this.userDraftActive = false;
     this.userDraftUpdatedAt = undefined;
     if (this.lockPolicy === 'auto') {

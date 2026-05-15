@@ -96,6 +96,18 @@ function createMockSession(overrides: Partial<Record<string, unknown>> = {}) {
         this.inputLock = active ? 'user' : 'none';
       }
     }),
+    setViewerDraftState: vi.fn(function (this: any, _viewerId: string, active: boolean) {
+      this.userDraftActive = active;
+      if (this.lockPolicy === 'auto') {
+        this.inputLock = active ? 'user' : 'none';
+      }
+    }),
+    clearViewerDraftState: vi.fn(function (this: any, _viewerId: string) {
+      this.userDraftActive = false;
+      if (this.lockPolicy === 'auto') {
+        this.inputLock = 'none';
+      }
+    }),
     clearUserDraft: vi.fn(function (this: any) {
       this.userDraftActive = false;
       if (this.lockPolicy === 'auto') {
@@ -427,13 +439,13 @@ describe('viewer ws handler', () => {
         this.lockPolicy = policy;
         this.inputLock = policy === 'auto' ? 'none' : (policy === 'common' ? 'none' : policy);
       }),
-      setUserDraftActive: vi.fn(function (this: any, active: boolean) {
+      setViewerDraftState: vi.fn(function (this: any, _viewerId: string, active: boolean) {
         this.userDraftActive = active;
         if (this.lockPolicy === 'auto') {
           this.inputLock = active ? 'user' : 'none';
         }
       }),
-      clearUserDraft: vi.fn(function (this: any) {
+      clearViewerDraftState: vi.fn(function (this: any, _viewerId: string) {
         this.userDraftActive = false;
         if (this.lockPolicy === 'auto') {
           this.inputLock = 'none';
@@ -457,12 +469,54 @@ describe('viewer ws handler', () => {
     })), false);
 
     expect(session.setLockPolicy).toHaveBeenCalledWith('auto');
-    expect(session.setUserDraftActive).toHaveBeenCalledWith(true);
     expect(session.inputLock).toBe('user');
+    expect(session.userDraftActive).toBe(true);
 
     ws.emit('close');
 
-    expect(session.clearUserDraft).toHaveBeenCalled();
+    expect(session.inputLock).toBe('none');
+    expect(session.userDraftActive).toBe(false);
+  });
+
+  it('keeps auto draft lock active until the last drafting viewer disconnects', () => {
+    const session = createMockSession({
+      lockPolicy: 'auto',
+      userDraftActive: false,
+      setViewerDraftState: vi.fn(function (this: any, viewerId: string, active: boolean) {
+        this.__draftViewers = this.__draftViewers || new Set();
+        if (active) this.__draftViewers.add(viewerId);
+        else this.__draftViewers.delete(viewerId);
+        this.userDraftActive = this.__draftViewers.size > 0;
+        this.inputLock = this.userDraftActive ? 'user' : 'none';
+      }),
+      clearViewerDraftState: vi.fn(function (this: any, viewerId: string) {
+        this.__draftViewers = this.__draftViewers || new Set();
+        this.__draftViewers.delete(viewerId);
+        this.userDraftActive = this.__draftViewers.size > 0;
+        this.inputLock = this.userDraftActive ? 'user' : 'none';
+      }),
+    });
+    sessions.set('demo-session', session as any);
+    const wsA = new FakeWebSocket();
+    const wsB = new FakeWebSocket();
+    setViewerWss({
+      clients: new Set([wsA as any, wsB as any]),
+    } as any);
+
+    handleWsAttach(wsA as any, 'session', 'demo-session');
+    handleWsAttach(wsB as any, 'session', 'demo-session');
+
+    wsA.emit('message', Buffer.from(JSON.stringify({ type: 'lock', lock: 'auto' })), false);
+    wsA.emit('message', Buffer.from(JSON.stringify({ type: 'draft_state', active: true })), false);
+    wsB.emit('message', Buffer.from(JSON.stringify({ type: 'draft_state', active: true })), false);
+    wsA.emit('close');
+
+    expect(session.userDraftActive).toBe(true);
+    expect(session.inputLock).toBe('user');
+
+    wsB.emit('close');
+
+    expect(session.userDraftActive).toBe(false);
     expect(session.inputLock).toBe('none');
   });
 

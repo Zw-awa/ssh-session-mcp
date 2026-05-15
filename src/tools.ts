@@ -1423,9 +1423,12 @@ server.tool(
     const sentinelCommand = useMarker ? appendSentinelToCommand(command, sentinelMarker) : undefined;
     const sentinelSuffix = sentinelCommand?.sentinelSuffix;
     logSessionEvent(target.sessionId, 'command.started', {
+      actor: 'agent',
       operationMode: OPERATION_MODE,
       startedAt,
+      lockPolicy: target.lockPolicy,
       terminalMode,
+      userDraftActive: target.userDraftActive,
       ...commandMeta,
     });
     if (useMarker) {
@@ -1473,11 +1476,14 @@ server.tool(
         sentinelSuffix,
       };
       runningCommands.set(commandId, entry);
-      logSessionEvent(target.sessionId, 'command.promoted_async', {
-        commandId,
-        startedAt,
-        ...commandMeta,
-      });
+        logSessionEvent(target.sessionId, 'command.promoted_async', {
+          actor: 'agent',
+          commandId,
+          lockPolicy: target.lockPolicy,
+          startedAt,
+          userDraftActive: target.userDraftActive,
+          ...commandMeta,
+        });
 
       // Release lock
       target.inputLock = 'none';
@@ -1538,7 +1544,10 @@ server.tool(
       target.inputLock = 'none';
       broadcastLock(target);
       logSessionEvent(target.sessionId, 'command.password_prompt', {
+        actor: 'agent',
+        lockPolicy: target.lockPolicy,
         startedAt,
+        userDraftActive: target.userDraftActive,
         ...commandMeta,
       });
 
@@ -1573,11 +1582,14 @@ server.tool(
     // Try structured parsing
     const parsed = tryParseCommandOutput(command, outputText);
     logSessionEvent(target.sessionId, 'command.completed', {
+      actor: 'agent',
       completionReason: completion.reason,
       elapsedMs: completion.elapsedMs,
       exitCode,
+      lockPolicy: target.lockPolicy,
       startedAt,
       status: 'completed',
+      userDraftActive: target.userDraftActive,
       ...commandMeta,
     });
 
