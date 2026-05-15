@@ -1,6 +1,6 @@
 # ssh-session-mcp
 
-English: [README.md](README.md)
+**中文** | [English](README.md)
 
 [![License: Apache%202.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![Node.js Version](https://img.shields.io/badge/node-%3E%3D18-brightgreen)](https://nodejs.org/)

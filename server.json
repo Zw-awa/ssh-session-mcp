@@ -1,0 +1,69 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.zw-awa/ssh-session-mcp",
+  "title": "SSH Session MCP",
+  "description": "Persistent SSH PTY session manager for MCP clients with actor-aware input tracking, browser viewer support, and automatic session cleanup.",
+  "repository": {
+    "url": "https://github.com/Zw-awa/ssh-session-mcp",
+    "source": "github"
+  },
+  "version": "2.7.0",
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "ssh-session-mcp",
+      "version": "2.7.0",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "SSH_MCP_CONFIG",
+          "description": "Optional explicit path to ssh-session-mcp.config.json when the config is not in the current working directory.",
+          "format": "string"
+        },
+        {
+          "name": "SSH_MCP_INSTANCE",
+          "description": "Optional runtime instance id used to isolate state across multiple MCP clients or agents.",
+          "format": "string"
+        },
+        {
+          "name": "VIEWER_PORT",
+          "description": "Viewer HTTP port. Use auto to allocate a free local port, or 0 to disable the browser viewer.",
+          "format": "string"
+        },
+        {
+          "name": "SSH_MCP_MODE",
+          "description": "Operation mode. safe blocks risky or unsuitable terminal actions by default, while full allows broader execution.",
+          "format": "string"
+        },
+        {
+          "name": "SSH_MCP_LOCAL",
+          "description": "Set to true or 1 to run a local shell instead of opening a real SSH connection. Useful for demos and offline testing.",
+          "format": "string"
+        },
+        {
+          "name": "SSH_HOST",
+          "description": "Legacy single-target SSH host when not using ssh-session-mcp.config.json device profiles.",
+          "format": "string"
+        },
+        {
+          "name": "SSH_USER",
+          "description": "Legacy single-target SSH username when not using ssh-session-mcp.config.json device profiles.",
+          "format": "string"
+        },
+        {
+          "name": "SSH_PASSWORD",
+          "description": "Optional legacy password-based SSH authentication value.",
+          "format": "string",
+          "isSecret": true
+        },
+        {
+          "name": "SSH_KEY",
+          "description": "Optional path to a local SSH private key file for legacy single-target mode.",
+          "format": "string"
+        }
+      ]
+    }
+  ]
+}

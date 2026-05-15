@@ -1,6 +1,6 @@
 # ssh-session-mcp
 
-中文文档: [简体中文](README.zh-CN.md)
+[中文](README.zh-CN.md) | **English**
 
 [![License: Apache%202.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![Node.js Version](https://img.shields.io/badge/node-%3E%3D18-brightgreen)](https://nodejs.org/)

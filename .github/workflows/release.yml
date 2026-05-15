@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: write
+  id-token: write
 
 concurrency:
   group: release-${{ github.ref }}
@@ -25,8 +26,9 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
-          node-version: 20
-          cache: npm
+          node-version: 24
+          registry-url: 'https://registry.npmjs.org'
+          package-manager-cache: false
 
       - name: Verify tag matches package version
         shell: bash
@@ -34,12 +36,18 @@ jobs:
           set -euo pipefail
           TAG_VERSION="${GITHUB_REF_NAME#v}"
           PACKAGE_VERSION=$(node -pe "JSON.parse(require('fs').readFileSync('./package.json', 'utf8')).version")
+          SERVER_JSON_VERSION=$(node -pe "JSON.parse(require('fs').readFileSync('./server.json', 'utf8')).version")
           echo "tag=$TAG_VERSION"
           echo "package.json=$PACKAGE_VERSION"
+          echo "server.json=$SERVER_JSON_VERSION"
           test "$TAG_VERSION" = "$PACKAGE_VERSION"
+          test "$TAG_VERSION" = "$SERVER_JSON_VERSION"
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Verify version consistency
+        run: npm run version:check
 
       - name: Build project
         run: npm run build
@@ -53,17 +61,8 @@ jobs:
       - name: Build static site
         run: npm run build:site
 
-      - name: Publish to npm when token is configured
-        shell: bash
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: |
-          set -euo pipefail
-          if [ -n "${NODE_AUTH_TOKEN:-}" ]; then
-            npm publish --access public
-          else
-            echo "Skipping npm publish because NPM_TOKEN is not configured."
-          fi
+      - name: Publish to npm with Trusted Publishing
+        run: npm publish --access public --provenance
 
       - name: Package npm tarball
         shell: bash

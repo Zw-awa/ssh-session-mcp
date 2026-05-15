@@ -1,0 +1,52 @@
+name: Gitee Sync
+
+on:
+  push:
+    branches:
+      - main
+      - master
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gitee-sync-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    if: ${{ secrets.GITEE_USERNAME != '' && secrets.GITEE_TOKEN != '' }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Configure git
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Add gitee remote
+        run: |
+          git remote add gitee-sync "https://${{ secrets.GITEE_USERNAME }}:${{ secrets.GITEE_TOKEN }}@gitee.com/Zw-awa/ssh-session-mcp.git"
+
+      - name: Sync branch or tag to Gitee
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ "${GITHUB_REF_TYPE}" = "branch" ]; then
+            git push gitee-sync "HEAD:${GITHUB_REF_NAME}" --force
+          elif [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            git push gitee-sync "refs/tags/${GITHUB_REF_NAME}:refs/tags/${GITHUB_REF_NAME}" --force
+          else
+            echo "Unsupported ref type: ${GITHUB_REF_TYPE}"
+            exit 1
+          fi
