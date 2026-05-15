@@ -34,7 +34,53 @@ Most SSH-oriented MCP servers can execute commands, but they do not manage termi
 
 ## Quick Start
 
-### 1. Fastest Local Demo
+### 1. Agent-First Install (Auto-download on first run)
+
+If the goal is to let Claude Code, Codex, or OpenCode install the server automatically, prefer `npx -y ssh-session-mcp` in the MCP command instead of a prior global install.
+
+#### Claude Code
+
+```bash
+claude mcp add --transport stdio ssh-session-mcp -- npx -y ssh-session-mcp --viewerPort=auto
+```
+
+Windows note from the Claude Code docs: native Windows users should wrap `npx` with `cmd /c` for stdio MCP servers.
+
+```bash
+claude mcp add --transport stdio ssh-session-mcp -- cmd /c npx -y ssh-session-mcp --viewerPort=auto
+```
+
+#### Codex
+
+```bash
+codex mcp add ssh-session-mcp -- npx -y ssh-session-mcp --viewerPort=auto
+```
+
+#### OpenCode
+
+OpenCode's `opencode mcp add` flow is interactive. Choose a local MCP server and use this command:
+
+```bash
+npx -y ssh-session-mcp --viewerPort=auto
+```
+
+If you prefer config instead of the interactive flow:
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "ssh-session-mcp": {
+      "type": "local",
+      "command": ["npx", "-y", "ssh-session-mcp", "--viewerPort=auto"]
+    }
+  }
+}
+```
+
+This is the closest thing to "automatic installation" for stdio MCP servers today: the MCP client stores the command, and `npx -y` downloads the package automatically the first time it runs.
+
+### 2. Fastest Local Demo
 
 ```bash
 npm install -g ssh-session-mcp
@@ -43,7 +89,7 @@ ssh-session-mcp-ctl launch --local --viewerPort=auto
 
 This starts a local shell instead of SSH and opens the browser terminal, which is the easiest way to test the MCP runtime before touching a real server.
 
-### 2. Register As An MCP Server
+### 3. Register As An MCP Server
 
 Use the MCP server binary directly when wiring a client:
 
@@ -69,7 +115,7 @@ If you prefer `npx` instead of a global install:
 npx -y ssh-session-mcp --viewerPort=auto
 ```
 
-### 3. Connect To A Real SSH Target
+### 4. Connect To A Real SSH Target
 
 Create `.env` from `.env.example`:
 
@@ -94,7 +140,7 @@ Then launch:
 ssh-session-mcp-ctl launch --viewerPort=auto
 ```
 
-### 4. Multi-Device Config
+### 5. Multi-Device Config
 
 For multiple boards or named targets, create `ssh-session-mcp.config.json`:
 

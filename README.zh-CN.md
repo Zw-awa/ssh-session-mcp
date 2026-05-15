@@ -34,7 +34,53 @@
 
 ## 快速开始
 
-### 1. 最快本地演示
+### 1. 面向 Agent 的自动安装方式
+
+如果你的目标是让 Claude Code、Codex、OpenCode 在 `mcp add` 时自动下载并运行这个 server，优先把 MCP 命令写成 `npx -y ssh-session-mcp`，而不是要求用户先全局安装。
+
+#### Claude Code
+
+```bash
+claude mcp add --transport stdio ssh-session-mcp -- npx -y ssh-session-mcp --viewerPort=auto
+```
+
+根据 Claude Code 官方文档，Windows 原生环境下，stdio MCP server 通过 `npx` 启动时建议套一层 `cmd /c`：
+
+```bash
+claude mcp add --transport stdio ssh-session-mcp -- cmd /c npx -y ssh-session-mcp --viewerPort=auto
+```
+
+#### Codex
+
+```bash
+codex mcp add ssh-session-mcp -- npx -y ssh-session-mcp --viewerPort=auto
+```
+
+#### OpenCode
+
+OpenCode 的 `opencode mcp add` 是交互式流程。选择本地 MCP server 后，把命令填成：
+
+```bash
+npx -y ssh-session-mcp --viewerPort=auto
+```
+
+如果你更喜欢直接写配置，也可以这样：
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "ssh-session-mcp": {
+      "type": "local",
+      "command": ["npx", "-y", "ssh-session-mcp", "--viewerPort=auto"]
+    }
+  }
+}
+```
+
+这已经是今天 stdio MCP server 最接近“自动安装”的方式了：MCP client 记住命令，第一次运行时由 `npx -y` 自动下载 npm 包。
+
+### 2. 最快本地演示
 
 ```bash
 npm install -g ssh-session-mcp
@@ -43,7 +89,7 @@ ssh-session-mcp-ctl launch --local --viewerPort=auto
 
 这会启动本地 shell 而不是 SSH，并自动打开浏览器终端。它是验证产品体验、MCP 调用链和 viewer 的最快路径。
 
-### 2. 作为 MCP Server 注册
+### 3. 作为 MCP Server 注册
 
 如果你要把它接到 Claude Code、Codex CLI 这类 MCP 客户端，直接使用 server 命令：
 
@@ -69,7 +115,7 @@ codex mcp add ssh-session-mcp -- ssh-session-mcp --viewerPort=auto
 npx -y ssh-session-mcp --viewerPort=auto
 ```
 
-### 3. 连接真实 SSH 目标
+### 4. 连接真实 SSH 目标
 
 从 `.env.example` 复制一份：
 
@@ -94,7 +140,7 @@ SSH_MCP_MODE=safe
 ssh-session-mcp-ctl launch --viewerPort=auto
 ```
 
-### 4. 多设备配置
+### 5. 多设备配置
 
 如果你有多个设备或多个命名连接，创建 `ssh-session-mcp.config.json`：
 
