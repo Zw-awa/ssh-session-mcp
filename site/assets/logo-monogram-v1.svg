@@ -1,0 +1,25 @@
+<svg width="400" height="400" viewBox="0 0 400 400" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="logoTitle logoDesc">
+  <title id="logoTitle">SSH Session MCP monogram logo</title>
+  <desc id="logoDesc">A geometric S-shaped terminal monogram with a terminal prompt motif for SSH Session MCP.</desc>
+
+  <rect x="24" y="24" width="352" height="352" rx="84" fill="#11161C"/>
+  <rect x="24" y="24" width="352" height="352" rx="84" stroke="rgba(245,235,221,0.10)" stroke-width="2"/>
+
+  <path
+    d="M278 104H165C128 104 104 124 104 155C104 185 125 201 168 201H229C269 201 292 220 292 250C292 281 268 300 226 300H112"
+    stroke="#59C3B2"
+    stroke-width="46"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+
+  <path
+    d="M222 50L252 67L222 84"
+    stroke="#F5EBDD"
+    stroke-width="14"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+
+  <rect x="232" y="104" width="54" height="12" rx="6" fill="#F5EBDD"/>
+</svg>
