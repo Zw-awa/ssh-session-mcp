@@ -8,12 +8,12 @@
     "source": "github"
   },
   "websiteUrl": "https://zw-awa.github.io/ssh-session-mcp/",
-  "version": "2.7.0",
+  "version": "2.7.1",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "ssh-session-mcp",
-      "version": "2.7.0",
+      "version": "2.7.1",
       "transport": {
         "type": "stdio"
       },
