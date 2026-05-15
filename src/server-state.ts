@@ -176,6 +176,9 @@ export interface RunningCommand {
   sessionId: string;
   command: string;
   commandProgram?: string;
+  ruleCategory?: 'dangerous' | 'blocked' | 'interactive' | 'streaming' | 'long_running';
+  ruleId?: string;
+  ruleSource?: 'built-in' | 'default' | 'session';
   startOffset: number;
   startedAt: string;
   startTime: number;
@@ -995,6 +998,9 @@ export function startBackgroundMonitor(entry: RunningCommand, session: SSHSessio
             commandId: stored.commandId,
             elapsedMs: stored.completedAt - stored.startTime,
             lockPolicy: session.lockPolicy,
+            ruleCategory: stored.ruleCategory,
+            ruleId: stored.ruleId,
+            ruleSource: stored.ruleSource,
             status: stored.status,
             userDraftActive: session.userDraftActive,
             ...summarizeCommandMeta(stored.command),
@@ -1023,6 +1029,9 @@ export function startBackgroundMonitor(entry: RunningCommand, session: SSHSessio
       exitCode: stored.exitCode,
       elapsedMs: stored.completedAt - stored.startTime,
       lockPolicy: session.lockPolicy,
+      ruleCategory: stored.ruleCategory,
+      ruleId: stored.ruleId,
+      ruleSource: stored.ruleSource,
       status: stored.status,
       userDraftActive: session.userDraftActive,
       ...summarizeCommandMeta(stored.command),
@@ -1037,6 +1046,9 @@ export function startBackgroundMonitor(entry: RunningCommand, session: SSHSessio
         commandId: stored.commandId,
         elapsedMs: stored.completedAt - stored.startTime,
         lockPolicy: session.lockPolicy,
+        ruleCategory: stored.ruleCategory,
+        ruleId: stored.ruleId,
+        ruleSource: stored.ruleSource,
         status: stored.status,
         userDraftActive: session.userDraftActive,
         ...summarizeCommandMeta(stored.command),
@@ -1090,9 +1102,12 @@ export function sweepSessions(nowMs = Date.now()) {
           actor: 'agent',
           commandId: entry.commandId,
           elapsedMs: entry.completedAt - entry.startTime,
+          ruleCategory: entry.ruleCategory,
+          ruleId: entry.ruleId,
+          ruleSource: entry.ruleSource,
           status: entry.status,
-        ...summarizeCommandMeta(entry.command),
-      });
+          ...summarizeCommandMeta(entry.command),
+        });
       runningCommands.delete(cmdId);
     }
   }
