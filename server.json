@@ -1,6 +1,6 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
-  "name": "io.github.zw-awa/ssh-session-mcp",
+  "name": "io.github.Zw-awa/ssh-session-mcp",
   "title": "SSH Session MCP",
   "description": "Shared SSH PTY runtime for MCP clients with viewer, input lock, async tracking, and policy rules.",
   "repository": {
