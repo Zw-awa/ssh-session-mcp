@@ -13,6 +13,7 @@ import {
   INSTANCE_ID, PROFILES, DEBUG_MODE, LOCAL_MODE,
   sweepSessions, refreshActiveSession, buildSessionDiagnostics,
   openSSHSession, buildSessionMetadata, setActiveSession,
+  buildConfiguredSessionPolicyRules,
   DEFAULT_COLS, DEFAULT_ROWS, DEFAULT_TERM,
   DEFAULT_TIMEOUT, DEFAULT_CLOSED_RETENTION_MS,
   type SessionWriteRecord, McpError, ErrorCode, buildUserLockMessage,
@@ -348,6 +349,7 @@ async function handleSessionsCreateRequest(writers: ViewerResponseWriters) {
     const m = buildSessionMetadata({ profileSource: 'manual', sessionId: sid, sessionName: nm });
     const s = await openSSHSession({ cols: DEFAULT_COLS, closedRetentionMs: DEFAULT_CLOSED_RETENTION_MS,
       host: 'localhost', idleTimeoutMs: DEFAULT_TIMEOUT, metadata: m, port: 0,
+      policyRules: buildConfiguredSessionPolicyRules(),
       rows: DEFAULT_ROWS, sessionId: sid, sessionName: nm, term: DEFAULT_TERM,
       user: process.env.USER || process.env.USERNAME || 'local' });
     sessions.set(sid, s); setActiveSession(s);

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  type CustomPolicyRule,
   type OperationMode,
   type TerminalMode,
   validateCommand,
@@ -55,6 +56,29 @@ describe('detectTerminalMode', () => {
 });
 
 describe('validateCommand', () => {
+  const customRules: CustomPolicyRule[] = [
+    {
+      id: 'block-kubectl-delete',
+      enabled: true,
+      pattern: '\\bkubectl\\s+delete\\b',
+      mode: 'safe',
+      category: 'dangerous',
+      action: 'block',
+      message: 'kubectl delete blocked by session policy',
+      source: 'session',
+    },
+    {
+      id: 'warn-terraform-apply',
+      enabled: true,
+      pattern: '\\bterraform\\s+apply\\b',
+      mode: 'both',
+      category: 'dangerous',
+      action: 'warn',
+      message: 'terraform apply is risky',
+      source: 'default',
+    },
+  ];
+
   describe('ALWAYS_BLOCKED', () => {
     it('blocks fork bombs', () => {
       const result = validateCommand(':(){ :|:& };:', 'full');
@@ -145,6 +169,13 @@ describe('validateCommand', () => {
       expect(validateCommand('python3 script.py', 'safe').allowed).toBe(true);
     });
 
+    it('applies custom blocking rules before built-in safe warnings', () => {
+      const result = validateCommand('kubectl delete pod demo', 'safe', customRules);
+      expect(result.allowed).toBe(false);
+      expect(result.ruleId).toBe('block-kubectl-delete');
+      expect(result.source).toBe('session');
+    });
+
     it('allows tail without -f', () => {
       expect(validateCommand('tail -n 100 /var/log/syslog', 'safe').allowed).toBe(true);
     });
@@ -163,6 +194,13 @@ describe('validateCommand', () => {
       const result = validateCommand('vim file.txt', 'full');
       expect(result.allowed).toBe(true);
       expect(result.category).toBe('interactive');
+    });
+
+    it('allows custom warn rules in full mode with metadata', () => {
+      const result = validateCommand('terraform apply', 'full', customRules);
+      expect(result.allowed).toBe(true);
+      expect(result.ruleId).toBe('warn-terraform-apply');
+      expect(result.source).toBe('default');
     });
 
     it('still blocks fork bombs', () => {

@@ -61,7 +61,12 @@ import {
 
 import {
   type OperationMode,
+  type CustomPolicyRule,
   validateCommand,
+  type PolicyRuleAction,
+  type PolicyRuleCategory,
+  type PolicyRuleMode,
+  assertValidPolicyRegex,
   detectTerminalMode,
   isKnownSlowCommand,
 } from './validation.js';
@@ -116,7 +121,12 @@ export {
 } from './runtime.js';
 export {
   type OperationMode,
+  type CustomPolicyRule,
+  type PolicyRuleAction,
+  type PolicyRuleCategory,
+  type PolicyRuleMode,
   validateCommand,
+  assertValidPolicyRegex,
   detectTerminalMode,
   isKnownSlowCommand,
 } from './validation.js';
@@ -522,6 +532,13 @@ export function resolveConfiguredDefaultDeviceId() {
   return resolveDefaultDeviceId(PROFILES);
 }
 
+export function buildConfiguredSessionPolicyRules(): CustomPolicyRule[] {
+  return (PROFILES.config?.policyRules || []).map(rule => ({
+    ...rule,
+    source: 'default' as const,
+  }));
+}
+
 export function resolveProfileOrThrow(deviceId: string) {
   const profile = resolveDeviceProfile(PROFILES, deviceId);
   if (!profile) {
@@ -816,6 +833,11 @@ export function buildSessionDiagnostics(session: SSHSession) {
     staleViewerProcess,
     logDir: LOG_CONFIG.dir,
     logMode: LOG_CONFIG.mode,
+    policy: {
+      defaultRuleCount: session.getDefaultPolicyRules().length,
+      rules: session.getPolicyRules(),
+      sessionRuleCount: session.getPolicyRules().length,
+    },
   });
 }
 
@@ -1203,6 +1225,7 @@ export async function openSSHSession(options: {
   keyPath?: string;
   metadata: SessionMetadata;
   password?: string;
+  policyRules?: CustomPolicyRule[];
   profile?: DeviceProfile;
   port: number;
   rows: number;
@@ -1216,7 +1239,7 @@ export async function openSSHSession(options: {
     const stream = new LocalShellStream();
     const connection = new LocalConnection();
 
-    return new SSHSession(
+    const session = new SSHSession(
       options.sessionId,
       options.sessionName,
       options.metadata,
@@ -1232,6 +1255,8 @@ export async function openSSHSession(options: {
       connection as unknown as SSHConnection,
       stream as unknown as any,
     );
+    session.setInheritedPolicyRules(options.policyRules || []);
+    return session;
   }
 
   const sshConfig: SSHConfig = {
@@ -1268,7 +1293,7 @@ export async function openSSHSession(options: {
         return;
       }
 
-      resolve(new SSHSession(
+      const session = new SSHSession(
         options.sessionId,
         options.sessionName,
         options.metadata,
@@ -1283,7 +1308,9 @@ export async function openSSHSession(options: {
         tuning,
         connection,
         stream,
-      ));
+      );
+      session.setInheritedPolicyRules(options.policyRules || []);
+      resolve(session);
     });
   });
 }

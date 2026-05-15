@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -34,6 +34,16 @@ describe('profile config helpers', () => {
           auth: { keyPath: '/tmp/id_rsa' },
         },
       ],
+      policyRules: [
+        {
+          id: 'block-kubectl-delete',
+          pattern: '\\bkubectl\\s+delete\\b',
+          mode: 'safe',
+          category: 'dangerous',
+          action: 'block',
+          message: 'kubectl delete is blocked in safe mode',
+        },
+      ],
     }, null, 2), 'utf8');
 
     const loaded = loadProfiles({
@@ -47,6 +57,8 @@ describe('profile config helpers', () => {
     expect(resolveDeviceProfile(loaded, 'board-b')?.host).toBe('192.168.10.59');
     expect(summarizeAuth(resolveDeviceProfile(loaded, 'board-a')!)).toBe('passwordEnv');
     expect(summarizeAuth(resolveDeviceProfile(loaded, 'board-b')!)).toBe('keyPath');
+    expect(loaded.config?.policyRules).toHaveLength(1);
+    expect(loaded.config?.policyRules[0].id).toBe('block-kubectl-delete');
   });
 
   it('falls back to legacy-env mode when no config exists', () => {
@@ -113,7 +125,38 @@ describe('profile config helpers', () => {
             tags: ['workspace'],
           },
         ],
+        policyRules: [
+          {
+            id: 'block-global-rule',
+            pattern: '\\brm\\s+-rf\\b',
+            mode: 'safe',
+            category: 'dangerous',
+            action: 'warn',
+            message: 'workspace override',
+          },
+          {
+            id: 'block-workspace-only',
+            pattern: '\\bsystemctl\\s+restart\\b',
+            mode: 'safe',
+            category: 'dangerous',
+            action: 'block',
+            message: 'systemctl restart blocked',
+          },
+        ],
       }, null, 2), 'utf8');
+
+      const globalWithPolicies = JSON.parse(readFileSync(paths.globalPath, 'utf8'));
+      globalWithPolicies.policyRules = [
+        {
+          id: 'block-global-rule',
+          pattern: '\\brm\\s+-rf\\b',
+          mode: 'safe',
+          category: 'dangerous',
+          action: 'block',
+          message: 'global rule',
+        },
+      ];
+      writeFileSync(paths.globalPath, JSON.stringify(globalWithPolicies, null, 2), 'utf8');
 
       const loaded = loadProfiles({ cwd: dir });
 
@@ -132,6 +175,11 @@ describe('profile config helpers', () => {
         tags: ['workspace'],
       });
       expect(resolveDeviceProfile(loaded, 'board-b')?.host).toBe('192.168.10.59');
+      expect(loaded.config?.policyRules.map(rule => rule.id).sort()).toEqual([
+        'block-global-rule',
+        'block-workspace-only',
+      ]);
+      expect(loaded.config?.policyRules.find(rule => rule.id === 'block-global-rule')?.action).toBe('warn');
     } finally {
       process.env.APPDATA = originalAppData;
       process.env.XDG_CONFIG_HOME = originalXdgConfigHome;

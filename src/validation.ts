@@ -3,6 +3,9 @@ import { stripAnsi } from './shared.js';
 // --- Operation Mode ---
 
 export type OperationMode = 'safe' | 'full';
+export type PolicyRuleMode = 'safe' | 'full' | 'both';
+export type PolicyRuleAction = 'block' | 'warn';
+export type PolicyRuleCategory = 'dangerous' | 'blocked' | 'interactive' | 'streaming' | 'long_running';
 
 // --- Terminal Mode Detection ---
 
@@ -39,9 +42,22 @@ export interface ValidationResult {
   allowed: boolean;
   category: 'safe' | 'dangerous' | 'blocked' | 'interactive' | 'streaming' | 'long_running';
   ruleId?: string;
-  source?: 'built-in';
+  source?: 'built-in' | 'default' | 'session';
   message?: string;
   suggestion?: string;
+}
+
+export interface CustomPolicyRule {
+  id: string;
+  enabled: boolean;
+  pattern: string;
+  flags?: string;
+  mode: PolicyRuleMode;
+  category: PolicyRuleCategory;
+  action: PolicyRuleAction;
+  message: string;
+  suggestion?: string;
+  source: 'default' | 'session';
 }
 
 interface BuiltInPolicyEntry {
@@ -102,11 +118,49 @@ function matchRule(command: string, entries: BuiltInPolicyEntry[]) {
   return entries.find(entry => entry.pattern.test(command));
 }
 
-export function validateCommand(command: string, mode: OperationMode): ValidationResult {
+export function assertValidPolicyRegex(pattern: string, flags = '') {
+  try {
+    // eslint-disable-next-line no-new
+    new RegExp(pattern, flags);
+  } catch (error) {
+    throw new Error(`Invalid policy regex /${pattern}/${flags}: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+function customRuleApplies(rule: CustomPolicyRule, mode: OperationMode) {
+  return rule.enabled && (rule.mode === 'both' || rule.mode === mode);
+}
+
+function matchCustomRule(command: string, mode: OperationMode, rules: CustomPolicyRule[]) {
+  for (const rule of rules) {
+    if (!customRuleApplies(rule, mode)) {
+      continue;
+    }
+    const flags = rule.flags || '';
+    if (new RegExp(rule.pattern, flags).test(command)) {
+      return rule;
+    }
+  }
+  return undefined;
+}
+
+export function validateCommand(command: string, mode: OperationMode, customRules: CustomPolicyRule[] = []): ValidationResult {
   // Always blocked (both modes)
   const alwaysBlocked = matchRule(command, ALWAYS_BLOCKED);
   if (alwaysBlocked) {
     return toValidationResult(alwaysBlocked, false);
+  }
+
+  const customMatch = matchCustomRule(command, mode, customRules);
+  if (customMatch) {
+    return {
+      allowed: customMatch.action !== 'block',
+      category: customMatch.category,
+      ruleId: customMatch.id,
+      source: customMatch.source,
+      message: customMatch.message,
+      suggestion: customMatch.suggestion,
+    };
   }
 
   // Safe mode: block dangerous + interactive

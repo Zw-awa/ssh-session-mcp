@@ -21,6 +21,7 @@ Most SSH-oriented MCP servers can execute commands, but they do not manage termi
 - Browser terminal for live inspection and manual intervention
 - Input lock so the AI does not type over the user
 - Safe/full execution modes for risky commands
+- Configurable default policy rules plus session-level custom rule overrides
 - Async command tracking for long-running remote work
 - Multi-device and multi-connection profile support
 - Local debug mode for demos, offline testing, and prompt iteration
@@ -241,6 +242,10 @@ If the terminal is locked by the user, `ssh-run`, `ssh-session-send`, and `ssh-s
 | `ssh-status` | Inspect sessions, viewer state, and operation mode |
 | `ssh-command-status` | Poll async command progress |
 | `ssh-retry` | Retry flaky commands with backoff |
+| `ssh-session-policy-list` | Inspect inherited defaults and current session custom policy rules |
+| `ssh-session-policy-upsert` | Add or update a session-level custom policy rule |
+| `ssh-session-policy-remove` | Remove a session-level custom policy rule |
+| `ssh-session-policy-reset` | Reset session custom rules back to inherited defaults |
 
 ### Full Tool Catalog
 
@@ -256,6 +261,10 @@ If the terminal is locked by the user, `ssh-run`, `ssh-session-send`, and `ssh-s
 | `ssh-session-resize` | Resize the PTY |
 | `ssh-session-list` | List tracked sessions |
 | `ssh-session-diagnostics` | Inspect lock state, warnings, running command state, and viewer health |
+| `ssh-session-policy-list` | Show inherited policy defaults and the current session rule set |
+| `ssh-session-policy-upsert` | Add or update a session-specific custom policy rule |
+| `ssh-session-policy-remove` | Remove a session-specific custom policy rule |
+| `ssh-session-policy-reset` | Restore inherited rules for the current session |
 | `ssh-session-set-active` | Choose the default session |
 | `ssh-viewer-ensure` | Open or reuse the local viewer |
 | `ssh-viewer-list` | List tracked viewer processes |
@@ -277,6 +286,14 @@ ssh-session-mcp-ctl launch --viewerPort=auto
 ssh-session-mcp-ctl launch --local --viewerPort=auto
 ssh-session-mcp-ctl logs --tail=60
 ssh-session-mcp-ctl cleanup
+```
+
+Default rule library management for operators:
+
+```bash
+ssh-session-mcp-config policy list --scope=merged
+ssh-session-mcp-config policy set block-kubectl-delete --pattern="\\bkubectl\\s+delete\\b" --category=dangerous --action=block --message="kubectl delete is blocked in safe mode"
+ssh-session-mcp-config policy remove block-kubectl-delete
 ```
 
 Equivalent repo-local commands also exist:

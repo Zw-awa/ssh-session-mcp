@@ -109,6 +109,10 @@ Do not jump to raw PTY tools unless the normal loop is insufficient.
 | `ssh-status` | Inspect sessions, viewer state, and mode |
 | `ssh-command-status` | Poll long-running commands |
 | `ssh-retry` | Retry known-flaky commands |
+| `ssh-session-policy-list` | Inspect inherited defaults and current session custom rules |
+| `ssh-session-policy-upsert` | Add or update a session-level custom policy rule |
+| `ssh-session-policy-remove` | Remove a session-level custom policy rule |
+| `ssh-session-policy-reset` | Reset the session rule set back to inherited defaults |
 
 ## Full MCP Tool Catalog
 
@@ -124,6 +128,10 @@ Do not jump to raw PTY tools unless the normal loop is insufficient.
 | `ssh-session-resize` | PTY resize |
 | `ssh-session-list` | Session listing |
 | `ssh-session-diagnostics` | Terminal mode, warnings, running command, viewer health |
+| `ssh-session-policy-list` | Inspect inherited defaults and current session policy rules |
+| `ssh-session-policy-upsert` | Add or update a session-level custom rule |
+| `ssh-session-policy-remove` | Remove a session-level custom rule |
+| `ssh-session-policy-reset` | Restore inherited rules for the current session |
 | `ssh-session-set-active` | Default-target selection |
 | `ssh-viewer-ensure` | Open viewer |
 | `ssh-viewer-list` | Inspect viewer processes |

@@ -31,6 +31,10 @@ Do not build wrapper scripts for normal terminal work unless the human explicitl
 | `ssh-status` | Inspect runtime state |
 | `ssh-command-status` | Poll async commands |
 | `ssh-retry` | Retry flaky commands |
+| `ssh-session-policy-list` | Inspect inherited defaults and current session custom rules |
+| `ssh-session-policy-upsert` | Add or update a session-specific custom rule |
+| `ssh-session-policy-remove` | Remove a session-specific custom rule |
+| `ssh-session-policy-reset` | Reset session rules back to inherited defaults |
 
 ## Full Tool Catalog
 
@@ -46,6 +50,10 @@ Do not build wrapper scripts for normal terminal work unless the human explicitl
 | `ssh-session-resize` | PTY resize |
 | `ssh-session-list` | Session listing |
 | `ssh-session-diagnostics` | Lock state, warnings, running command, viewer health |
+| `ssh-session-policy-list` | Inspect the active custom rule set and inherited defaults |
+| `ssh-session-policy-upsert` | Add or update a session-level custom rule |
+| `ssh-session-policy-remove` | Remove a session-level custom rule |
+| `ssh-session-policy-reset` | Restore inherited rules for the session |
 | `ssh-session-set-active` | Default-target selection |
 | `ssh-viewer-ensure` | Open or reuse viewer |
 | `ssh-viewer-list` | Viewer process inspection |

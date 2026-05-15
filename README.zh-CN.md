@@ -21,6 +21,7 @@
 - 浏览器 viewer 用于旁观、接管和协作
 - 输入锁防止 AI 覆盖用户输入
 - `safe` / `full` 模式控制高风险操作
+- 支持默认规则库和会话级自定义规则覆写
 - 长时间运行命令自动转异步并可轮询
 - 多设备 / 多连接 profile
 - `--local` 本地调试模式，适合演示和离线测试
@@ -241,6 +242,10 @@ ssh-quick-connect -> ssh-run -> 看输出 -> 需要时查 ssh-command-status -> 
 | `ssh-status` | 查看 session、viewer 状态和运行模式 |
 | `ssh-command-status` | 查询异步命令进度 |
 | `ssh-retry` | 对易失败命令做自动重试 |
+| `ssh-session-policy-list` | 查看继承默认规则和当前会话自定义规则 |
+| `ssh-session-policy-upsert` | 新增或更新会话级自定义规则 |
+| `ssh-session-policy-remove` | 删除会话级自定义规则 |
+| `ssh-session-policy-reset` | 将会话规则恢复为继承默认值 |
 
 ### 完整工具清单
 
@@ -256,6 +261,10 @@ ssh-quick-connect -> ssh-run -> 看输出 -> 需要时查 ssh-command-status -> 
 | `ssh-session-resize` | 调整 PTY 尺寸 |
 | `ssh-session-list` | 列出所有追踪中的会话 |
 | `ssh-session-diagnostics` | 查看锁状态、告警、运行中命令和 viewer 健康状态 |
+| `ssh-session-policy-list` | 查看继承默认规则和当前会话规则集 |
+| `ssh-session-policy-upsert` | 新增或更新会话级自定义规则 |
+| `ssh-session-policy-remove` | 删除会话级自定义规则 |
+| `ssh-session-policy-reset` | 把会话规则恢复为继承默认值 |
 | `ssh-session-set-active` | 设置默认活动会话 |
 | `ssh-viewer-ensure` | 打开或复用本地 viewer |
 | `ssh-viewer-list` | 查看 viewer 进程 |
@@ -277,6 +286,14 @@ ssh-session-mcp-ctl launch --viewerPort=auto
 ssh-session-mcp-ctl launch --local --viewerPort=auto
 ssh-session-mcp-ctl logs --tail=60
 ssh-session-mcp-ctl cleanup
+```
+
+给操作者维护默认规则库：
+
+```bash
+ssh-session-mcp-config policy list --scope=merged
+ssh-session-mcp-config policy set block-kubectl-delete --pattern="\\bkubectl\\s+delete\\b" --category=dangerous --action=block --message="safe 模式下禁止 kubectl delete"
+ssh-session-mcp-config policy remove block-kubectl-delete
 ```
 
 仓库内等价命令也保留着：

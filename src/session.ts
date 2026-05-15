@@ -20,6 +20,7 @@ import {
   type HistorySnapshot,
   type HistoryStats,
 } from './history.js';
+import type { CustomPolicyRule } from './validation.js';
 
 export interface SSHConfig extends ConnectConfig {
   host: string;
@@ -77,6 +78,7 @@ export interface SessionSummary {
   bufferEnd: number;
   eventStartSeq: number;
   eventEndSeq: number;
+  customPolicyRuleCount: number;
   lockPolicy: 'common' | 'agent' | 'user' | 'auto';
   inputLock: 'none' | 'agent' | 'user';
   userDraftActive: boolean;
@@ -250,6 +252,8 @@ export class SSHSession {
   private readonly history: SessionHistory;
   private lastActivityMs = Date.now();
   private readonly activeUserDraftViewers = new Set<string>();
+  private defaultPolicyRules: CustomPolicyRule[] = [];
+  private policyRules: CustomPolicyRule[] = [];
 
   constructor(
     public readonly sessionId: string,
@@ -612,11 +616,44 @@ export class SSHSession {
       bufferEnd: this.currentBufferEnd(),
       eventStartSeq: this.eventSeqStart,
       eventEndSeq: this.currentEventEnd(),
+      customPolicyRuleCount: this.policyRules.length,
       lockPolicy: this.lockPolicy,
       inputLock: this.inputLock,
       userDraftActive: this.userDraftActive,
       userDraftUpdatedAt: this.userDraftUpdatedAt,
     };
+  }
+
+  getPolicyRules() {
+    return this.policyRules.map(rule => ({ ...rule }));
+  }
+
+  getDefaultPolicyRules() {
+    return this.defaultPolicyRules.map(rule => ({ ...rule }));
+  }
+
+  setInheritedPolicyRules(rules: CustomPolicyRule[]) {
+    this.defaultPolicyRules = rules.map(rule => ({ ...rule, source: 'default' as const }));
+    this.policyRules = this.defaultPolicyRules.map(rule => ({ ...rule }));
+  }
+
+  upsertPolicyRule(rule: Omit<CustomPolicyRule, 'source'> | CustomPolicyRule) {
+    const nextRule: CustomPolicyRule = {
+      ...rule,
+      source: 'session',
+    };
+    const next = this.policyRules.filter(existing => existing.id !== nextRule.id);
+    next.push(nextRule);
+    next.sort((a, b) => a.id.localeCompare(b.id));
+    this.policyRules = next;
+  }
+
+  removePolicyRule(id: string) {
+    this.policyRules = this.policyRules.filter(rule => rule.id !== id);
+  }
+
+  resetPolicyRules() {
+    this.policyRules = this.defaultPolicyRules.map(rule => ({ ...rule }));
   }
 
   setLockPolicy(policy: 'common' | 'agent' | 'user' | 'auto') {

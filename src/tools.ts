@@ -52,6 +52,7 @@ import {
   inferProfileSource,
   allocateConnectionName,
   buildSessionMetadata,
+  buildConfiguredSessionPolicyRules,
   buildSessionDiagnostics,
   buildDashboard,
   buildDashboardState,
@@ -92,7 +93,12 @@ import {
   broadcastLock,
   buildUserLockMessage,
   buildUserLockEvidence,
+  assertValidPolicyRegex,
   escapeRegExp,
+  type CustomPolicyRule,
+  type PolicyRuleAction,
+  type PolicyRuleCategory,
+  type PolicyRuleMode,
   type RunningCommand,
   type ViewerLaunchMode,
   type ViewerSingletonScope,
@@ -123,6 +129,41 @@ import {
   McpError,
   ErrorCode,
 } from './server-state.js';
+
+const POLICY_RULE_CATEGORIES = ['dangerous', 'blocked', 'interactive', 'streaming', 'long_running'] as const;
+const POLICY_RULE_MODES = ['safe', 'full', 'both'] as const;
+const POLICY_RULE_ACTIONS = ['block', 'warn'] as const;
+
+function normalizePolicyRuleInput(input: {
+  action: PolicyRuleAction;
+  category: PolicyRuleCategory;
+  enabled?: boolean;
+  flags?: string;
+  id: string;
+  message: string;
+  mode?: PolicyRuleMode;
+  pattern: string;
+  suggestion?: string;
+}): CustomPolicyRule {
+  const id = sanitizeRequiredText(input.id, 'id');
+  const pattern = sanitizeRequiredText(input.pattern, 'pattern');
+  const message = sanitizeRequiredText(input.message, 'message');
+  const flags = sanitizeOptionalText(input.flags) || '';
+  assertValidPolicyRegex(pattern, flags);
+
+  return {
+    id,
+    enabled: input.enabled !== false,
+    pattern,
+    flags,
+    mode: input.mode || 'safe',
+    category: input.category,
+    action: input.action,
+    message,
+    suggestion: sanitizeOptionalText(input.suggestion),
+    source: 'session',
+  };
+}
 
 export function registerTools() {
 server.tool(
@@ -255,6 +296,7 @@ server.tool(
       keyPath: key,
       metadata,
       password,
+      policyRules: buildConfiguredSessionPolicyRules(),
       profile,
       port: resolvedPort,
       rows: resolvedRows,
@@ -825,6 +867,143 @@ server.tool(
 );
 
 server.tool(
+  'ssh-session-policy-list',
+  'List the inherited and session-level custom policy rules currently active for an SSH session.',
+  {
+    session: z.string().optional().describe('Session id, session ref, or session name. Defaults to the active session'),
+  },
+  async ({ session }) => {
+    const target = resolveSession(session);
+    const inheritedRules = target.getDefaultPolicyRules();
+    const sessionRules = target.getPolicyRules();
+
+    return createJsonToolResponse(applyToolContract({
+      session: target.summary(),
+      builtInRulesImmutable: true,
+      inheritedRuleCount: inheritedRules.length,
+      inheritedRules,
+      sessionRuleCount: sessionRules.length,
+      sessionRules,
+    }, {
+      resultStatus: 'success',
+      summary: `Listed ${sessionRules.length} custom policy rule(s) for ${sessionReadRef(target)}.`,
+      nextAction: sessionRules.length > 0
+        ? 'Use ssh-session-policy-upsert, ssh-session-policy-remove, or ssh-session-policy-reset to change the active rule set.'
+        : 'Use ssh-session-policy-upsert to add a session-specific rule or configure defaults via the config CLI.',
+      evidence: [
+        `sessionRef=${sessionReadRef(target)}`,
+        `inheritedRuleCount=${inheritedRules.length}`,
+        `sessionRuleCount=${sessionRules.length}`,
+      ],
+    }));
+  },
+);
+
+server.tool(
+  'ssh-session-policy-upsert',
+  'Add or update a session-level custom policy rule. Session rules are applied after immutable built-in hard blocks and before the built-in safe/full warning set.',
+  {
+    session: z.string().optional().describe('Session id, session ref, or session name. Defaults to the active session'),
+    id: z.string().min(1).describe('Stable rule id used for future updates or removal'),
+    pattern: z.string().min(1).describe('JavaScript regular expression source without surrounding slashes'),
+    flags: z.string().optional().describe('Optional JavaScript regex flags, for example i or gi'),
+    mode: z.enum(POLICY_RULE_MODES).optional().describe('Which operation mode the rule applies to'),
+    category: z.enum(POLICY_RULE_CATEGORIES).describe('Rule category shown in blocked/warned responses'),
+    action: z.enum(POLICY_RULE_ACTIONS).describe('block rejects the command, warn allows it with warning metadata'),
+    message: z.string().min(1).describe('Human-readable reason shown when the rule matches'),
+    suggestion: z.string().optional().describe('Optional remediation hint shown alongside the message'),
+    enabled: z.boolean().optional().describe('Whether the rule is active. Defaults to true'),
+  },
+  async ({ session, id, pattern, flags, mode, category, action, message, suggestion, enabled }) => {
+    const target = resolveSession(session);
+    const rule = normalizePolicyRuleInput({
+      id,
+      pattern,
+      flags,
+      mode,
+      category,
+      action,
+      message,
+      suggestion,
+      enabled,
+    });
+    target.upsertPolicyRule(rule);
+
+    return createJsonToolResponse(applyToolContract({
+      session: target.summary(),
+      rule,
+      sessionRuleCount: target.getPolicyRules().length,
+      sessionRules: target.getPolicyRules(),
+    }, {
+      resultStatus: 'success',
+      summary: `Upserted custom policy rule ${rule.id} for ${sessionReadRef(target)}.`,
+      nextAction: 'Use ssh-session-policy-list to inspect the full active custom rule set, or run a command to verify the rule behavior.',
+      evidence: [
+        `sessionRef=${sessionReadRef(target)}`,
+        `ruleId=${rule.id}`,
+        `mode=${rule.mode}`,
+        `action=${rule.action}`,
+      ],
+    }));
+  },
+);
+
+server.tool(
+  'ssh-session-policy-remove',
+  'Remove a session-level custom policy rule by id.',
+  {
+    session: z.string().optional().describe('Session id, session ref, or session name. Defaults to the active session'),
+    id: z.string().min(1).describe('Rule id to remove from the current session rule set'),
+  },
+  async ({ session, id }) => {
+    const target = resolveSession(session);
+    target.removePolicyRule(sanitizeRequiredText(id, 'id'));
+
+    return createJsonToolResponse(applyToolContract({
+      session: target.summary(),
+      removedRuleId: id,
+      sessionRuleCount: target.getPolicyRules().length,
+      sessionRules: target.getPolicyRules(),
+    }, {
+      resultStatus: 'success',
+      summary: `Removed custom policy rule ${id} from ${sessionReadRef(target)}.`,
+      nextAction: 'Use ssh-session-policy-list to confirm the remaining session rules, or ssh-session-policy-reset to restore inherited defaults.',
+      evidence: [
+        `sessionRef=${sessionReadRef(target)}`,
+        `ruleId=${id}`,
+      ],
+    }));
+  },
+);
+
+server.tool(
+  'ssh-session-policy-reset',
+  'Reset the current session custom policy rules back to the inherited defaults loaded from configuration.',
+  {
+    session: z.string().optional().describe('Session id, session ref, or session name. Defaults to the active session'),
+  },
+  async ({ session }) => {
+    const target = resolveSession(session);
+    target.resetPolicyRules();
+
+    return createJsonToolResponse(applyToolContract({
+      session: target.summary(),
+      inheritedRuleCount: target.getDefaultPolicyRules().length,
+      sessionRuleCount: target.getPolicyRules().length,
+      sessionRules: target.getPolicyRules(),
+    }, {
+      resultStatus: 'success',
+      summary: `Reset custom policy rules for ${sessionReadRef(target)} back to inherited defaults.`,
+      nextAction: 'Use ssh-session-policy-list to inspect the restored rule set or ssh-session-policy-upsert to add a session override.',
+      evidence: [
+        `sessionRef=${sessionReadRef(target)}`,
+        `inheritedRuleCount=${target.getDefaultPolicyRules().length}`,
+      ],
+    }));
+  },
+);
+
+server.tool(
   'ssh-session-set-active',
   'Set or clear the active session used by tools when the session argument is omitted.',
   {
@@ -1061,13 +1240,14 @@ server.tool(
         sessionName: requestedSessionName,
       });
       const session = await openSSHSession({
-        cols: profileDefaults?.cols ?? DEFAULT_COLS,
-        closedRetentionMs: profileDefaults?.closedRetentionMs ?? DEFAULT_CLOSED_RETENTION_MS,
-        host: profile.host,
-        idleTimeoutMs: profileDefaults?.idleTimeoutMs ?? DEFAULT_TIMEOUT,
-        metadata,
-        profile,
-        port: profile.port ?? DEFAULT_PORT,
+          cols: profileDefaults?.cols ?? DEFAULT_COLS,
+          closedRetentionMs: profileDefaults?.closedRetentionMs ?? DEFAULT_CLOSED_RETENTION_MS,
+          host: profile.host,
+          idleTimeoutMs: profileDefaults?.idleTimeoutMs ?? DEFAULT_TIMEOUT,
+          metadata,
+          policyRules: buildConfiguredSessionPolicyRules(),
+          profile,
+          port: profile.port ?? DEFAULT_PORT,
         rows: profileDefaults?.rows ?? DEFAULT_ROWS,
         sessionId,
         sessionName: requestedSessionName,
@@ -1191,13 +1371,14 @@ server.tool(
       sessionName: name,
     });
     const session = await openSSHSession({
-      cols: DEFAULT_COLS,
-      closedRetentionMs: DEFAULT_CLOSED_RETENTION_MS,
-      host: resolvedHost,
-      idleTimeoutMs: DEFAULT_TIMEOUT,
-      metadata,
-      port: DEFAULT_PORT,
-      rows: DEFAULT_ROWS,
+        cols: DEFAULT_COLS,
+        closedRetentionMs: DEFAULT_CLOSED_RETENTION_MS,
+        host: resolvedHost,
+        idleTimeoutMs: DEFAULT_TIMEOUT,
+        metadata,
+        policyRules: buildConfiguredSessionPolicyRules(),
+        port: DEFAULT_PORT,
+        rows: DEFAULT_ROWS,
       sessionId,
       sessionName: name,
       term: DEFAULT_TERM,
@@ -1317,7 +1498,7 @@ server.tool(
     }
 
     // Command validation
-    const validation = validateCommand(command, OPERATION_MODE);
+    const validation = validateCommand(command, OPERATION_MODE, target.getPolicyRules());
     if (!validation.allowed) {
         logSessionEvent(target.sessionId, 'command.blocked', {
           category: validation.category,
@@ -2005,7 +2186,7 @@ server.tool(
       }
 
       // Command validation
-      const retryValidation = validateCommand(command, OPERATION_MODE);
+      const retryValidation = validateCommand(command, OPERATION_MODE, target.getPolicyRules());
       if (!retryValidation.allowed) {
           logSessionEvent(target.sessionId, 'command.blocked', {
             category: retryValidation.category,

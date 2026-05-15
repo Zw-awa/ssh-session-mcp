@@ -4,6 +4,7 @@ import { dirname, resolve as resolvePath } from 'node:path';
 import { z } from 'zod';
 
 import { resolveDefaultConfigPath } from './runtime.js';
+import { assertValidPolicyRegex } from './validation.js';
 
 const runtimeDefaultsSchema = z.object({
   autoOpenTerminal: z.boolean().optional(),
@@ -45,10 +46,23 @@ const deviceProfileSchema = z.object({
   tags: z.array(z.string().min(1)).optional().default([]),
 }).strict();
 
+const policyRuleSchema = z.object({
+  id: z.string().min(1),
+  enabled: z.boolean().optional().default(true),
+  pattern: z.string().min(1),
+  flags: z.string().optional().default(''),
+  mode: z.enum(['safe', 'full', 'both']).optional().default('safe'),
+  category: z.enum(['dangerous', 'blocked', 'interactive', 'streaming', 'long_running']),
+  action: z.enum(['block', 'warn']),
+  message: z.string().min(1),
+  suggestion: z.string().optional(),
+}).strict();
+
 const configSchema = z.object({
   defaults: runtimeDefaultsSchema.optional(),
   defaultDevice: z.string().min(1).optional(),
   devices: z.array(deviceProfileSchema).optional().default([]),
+  policyRules: z.array(policyRuleSchema).optional().default([]),
 }).strict();
 
 export type RuntimeDefaults = z.infer<typeof runtimeDefaultsSchema>;
@@ -56,6 +70,7 @@ export type DeviceDefaults = z.infer<typeof deviceDefaultsSchema>;
 export type DeviceAuth = z.infer<typeof deviceAuthSchema>;
 export type DeviceProfile = z.infer<typeof deviceProfileSchema>;
 export type DeviceConfigFile = z.infer<typeof configSchema>;
+export type PolicyRuleConfig = z.infer<typeof policyRuleSchema>;
 
 export interface ResolvedConfigFiles {
   explicitPath?: string;
@@ -81,6 +96,7 @@ function normalizeConfig(config: DeviceConfigFile): DeviceConfigFile {
     defaults: config.defaults,
     defaultDevice: config.defaultDevice,
     devices: [...config.devices],
+    policyRules: [...config.policyRules],
   };
 }
 
@@ -96,6 +112,15 @@ function validateConfig(config: DeviceConfigFile) {
   if (config.defaultDevice && !config.devices.some(device => device.id === config.defaultDevice)) {
     throw new Error(`defaultDevice "${config.defaultDevice}" does not exist in config`);
   }
+
+  const seenPolicyIds = new Set<string>();
+  for (const rule of config.policyRules) {
+    if (seenPolicyIds.has(rule.id)) {
+      throw new Error(`Duplicate policy rule id in config: ${rule.id}`);
+    }
+    seenPolicyIds.add(rule.id);
+    assertValidPolicyRegex(rule.pattern, rule.flags);
+  }
 }
 
 function parseConfig(raw: unknown) {
@@ -104,13 +129,20 @@ function parseConfig(raw: unknown) {
 
 function mergeConfigs(base: DeviceConfigFile, override: DeviceConfigFile): DeviceConfigFile {
   const deviceMap = new Map<string, DeviceProfile>();
+  const policyMap = new Map<string, PolicyRuleConfig>();
 
   for (const device of base.devices) {
     deviceMap.set(device.id, device);
   }
+  for (const rule of base.policyRules) {
+    policyMap.set(rule.id, rule);
+  }
 
   for (const device of override.devices) {
     deviceMap.set(device.id, device);
+  }
+  for (const rule of override.policyRules) {
+    policyMap.set(rule.id, rule);
   }
 
   return normalizeConfig({
@@ -120,12 +152,14 @@ function mergeConfigs(base: DeviceConfigFile, override: DeviceConfigFile): Devic
     },
     defaultDevice: override.defaultDevice ?? base.defaultDevice,
     devices: [...deviceMap.values()],
+    policyRules: [...policyMap.values()],
   });
 }
 
 export function emptyConfig(): DeviceConfigFile {
   return {
     devices: [],
+    policyRules: [],
   };
 }
 

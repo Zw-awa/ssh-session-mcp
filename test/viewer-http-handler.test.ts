@@ -159,6 +159,8 @@ function createMockSession(overrides: Partial<Record<string, unknown>> = {}) {
     ]),
     shouldCloseForIdle: vi.fn(() => false),
     shouldPrune: vi.fn(() => false),
+    getDefaultPolicyRules: vi.fn(() => []),
+    getPolicyRules: vi.fn(() => []),
     finalize: vi.fn(),
     close: vi.fn(),
     writeRaw: vi.fn(),

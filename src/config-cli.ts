@@ -11,6 +11,7 @@ import {
   saveConfigFile,
   type DeviceConfigFile,
   type DeviceProfile,
+  type PolicyRuleConfig,
   type RuntimeDefaults,
 } from './profiles.js';
 
@@ -30,6 +31,10 @@ function printUsage() {
   ssh-session-mcp config defaults show [--scope=workspace|global|merged] [--config=path]
   ssh-session-mcp config defaults set <key> <value> [--scope=workspace|global] [--config=path]
   ssh-session-mcp config defaults unset <key> [--scope=workspace|global] [--config=path]
+  ssh-session-mcp config policy list [--scope=workspace|global|merged] [--config=path]
+  ssh-session-mcp config policy get <id> [--scope=workspace|global|merged] [--config=path]
+  ssh-session-mcp config policy set <id> --pattern=<regex> --category=<category> --action=<block|warn> --message=<text> [--mode=safe|full|both] [--flags=gi] [--suggestion=...] [--enabled=true|false] [--scope=workspace|global] [--config=path]
+  ssh-session-mcp config policy remove <id> [--scope=workspace|global] [--config=path]
 `);
 }
 
@@ -156,6 +161,7 @@ function sortConfig(config: DeviceConfigFile): DeviceConfigFile {
     defaults: config.defaults,
     defaultDevice: config.defaultDevice,
     devices: [...config.devices].sort((a, b) => a.id.localeCompare(b.id)),
+    policyRules: [...config.policyRules].sort((a, b) => a.id.localeCompare(b.id)),
   };
 }
 
@@ -228,6 +234,71 @@ function ensureDefaults(config: DeviceConfigFile) {
 function setRuntimeDefaultValue(defaults: RuntimeDefaults, key: string, raw: string) {
   const value = parseRuntimeDefaultValue(key, raw);
   (defaults as Record<string, RuntimeDefaults[keyof RuntimeDefaults] | undefined>)[key] = value;
+}
+
+function parsePolicyRuleCategory(raw: string | undefined) {
+  if (raw === 'dangerous' || raw === 'blocked' || raw === 'interactive' || raw === 'streaming' || raw === 'long_running') {
+    return raw;
+  }
+  fail(`Invalid policy category: ${raw}`);
+}
+
+function parsePolicyRuleAction(raw: string | undefined) {
+  if (raw === 'block' || raw === 'warn') {
+    return raw;
+  }
+  fail(`Invalid policy action: ${raw}`);
+}
+
+function parsePolicyRuleMode(raw: string | undefined) {
+  if (raw === undefined) {
+    return undefined;
+  }
+  if (raw === 'safe' || raw === 'full' || raw === 'both') {
+    return raw;
+  }
+  fail(`Invalid policy mode: ${raw}`);
+}
+
+function buildPolicyRuleFromFlags(existing: PolicyRuleConfig | undefined, id: string, args: ReturnType<typeof parseArgv>): PolicyRuleConfig {
+  const pattern = args.getFlag('pattern') ?? existing?.pattern;
+  const category = (args.getFlag('category') ?? existing?.category);
+  const action = (args.getFlag('action') ?? existing?.action);
+  const message = args.getFlag('message') ?? existing?.message;
+
+  if (!pattern) fail(`Missing --pattern for policy ${id}`);
+  if (!category) fail(`Missing --category for policy ${id}`);
+  if (!action) fail(`Missing --action for policy ${id}`);
+  if (!message) fail(`Missing --message for policy ${id}`);
+
+  return {
+    id,
+    enabled: args.hasFlag('enabled')
+      ? parseBoolean(args.getFlag('enabled'), 'enabled')
+      : existing?.enabled ?? true,
+    pattern,
+    flags: args.getFlag('flags') ?? existing?.flags ?? '',
+    mode: parsePolicyRuleMode(args.getFlag('mode')) ?? existing?.mode ?? 'safe',
+    category: parsePolicyRuleCategory(category),
+    action: parsePolicyRuleAction(action),
+    message,
+    suggestion: args.getFlag('suggestion') ?? existing?.suggestion,
+  };
+}
+
+function upsertPolicyRule(config: DeviceConfigFile, rule: PolicyRuleConfig) {
+  const rules = [...config.policyRules];
+  const index = rules.findIndex(candidate => candidate.id === rule.id);
+  if (index >= 0) {
+    rules[index] = rule;
+  } else {
+    rules.push(rule);
+  }
+  config.policyRules = rules;
+}
+
+function removePolicyRule(config: DeviceConfigFile, id: string) {
+  config.policyRules = config.policyRules.filter(rule => rule.id !== id);
 }
 
 function buildDeviceFromFlags(existing: DeviceProfile | undefined, id: string, args: ReturnType<typeof parseArgv>) {
@@ -426,6 +497,52 @@ function runDefaults(args: ReturnType<typeof parseArgv>, cwd: string, explicitPa
   fail(`Unknown defaults subcommand: ${subcommand}`);
 }
 
+function runPolicy(args: ReturnType<typeof parseArgv>, cwd: string, explicitPath: string | undefined) {
+  const subcommand = args.positional[1];
+  if (!subcommand) fail('Missing policy subcommand');
+
+  if (subcommand === 'list') {
+    const scope = parseScope(args.getFlag('scope'), false);
+    const config = resolveReadConfig(explicitPath, scope, cwd);
+    printJson([...config.policyRules].sort((a, b) => a.id.localeCompare(b.id)));
+    return;
+  }
+
+  const id = args.positional[2];
+  if (!id) fail('Missing policy id');
+
+  if (subcommand === 'get') {
+    const scope = parseScope(args.getFlag('scope'), false);
+    const config = resolveReadConfig(explicitPath, scope, cwd);
+    const rule = config.policyRules.find(candidate => candidate.id === id);
+    if (!rule) fail(`Unknown policy: ${id}`);
+    printJson(rule);
+    return;
+  }
+
+  if (subcommand === 'set') {
+    const scope = parseScope(args.getFlag('scope'), true);
+    const { config, path } = resolveWriteConfig(explicitPath, scope, cwd);
+    const existing = config.policyRules.find(candidate => candidate.id === id);
+    const rule = buildPolicyRuleFromFlags(existing, id, args);
+    upsertPolicyRule(config, rule);
+    saveConfigFile(path, sortConfig(config));
+    console.log(`Saved policy ${id} -> ${path}`);
+    return;
+  }
+
+  if (subcommand === 'remove') {
+    const scope = parseScope(args.getFlag('scope'), true);
+    const { config, path } = resolveWriteConfig(explicitPath, scope, cwd);
+    removePolicyRule(config, id);
+    saveConfigFile(path, sortConfig(config));
+    console.log(`Removed policy ${id} from ${path}`);
+    return;
+  }
+
+  fail(`Unknown policy subcommand: ${subcommand}`);
+}
+
 function main() {
   const cwd = process.cwd();
   const args = parseArgv(process.argv.slice(2));
@@ -452,6 +569,9 @@ function main() {
       return;
     case 'defaults':
       runDefaults(args, cwd, explicitPath);
+      return;
+    case 'policy':
+      runPolicy(args, cwd, explicitPath);
       return;
     case '--help':
     case '-h':

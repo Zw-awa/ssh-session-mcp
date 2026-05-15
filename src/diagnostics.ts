@@ -1,5 +1,6 @@
 import type { LogMode } from './logger.js';
 import type { SessionSummary } from './session.js';
+import type { CustomPolicyRule } from './validation.js';
 
 export interface DiagnosticWarning {
   code: string;
@@ -37,6 +38,11 @@ export interface SessionDiagnosticReport {
     enabled: boolean;
     mode: LogMode;
   };
+  policy: {
+    defaultRuleCount: number;
+    rules: CustomPolicyRule[];
+    sessionRuleCount: number;
+  };
   warnings: DiagnosticWarning[];
 }
 
@@ -56,6 +62,11 @@ export function buildSessionDiagnosticReport(options: {
   historyPendingOutput: boolean;
   logDir: string;
   logMode: LogMode;
+  policy?: {
+    defaultRuleCount: number;
+    rules: CustomPolicyRule[];
+    sessionRuleCount: number;
+  };
   runningCommand?: {
     commandId: string;
     program?: string;
@@ -161,6 +172,11 @@ export function buildSessionDiagnosticReport(options: {
       mode: options.logMode,
       enabled: options.logMode !== 'off',
       dir: options.logDir,
+    },
+    policy: {
+      defaultRuleCount: options.policy?.defaultRuleCount ?? 0,
+      rules: options.policy?.rules ?? [],
+      sessionRuleCount: options.policy?.sessionRuleCount ?? 0,
     },
     warnings,
   };
