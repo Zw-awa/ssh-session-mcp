@@ -632,6 +632,12 @@ export class SSHSession {
     return this.defaultPolicyRules.map(rule => ({ ...rule }));
   }
 
+  getSessionOverrideRules() {
+    return this.policyRules
+      .filter(rule => rule.source === 'session')
+      .map(rule => ({ ...rule }));
+  }
+
   setInheritedPolicyRules(rules: CustomPolicyRule[]) {
     this.defaultPolicyRules = rules.map(rule => ({ ...rule, source: 'default' as const }));
     this.policyRules = this.defaultPolicyRules.map(rule => ({ ...rule }));

@@ -834,8 +834,11 @@ export function buildSessionDiagnostics(session: SSHSession) {
     logDir: LOG_CONFIG.dir,
     logMode: LOG_CONFIG.mode,
     policy: {
+      activeRuleCount: session.getPolicyRules().length,
       defaultRuleCount: session.getDefaultPolicyRules().length,
       rules: session.getPolicyRules(),
+      sessionOverrideRuleCount: session.getSessionOverrideRules().length,
+      sessionOverrideRules: session.getSessionOverrideRules(),
       sessionRuleCount: session.getPolicyRules().length,
     },
   });

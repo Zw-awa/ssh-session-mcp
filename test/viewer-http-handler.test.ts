@@ -161,6 +161,7 @@ function createMockSession(overrides: Partial<Record<string, unknown>> = {}) {
     shouldPrune: vi.fn(() => false),
     getDefaultPolicyRules: vi.fn(() => []),
     getPolicyRules: vi.fn(() => []),
+    getSessionOverrideRules: vi.fn(() => []),
     finalize: vi.fn(),
     close: vi.fn(),
     writeRaw: vi.fn(),
@@ -632,6 +633,11 @@ describe('viewer http handler', () => {
     const diag = JSON.parse(diagState.body);
     expect(diag.session).toBeDefined();
     expect(diag.terminalMode).toBeDefined();
+    expect(diag.policy).toMatchObject({
+      activeRuleCount: 0,
+      defaultRuleCount: 0,
+      sessionOverrideRuleCount: 0,
+    });
 
     // History: requires readHistory mock
     const s3 = createMockSession();

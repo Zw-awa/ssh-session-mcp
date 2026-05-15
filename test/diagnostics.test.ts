@@ -42,6 +42,8 @@ describe('diagnostics', () => {
     expect(codes).toContain('password_prompt');
     expect(codes).toContain('agent_lock_without_command');
     expect(codes).toContain('buffer_trimmed');
+    expect(report.policy.defaultRuleCount).toBe(0);
+    expect(report.policy.sessionOverrideRuleCount).toBe(0);
   });
 
   it('emits an auto lock warning when a browser draft is active', () => {
@@ -78,9 +80,53 @@ describe('diagnostics', () => {
       historyPendingOutput: false,
       logDir: 'logs/session-mcp',
       logMode: 'meta',
+      policy: {
+        activeRuleCount: 2,
+        defaultRuleCount: 1,
+        rules: [
+          {
+            id: 'warn-terraform-apply',
+            enabled: true,
+            pattern: '\\bterraform\\s+apply\\b',
+            mode: 'both',
+            category: 'dangerous',
+            action: 'warn',
+            message: 'terraform apply is risky',
+            source: 'default',
+          },
+          {
+            id: 'block-kubectl-delete',
+            enabled: true,
+            pattern: '\\bkubectl\\s+delete\\b',
+            mode: 'safe',
+            category: 'dangerous',
+            action: 'block',
+            message: 'kubectl delete blocked',
+            source: 'session',
+          },
+        ],
+        sessionOverrideRuleCount: 1,
+        sessionOverrideRules: [
+          {
+            id: 'block-kubectl-delete',
+            enabled: true,
+            pattern: '\\bkubectl\\s+delete\\b',
+            mode: 'safe',
+            category: 'dangerous',
+            action: 'block',
+            message: 'kubectl delete blocked',
+            source: 'session',
+          },
+        ],
+        sessionRuleCount: 2,
+      },
     });
 
     const codes = report.warnings.map(item => item.code);
     expect(codes).toContain('auto_lock_draft_active');
+    expect(report.policy.activeRuleCount).toBe(2);
+    expect(report.policy.defaultRuleCount).toBe(1);
+    expect(report.policy.sessionOverrideRuleCount).toBe(1);
+    expect(report.policy.sessionOverrideRules.map(rule => rule.id)).toEqual(['block-kubectl-delete']);
   });
 });

@@ -875,25 +875,30 @@ server.tool(
   async ({ session }) => {
     const target = resolveSession(session);
     const inheritedRules = target.getDefaultPolicyRules();
-    const sessionRules = target.getPolicyRules();
+    const activeRules = target.getPolicyRules();
+    const sessionOverrideRules = target.getSessionOverrideRules();
 
     return createJsonToolResponse(applyToolContract({
       session: target.summary(),
       builtInRulesImmutable: true,
       inheritedRuleCount: inheritedRules.length,
       inheritedRules,
-      sessionRuleCount: sessionRules.length,
-      sessionRules,
+      activeRuleCount: activeRules.length,
+      sessionRuleCount: activeRules.length,
+      sessionOverrideRuleCount: sessionOverrideRules.length,
+      sessionOverrideRules,
+      sessionRules: activeRules,
     }, {
       resultStatus: 'success',
-      summary: `Listed ${sessionRules.length} custom policy rule(s) for ${sessionReadRef(target)}.`,
-      nextAction: sessionRules.length > 0
+      summary: `Listed ${activeRules.length} active custom policy rule(s) for ${sessionReadRef(target)}.`,
+      nextAction: activeRules.length > 0
         ? 'Use ssh-session-policy-upsert, ssh-session-policy-remove, or ssh-session-policy-reset to change the active rule set.'
         : 'Use ssh-session-policy-upsert to add a session-specific rule or configure defaults via the config CLI.',
       evidence: [
         `sessionRef=${sessionReadRef(target)}`,
         `inheritedRuleCount=${inheritedRules.length}`,
-        `sessionRuleCount=${sessionRules.length}`,
+        `activeRuleCount=${activeRules.length}`,
+        `sessionOverrideRuleCount=${sessionOverrideRules.length}`,
       ],
     }));
   },

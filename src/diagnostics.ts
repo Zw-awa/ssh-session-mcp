@@ -39,8 +39,11 @@ export interface SessionDiagnosticReport {
     mode: LogMode;
   };
   policy: {
+    activeRuleCount: number;
     defaultRuleCount: number;
     rules: CustomPolicyRule[];
+    sessionOverrideRuleCount: number;
+    sessionOverrideRules: CustomPolicyRule[];
     sessionRuleCount: number;
   };
   warnings: DiagnosticWarning[];
@@ -63,8 +66,11 @@ export function buildSessionDiagnosticReport(options: {
   logDir: string;
   logMode: LogMode;
   policy?: {
+    activeRuleCount: number;
     defaultRuleCount: number;
     rules: CustomPolicyRule[];
+    sessionOverrideRuleCount: number;
+    sessionOverrideRules: CustomPolicyRule[];
     sessionRuleCount: number;
   };
   runningCommand?: {
@@ -174,8 +180,11 @@ export function buildSessionDiagnosticReport(options: {
       dir: options.logDir,
     },
     policy: {
+      activeRuleCount: options.policy?.activeRuleCount ?? 0,
       defaultRuleCount: options.policy?.defaultRuleCount ?? 0,
       rules: options.policy?.rules ?? [],
+      sessionOverrideRuleCount: options.policy?.sessionOverrideRuleCount ?? 0,
+      sessionOverrideRules: options.policy?.sessionOverrideRules ?? [],
       sessionRuleCount: options.policy?.sessionRuleCount ?? 0,
     },
     warnings,

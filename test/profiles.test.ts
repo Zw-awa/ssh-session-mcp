@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { describe, expect, it } from 'vitest';
 
 import {
+  loadConfigFile,
   loadProfiles,
   resolveConfigFiles,
   resolveDefaultDeviceId,
@@ -226,5 +227,51 @@ describe('profile config helpers', () => {
       process.env.APPDATA = originalAppData;
       process.env.XDG_CONFIG_HOME = originalXdgConfigHome;
     }
+  });
+
+  it('rejects duplicate policy rule ids in config files', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ssh-mcp-profiles-duplicate-policy-'));
+    const configPath = join(dir, 'ssh-session-mcp.config.json');
+    writeFileSync(configPath, JSON.stringify({
+      policyRules: [
+        {
+          id: 'duplicate',
+          pattern: '\\bkubectl\\s+delete\\b',
+          mode: 'safe',
+          category: 'dangerous',
+          action: 'block',
+          message: 'first',
+        },
+        {
+          id: 'duplicate',
+          pattern: '\\bterraform\\s+apply\\b',
+          mode: 'safe',
+          category: 'dangerous',
+          action: 'warn',
+          message: 'second',
+        },
+      ],
+    }, null, 2), 'utf8');
+
+    expect(() => loadProfiles({ argvPath: configPath, cwd: dir })).toThrow(/Duplicate policy rule id/);
+  });
+
+  it('rejects invalid policy regex in config files', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ssh-mcp-profiles-invalid-policy-'));
+    const configPath = join(dir, 'ssh-session-mcp.config.json');
+    writeFileSync(configPath, JSON.stringify({
+      policyRules: [
+        {
+          id: 'bad-regex',
+          pattern: '(',
+          mode: 'safe',
+          category: 'dangerous',
+          action: 'block',
+          message: 'broken regex',
+        },
+      ],
+    }, null, 2), 'utf8');
+
+    expect(() => loadProfiles({ argvPath: configPath, cwd: dir })).toThrow(/Invalid policy regex/);
   });
 });
