@@ -54,6 +54,8 @@ describe('validateCommand', () => {
       const result = validateCommand(':(){ :|:& };:', 'full');
       expect(result.allowed).toBe(false);
       expect(result.category).toBe('blocked');
+      expect(result.ruleId).toBe('block-fork-bomb');
+      expect(result.source).toBe('built-in');
     });
 
     it('blocks dd to disk device', () => {
@@ -94,6 +96,7 @@ describe('validateCommand', () => {
       const result = validateCommand('tail -f /var/log/syslog', 'safe');
       expect(result.allowed).toBe(false);
       expect(result.category).toBe('streaming');
+      expect(result.ruleId).toBe('safe-block-tail-follow');
     });
 
     it('blocks nohup at command start', () => {
@@ -121,6 +124,7 @@ describe('validateCommand', () => {
       const result = validateCommand('vim /etc/config', 'safe');
       expect(result.allowed).toBe(false);
       expect(result.category).toBe('interactive');
+      expect(result.ruleId).toBe('safe-block-editors');
     });
 
     it('blocks htop', () => {
@@ -146,6 +150,7 @@ describe('validateCommand', () => {
       expect(result.allowed).toBe(true);
       expect(result.category).toBe('dangerous');
       expect(result.message).toBeDefined();
+      expect(result.ruleId).toBe('safe-block-rm-rf');
     });
 
     it('allows interactive commands with warning', () => {

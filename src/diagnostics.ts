@@ -106,6 +106,14 @@ export function buildSessionDiagnosticReport(options: {
     });
   }
 
+  if (options.session.lockPolicy === 'auto' && options.session.userDraftActive) {
+    warnings.push({
+      code: 'auto_lock_draft_active',
+      severity: 'info',
+      message: 'Auto lock is active because the browser user has an unfinished draft command.',
+    });
+  }
+
   if (options.session.bufferStart > 0 || options.session.eventStartSeq > 0 || options.historyLineStart > 1) {
     warnings.push({
       code: 'buffer_trimmed',

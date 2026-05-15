@@ -44,9 +44,10 @@ export function renderXtermTerminalPage(options: XtermTerminalPageOptions) {
     </div>
     <div class="header-actions">
       <a href="${options.baseUrl}" class="btn">Home</a>
-      <select id="actorSelect" class="btn" title="Switch input mode: common = both can type, user = only you type (AI blocked), claude/codex = AI types (your input blocked)">
+      <select id="actorSelect" class="btn" title="Switch input mode: common = both can type, user = only you type (AI blocked), auto = AI is blocked while you are typing, claude/codex = AI types (your input blocked)">
         <option value="common" selected>common</option>
         <option value="user">user</option>
+        <option value="auto">auto</option>
         <option value="agent">agent</option>
       </select>
       <select id="modeSelect" class="btn" title="Operation mode: safe = blocks dangerous commands, full = AI has full control">

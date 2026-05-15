@@ -50,19 +50,23 @@ function createMockSession(overrides: Partial<Record<string, unknown>> = {}) {
     updatedAt: '2026-04-22T12:00:01.000Z',
     closed: false,
     idleTimeoutMs: 0,
+    lockPolicy: 'common' as 'common' | 'agent' | 'user' | 'auto',
     inputLock: 'none' as 'none' | 'agent' | 'user',
+    userDraftActive: false,
     rawBufferStart: 0,
     rawBuffer: Buffer.from('abcdef'),
     cols: 120,
     rows: 40,
     summary: vi.fn(() => ({
       sessionId: 'demo-session',
-      sessionName: 'demo',
-      user: 'orangepi',
-      host: '192.168.10.58',
-      port: 22,
-      inputLock: 'none',
-    })),
+        sessionName: 'demo',
+        user: 'orangepi',
+        host: '192.168.10.58',
+        port: 22,
+        lockPolicy: 'common',
+        inputLock: 'none',
+        userDraftActive: false,
+      })),
     currentRawBufferEnd: vi.fn(() => 6),
     getConversationEvents: vi.fn(() => [
       { seq: 1, at: '2026-04-22T12:00:00.000Z', type: 'input', text: 'ls', actor: 'user' },
@@ -82,6 +86,22 @@ function createMockSession(overrides: Partial<Record<string, unknown>> = {}) {
     writeRaw: vi.fn(),
     sendControl: vi.fn(),
     resize: vi.fn(),
+    setLockPolicy: vi.fn(function (this: any, policy: 'common' | 'agent' | 'user' | 'auto') {
+      this.lockPolicy = policy;
+      this.inputLock = policy === 'common' ? 'none' : (policy === 'auto' ? (this.userDraftActive ? 'user' : 'none') : policy);
+    }),
+    setUserDraftActive: vi.fn(function (this: any, active: boolean) {
+      this.userDraftActive = active;
+      if (this.lockPolicy === 'auto') {
+        this.inputLock = active ? 'user' : 'none';
+      }
+    }),
+    clearUserDraft: vi.fn(function (this: any) {
+      this.userDraftActive = false;
+      if (this.lockPolicy === 'auto') {
+        this.inputLock = 'none';
+      }
+    }),
     __unsubOutput: unsubOutput,
     __unsubEvent: unsubEvent,
     __emitRawOutput(chunk: Buffer | string) {
@@ -341,24 +361,34 @@ describe('viewer ws handler', () => {
   it('broadcasts lock changes only to viewers attached to the same session', () => {
     const sessionA = createMockSession({
       sessionId: 'session-a',
+      setLockPolicy: vi.fn(function (this: any, policy: 'common' | 'agent' | 'user' | 'auto') {
+        this.inputLock = policy === 'common' ? 'none' : (policy === 'auto' ? 'none' : policy);
+      }),
       summary: vi.fn(() => ({
         sessionId: 'session-a',
         sessionName: 'a',
         user: 'orangepi',
         host: '192.168.10.58',
         port: 22,
+        lockPolicy: 'common',
         inputLock: 'none',
+        userDraftActive: false,
       })),
     });
     const sessionB = createMockSession({
       sessionId: 'session-b',
+      setLockPolicy: vi.fn(function (this: any, policy: 'common' | 'agent' | 'user' | 'auto') {
+        this.inputLock = policy === 'common' ? 'none' : (policy === 'auto' ? 'none' : policy);
+      }),
       summary: vi.fn(() => ({
         sessionId: 'session-b',
         sessionName: 'b',
         user: 'orangepi',
         host: '192.168.10.59',
         port: 22,
+        lockPolicy: 'common',
         inputLock: 'none',
+        userDraftActive: false,
       })),
     });
     sessions.set('session-a', sessionA as any);
@@ -387,6 +417,53 @@ describe('viewer ws handler', () => {
     expect(a1Payloads.some(payload => payload.type === 'lock' && payload.lock === 'agent')).toBe(true);
     expect(a2Payloads.some(payload => payload.type === 'lock' && payload.lock === 'agent')).toBe(true);
     expect(bPayloads.some(payload => payload.type === 'lock')).toBe(false);
+  });
+
+  it('tracks draft state and clears it on socket cleanup', () => {
+    const session = createMockSession({
+      lockPolicy: 'auto',
+      userDraftActive: false,
+      setLockPolicy: vi.fn(function (this: any, policy: 'common' | 'agent' | 'user' | 'auto') {
+        this.lockPolicy = policy;
+        this.inputLock = policy === 'auto' ? 'none' : (policy === 'common' ? 'none' : policy);
+      }),
+      setUserDraftActive: vi.fn(function (this: any, active: boolean) {
+        this.userDraftActive = active;
+        if (this.lockPolicy === 'auto') {
+          this.inputLock = active ? 'user' : 'none';
+        }
+      }),
+      clearUserDraft: vi.fn(function (this: any) {
+        this.userDraftActive = false;
+        if (this.lockPolicy === 'auto') {
+          this.inputLock = 'none';
+        }
+      }),
+    });
+    sessions.set('demo-session', session as any);
+    const ws = new FakeWebSocket();
+    setViewerWss({
+      clients: new Set([ws as any]),
+    } as any);
+
+    handleWsAttach(ws as any, 'session', 'demo-session');
+    ws.emit('message', Buffer.from(JSON.stringify({
+      type: 'lock',
+      lock: 'auto',
+    })), false);
+    ws.emit('message', Buffer.from(JSON.stringify({
+      type: 'draft_state',
+      active: true,
+    })), false);
+
+    expect(session.setLockPolicy).toHaveBeenCalledWith('auto');
+    expect(session.setUserDraftActive).toHaveBeenCalledWith(true);
+    expect(session.inputLock).toBe('user');
+
+    ws.emit('close');
+
+    expect(session.clearUserDraft).toHaveBeenCalled();
+    expect(session.inputLock).toBe('none');
   });
 
   it('ignores unsupported lock values without changing the session lock state', () => {

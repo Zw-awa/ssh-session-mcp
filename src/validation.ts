@@ -38,83 +38,98 @@ export function detectTerminalMode(bufferTail: string): TerminalMode {
 export interface ValidationResult {
   allowed: boolean;
   category: 'safe' | 'dangerous' | 'blocked' | 'interactive' | 'streaming' | 'long_running';
+  ruleId?: string;
+  source?: 'built-in';
   message?: string;
   suggestion?: string;
 }
 
-interface PatternEntry {
+interface BuiltInPolicyEntry {
+  id: string;
   pattern: RegExp;
   category: ValidationResult['category'];
+  action: 'block' | 'warn';
   message: string;
   suggestion?: string;
+  source: 'built-in';
 }
 
-const ALWAYS_BLOCKED: PatternEntry[] = [
-  { pattern: /:\(\)\{.*:\|:.*\};:/, category: 'blocked', message: 'Fork bomb detected' },
-  { pattern: /\bdd\b.*\bof=\/dev\/[sh]d/, category: 'blocked', message: 'Direct disk write via dd' },
-  { pattern: /\brm\s+-[a-zA-Z]*r[a-zA-Z]*f[a-zA-Z]*\s+\/\s*$/, category: 'blocked', message: 'rm -rf / (root filesystem)' },
-  { pattern: /\brm\s+-[a-zA-Z]*r[a-zA-Z]*f[a-zA-Z]*\s+\/[a-z]*\s*$/, category: 'blocked', message: 'rm -rf on system root directory' },
-  { pattern: /\bmkfs\b.*\/dev\/[sh]d/, category: 'blocked', message: 'Filesystem format on disk device' },
+const ALWAYS_BLOCKED: BuiltInPolicyEntry[] = [
+  { id: 'block-fork-bomb', pattern: /:\(\)\{.*:\|:.*\};:/, category: 'blocked', action: 'block', message: 'Fork bomb detected', source: 'built-in' },
+  { id: 'block-dd-disk-write', pattern: /\bdd\b.*\bof=\/dev\/[sh]d/, category: 'blocked', action: 'block', message: 'Direct disk write via dd', source: 'built-in' },
+  { id: 'block-rm-rf-root', pattern: /\brm\s+-[a-zA-Z]*r[a-zA-Z]*f[a-zA-Z]*\s+\/\s*$/, category: 'blocked', action: 'block', message: 'rm -rf / (root filesystem)', source: 'built-in' },
+  { id: 'block-rm-rf-system-root', pattern: /\brm\s+-[a-zA-Z]*r[a-zA-Z]*f[a-zA-Z]*\s+\/[a-z]*\s*$/, category: 'blocked', action: 'block', message: 'rm -rf on system root directory', source: 'built-in' },
+  { id: 'block-mkfs-disk-device', pattern: /\bmkfs\b.*\/dev\/[sh]d/, category: 'blocked', action: 'block', message: 'Filesystem format on disk device', source: 'built-in' },
 ];
 
-const SAFE_MODE_BLOCKED: PatternEntry[] = [
+const SAFE_MODE_BLOCKED: BuiltInPolicyEntry[] = [
   // Match rm with a single short flag containing both r and f (e.g. -rf, -fr, -Rf).
   // Uses a negative lookahead to skip long options like --reference.
-  { pattern: /\brm\s+.*-(?![a-zA-Z]{4,})(?=[a-zA-Z]*[rR])[a-zA-Z]*[fF]/, category: 'dangerous', message: 'Recursive force delete', suggestion: 'Ask the user to run this command manually in the browser terminal.' },
-  { pattern: /\bmkfs\b/, category: 'dangerous', message: 'Filesystem format command', suggestion: 'Ask the user to run this command manually.' },
-  { pattern: /\btail\s+.*-[a-zA-Z]*f/, category: 'streaming', message: 'Streaming tail command will not terminate', suggestion: 'Use tail without -f, or use tail -n to get last N lines.' },
+  { id: 'safe-block-rm-rf', pattern: /\brm\s+.*-(?![a-zA-Z]{4,})(?=[a-zA-Z]*[rR])[a-zA-Z]*[fF]/, category: 'dangerous', action: 'warn', message: 'Recursive force delete', suggestion: 'Ask the user to run this command manually in the browser terminal.', source: 'built-in' },
+  { id: 'safe-block-mkfs', pattern: /\bmkfs\b/, category: 'dangerous', action: 'warn', message: 'Filesystem format command', suggestion: 'Ask the user to run this command manually.', source: 'built-in' },
+  { id: 'safe-block-tail-follow', pattern: /\btail\s+.*-[a-zA-Z]*f/, category: 'streaming', action: 'warn', message: 'Streaming tail command will not terminate', suggestion: 'Use tail without -f, or use tail -n to get last N lines.', source: 'built-in' },
   // Only match nohup at the start of a command, not inside quoted strings or comments.
-  { pattern: /^\s*nohup\b/, category: 'long_running', message: 'Background process via nohup', suggestion: 'Ask the user to run background processes manually in the browser terminal.' },
+  { id: 'safe-block-nohup', pattern: /^\s*nohup\b/, category: 'long_running', action: 'warn', message: 'Background process via nohup', suggestion: 'Ask the user to run background processes manually in the browser terminal.', source: 'built-in' },
   // Trailing & as background indicator: must not be inside quotes. Use negative lookbehind
   // to avoid matching & when preceded by a quote char on the same line.
-  { pattern: /(?<![`"'])\s*&\s*$/, category: 'long_running', message: 'Background process (trailing &)', suggestion: 'Remove the trailing & or ask the user to run it manually.' },
-  { pattern: /\bwatch\s+/, category: 'streaming', message: 'watch command runs indefinitely', suggestion: 'Run the underlying command once instead of using watch.' },
+  { id: 'safe-block-background-ampersand', pattern: /(?<![`"'])\s*&\s*$/, category: 'long_running', action: 'warn', message: 'Background process (trailing &)', suggestion: 'Remove the trailing & or ask the user to run it manually.', source: 'built-in' },
+  { id: 'safe-block-watch', pattern: /\bwatch\s+/, category: 'streaming', action: 'warn', message: 'watch command runs indefinitely', suggestion: 'Run the underlying command once instead of using watch.', source: 'built-in' },
 ];
 
-const INTERACTIVE_PATTERNS: PatternEntry[] = [
-  { pattern: /\b(vim?|nvim|emacs|nano|pico|joe|micro)\b/, category: 'interactive', message: 'Interactive editor', suggestion: 'Use non-interactive alternatives (sed, echo >>, etc.) or ask the user to edit manually.' },
-  { pattern: /\bhtop\b/, category: 'interactive', message: 'Interactive process viewer', suggestion: 'Use ps aux or top -bn1 for non-interactive process info.' },
-  { pattern: /\btop\s*$/, category: 'interactive', message: 'Interactive process viewer', suggestion: 'Use top -bn1 for a single snapshot.' },
-  { pattern: /\bnmtui\b/, category: 'interactive', message: 'Interactive network config', suggestion: 'Use nmcli for non-interactive network configuration.' },
-  { pattern: /\braspi-config\b/, category: 'interactive', message: 'Interactive system config', suggestion: 'Ask the user to run raspi-config manually.' },
-  { pattern: /\bfish_config\b/, category: 'interactive', message: 'Interactive shell config', suggestion: 'Use fish -c "set -U ..." for direct configuration.' },
-  { pattern: /\bless\s/, category: 'interactive', message: 'Interactive pager', suggestion: 'Use cat or head/tail instead.' },
-  { pattern: /\bmore\s/, category: 'interactive', message: 'Interactive pager', suggestion: 'Use cat or head/tail instead.' },
+const INTERACTIVE_PATTERNS: BuiltInPolicyEntry[] = [
+  { id: 'safe-block-editors', pattern: /\b(vim?|nvim|emacs|nano|pico|joe|micro)\b/, category: 'interactive', action: 'warn', message: 'Interactive editor', suggestion: 'Use non-interactive alternatives (sed, echo >>, etc.) or ask the user to edit manually.', source: 'built-in' },
+  { id: 'safe-block-htop', pattern: /\bhtop\b/, category: 'interactive', action: 'warn', message: 'Interactive process viewer', suggestion: 'Use ps aux or top -bn1 for non-interactive process info.', source: 'built-in' },
+  { id: 'safe-block-top', pattern: /\btop\s*$/, category: 'interactive', action: 'warn', message: 'Interactive process viewer', suggestion: 'Use top -bn1 for a single snapshot.', source: 'built-in' },
+  { id: 'safe-block-nmtui', pattern: /\bnmtui\b/, category: 'interactive', action: 'warn', message: 'Interactive network config', suggestion: 'Use nmcli for non-interactive network configuration.', source: 'built-in' },
+  { id: 'safe-block-raspi-config', pattern: /\braspi-config\b/, category: 'interactive', action: 'warn', message: 'Interactive system config', suggestion: 'Ask the user to run raspi-config manually.', source: 'built-in' },
+  { id: 'safe-block-fish-config', pattern: /\bfish_config\b/, category: 'interactive', action: 'warn', message: 'Interactive shell config', suggestion: 'Use fish -c "set -U ..." for direct configuration.', source: 'built-in' },
+  { id: 'safe-block-less', pattern: /\bless\s/, category: 'interactive', action: 'warn', message: 'Interactive pager', suggestion: 'Use cat or head/tail instead.', source: 'built-in' },
+  { id: 'safe-block-more', pattern: /\bmore\s/, category: 'interactive', action: 'warn', message: 'Interactive pager', suggestion: 'Use cat or head/tail instead.', source: 'built-in' },
 ];
+
+function toValidationResult(entry: BuiltInPolicyEntry, allowed: boolean): ValidationResult {
+  return {
+    allowed,
+    category: entry.category,
+    ruleId: entry.id,
+    source: entry.source,
+    message: entry.message,
+    suggestion: entry.suggestion,
+  };
+}
+
+function matchRule(command: string, entries: BuiltInPolicyEntry[]) {
+  return entries.find(entry => entry.pattern.test(command));
+}
 
 export function validateCommand(command: string, mode: OperationMode): ValidationResult {
   // Always blocked (both modes)
-  for (const entry of ALWAYS_BLOCKED) {
-    if (entry.pattern.test(command)) {
-      return { allowed: false, category: entry.category, message: entry.message };
-    }
+  const alwaysBlocked = matchRule(command, ALWAYS_BLOCKED);
+  if (alwaysBlocked) {
+    return toValidationResult(alwaysBlocked, false);
   }
 
   // Safe mode: block dangerous + interactive
   if (mode === 'safe') {
-    for (const entry of SAFE_MODE_BLOCKED) {
-      if (entry.pattern.test(command)) {
-        return { allowed: false, category: entry.category, message: entry.message, suggestion: entry.suggestion };
-      }
+    const safeBlocked = matchRule(command, SAFE_MODE_BLOCKED);
+    if (safeBlocked) {
+      return toValidationResult(safeBlocked, false);
     }
-    for (const entry of INTERACTIVE_PATTERNS) {
-      if (entry.pattern.test(command)) {
-        return { allowed: false, category: entry.category, message: entry.message, suggestion: entry.suggestion };
-      }
+    const interactiveBlocked = matchRule(command, INTERACTIVE_PATTERNS);
+    if (interactiveBlocked) {
+      return toValidationResult(interactiveBlocked, false);
     }
   }
 
   // Full mode: warn but allow
   if (mode === 'full') {
-    for (const entry of SAFE_MODE_BLOCKED) {
-      if (entry.pattern.test(command)) {
-        return { allowed: true, category: entry.category, message: entry.message, suggestion: entry.suggestion };
-      }
+    const safeWarn = matchRule(command, SAFE_MODE_BLOCKED);
+    if (safeWarn) {
+      return toValidationResult(safeWarn, true);
     }
-    for (const entry of INTERACTIVE_PATTERNS) {
-      if (entry.pattern.test(command)) {
-        return { allowed: true, category: entry.category, message: entry.message, suggestion: entry.suggestion };
-      }
+    const interactiveWarn = matchRule(command, INTERACTIVE_PATTERNS);
+    if (interactiveWarn) {
+      return toValidationResult(interactiveWarn, true);
     }
   }
 

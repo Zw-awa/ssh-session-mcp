@@ -77,7 +77,10 @@ export interface SessionSummary {
   bufferEnd: number;
   eventStartSeq: number;
   eventEndSeq: number;
+  lockPolicy: 'common' | 'agent' | 'user' | 'auto';
   inputLock: 'none' | 'agent' | 'user';
+  userDraftActive: boolean;
+  userDraftUpdatedAt?: string;
 }
 
 export interface SessionWriteRecord {
@@ -231,7 +234,10 @@ export class SSHSession {
   public rawBuffer = '';
   public rawBufferStart = 0;
   public closed = false;
+  public lockPolicy: 'common' | 'agent' | 'user' | 'auto' = 'common';
   public inputLock: 'none' | 'agent' | 'user' = 'none';
+  public userDraftActive = false;
+  public userDraftUpdatedAt: string | undefined;
 
   private eventSeqStart = 0;
   private nextEventSeq = 0;
@@ -564,6 +570,7 @@ export class SSHSession {
   }
 
   close(reason = 'closed by client') {
+    this.clearUserDraft();
     this.finalize(reason);
   }
 
@@ -604,8 +611,51 @@ export class SSHSession {
       bufferEnd: this.currentBufferEnd(),
       eventStartSeq: this.eventSeqStart,
       eventEndSeq: this.currentEventEnd(),
+      lockPolicy: this.lockPolicy,
       inputLock: this.inputLock,
+      userDraftActive: this.userDraftActive,
+      userDraftUpdatedAt: this.userDraftUpdatedAt,
     };
+  }
+
+  setLockPolicy(policy: 'common' | 'agent' | 'user' | 'auto') {
+    this.lockPolicy = policy;
+
+    if (policy === 'agent') {
+      this.inputLock = 'agent';
+      this.clearUserDraft();
+      return;
+    }
+
+    if (policy === 'user') {
+      this.inputLock = 'user';
+      this.clearUserDraft();
+      return;
+    }
+
+    if (policy === 'common') {
+      this.inputLock = 'none';
+      this.clearUserDraft();
+      return;
+    }
+
+    this.inputLock = this.userDraftActive ? 'user' : 'none';
+  }
+
+  setUserDraftActive(active: boolean) {
+    this.userDraftActive = active;
+    this.userDraftUpdatedAt = active ? nowIso() : undefined;
+    if (this.lockPolicy === 'auto') {
+      this.inputLock = active ? 'user' : 'none';
+    }
+  }
+
+  clearUserDraft() {
+    this.userDraftActive = false;
+    this.userDraftUpdatedAt = undefined;
+    if (this.lockPolicy === 'auto') {
+      this.inputLock = 'none';
+    }
   }
 
   // --- waitForCompletion ---

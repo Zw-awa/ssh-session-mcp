@@ -158,11 +158,17 @@ function handleViewerSocketMessage(ws: WebSocket, session: SSHSession, data: Web
     const msg = JSON.parse(data.toString());
 
     if (msg.type === 'lock' && typeof msg.lock === 'string') {
-      const validLocks = ['none', 'agent', 'user'];
+      const validLocks = ['none', 'agent', 'user', 'auto'];
       if (validLocks.includes(msg.lock)) {
-        session.inputLock = msg.lock as 'none' | 'agent' | 'user';
+        session.setLockPolicy((msg.lock === 'none' ? 'common' : msg.lock) as 'common' | 'agent' | 'user' | 'auto');
         broadcastLock(session);
       }
+      return;
+    }
+
+    if (msg.type === 'draft_state' && typeof msg.active === 'boolean') {
+      session.setUserDraftActive(msg.active);
+      broadcastLock(session);
       return;
     }
 
@@ -267,6 +273,8 @@ export function handleWsAttach(ws: WebSocket, kind: ViewerAttachKind, ref: strin
       return;
     }
     cleanedUp = true;
+    session.clearUserDraft();
+    broadcastLock(session);
     ws.off('message', onMessage);
     ws.off('close', cleanup);
     ws.off('error', cleanup);

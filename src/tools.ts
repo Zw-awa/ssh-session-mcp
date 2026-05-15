@@ -90,6 +90,8 @@ import {
   logSessionEvent,
   logServerEvent,
   broadcastLock,
+  buildUserLockMessage,
+  buildUserLockEvidence,
   escapeRegExp,
   type RunningCommand,
   type ViewerLaunchMode,
@@ -395,16 +397,13 @@ server.tool(
       return createJsonToolResponse(applyToolContract({
         error: 'INPUT_LOCKED',
         lock: 'user',
-        message: 'Terminal is locked by user. The user must switch to agent or common mode in the browser terminal before AI can send input.',
+        message: buildUserLockMessage(target, 'send input'),
       }, {
         resultStatus: 'blocked',
         summary: 'Raw input was blocked because the terminal is locked by the user.',
         failureCategory: 'input-locked',
         nextAction: 'Ask the user to switch the browser terminal back to common or agent mode.',
-        evidence: [
-          `sessionRef=${sessionReadRef(target)}`,
-          'inputLock=user',
-        ],
+        evidence: [`sessionRef=${sessionReadRef(target)}`, ...buildUserLockEvidence(target)],
       }));
     }
 
@@ -673,16 +672,13 @@ server.tool(
       return createJsonToolResponse(applyToolContract({
         error: 'INPUT_LOCKED',
         lock: 'user',
-        message: 'Terminal is locked by user. The user must switch to agent or common mode in the browser terminal before AI can send control keys.',
+        message: buildUserLockMessage(target, 'send control keys'),
       }, {
         resultStatus: 'blocked',
         summary: 'Control input was blocked because the terminal is locked by the user.',
         failureCategory: 'input-locked',
         nextAction: 'Ask the user to switch the browser terminal back to common or agent mode.',
-        evidence: [
-          `sessionRef=${sessionReadRef(target)}`,
-          'inputLock=user',
-        ],
+        evidence: [`sessionRef=${sessionReadRef(target)}`, ...buildUserLockEvidence(target)],
       }));
     }
 
@@ -1292,16 +1288,13 @@ server.tool(
       return createJsonToolResponse(applyToolContract({
         error: 'INPUT_LOCKED',
         lock: 'user',
-        message: 'Terminal is locked by user. The user must switch to agent or common mode in the browser terminal before AI can send commands.',
+        message: buildUserLockMessage(target, 'send commands'),
       }, {
         resultStatus: 'blocked',
         summary: 'Command execution was blocked because the user currently owns terminal input.',
         failureCategory: 'input-locked',
         nextAction: 'Ask the user to switch the browser terminal back to common or agent mode.',
-        evidence: [
-          `sessionRef=${sessionReadRef(target)}`,
-          'inputLock=user',
-        ],
+        evidence: [`sessionRef=${sessionReadRef(target)}`, ...buildUserLockEvidence(target)],
       }));
     }
 
@@ -1326,11 +1319,13 @@ server.tool(
     // Command validation
     const validation = validateCommand(command, OPERATION_MODE);
     if (!validation.allowed) {
-      logSessionEvent(target.sessionId, 'command.blocked', {
-        category: validation.category,
-        operationMode: OPERATION_MODE,
-        ...commandMeta,
-      });
+        logSessionEvent(target.sessionId, 'command.blocked', {
+          category: validation.category,
+          ruleId: validation.ruleId,
+          ruleSource: validation.source,
+          operationMode: OPERATION_MODE,
+          ...commandMeta,
+        });
       return createJsonToolResponse(applyToolContract({
         error: 'COMMAND_BLOCKED',
         category: validation.category,
@@ -1342,12 +1337,13 @@ server.tool(
         summary: 'Command policy blocked execution in the current operation mode.',
         failureCategory: 'policy-blocked',
         nextAction: validation.suggestion || 'Adjust the command or switch the terminal to a more suitable mode.',
-        evidence: [
-          `sessionRef=${sessionReadRef(target)}`,
-          `operationMode=${OPERATION_MODE}`,
-          `category=${validation.category}`,
-        ],
-      }));
+          evidence: [
+            `sessionRef=${sessionReadRef(target)}`,
+            `operationMode=${OPERATION_MODE}`,
+            `category=${validation.category}`,
+            `ruleId=${validation.ruleId || '(none)'}`,
+          ],
+        }));
     }
 
     // Terminal mode check
@@ -1962,16 +1958,13 @@ server.tool(
         return createJsonToolResponse(applyToolContract({
           error: 'INPUT_LOCKED',
           lock: 'user',
-          message: 'Terminal is locked by user.',
+          message: buildUserLockMessage(target, 'send commands'),
         }, {
           resultStatus: 'blocked',
           summary: 'Retry execution was blocked because the user currently owns terminal input.',
           failureCategory: 'input-locked',
           nextAction: 'Ask the user to switch the browser terminal back to common or agent mode.',
-          evidence: [
-            `sessionRef=${sessionReadRef(target)}`,
-            'inputLock=user',
-          ],
+          evidence: [`sessionRef=${sessionReadRef(target)}`, ...buildUserLockEvidence(target)],
         }));
       }
 
@@ -1995,11 +1988,13 @@ server.tool(
       // Command validation
       const retryValidation = validateCommand(command, OPERATION_MODE);
       if (!retryValidation.allowed) {
-        logSessionEvent(target.sessionId, 'command.blocked', {
-          category: retryValidation.category,
-          operationMode: OPERATION_MODE,
-          ...summarizeCommandMeta(command),
-        });
+          logSessionEvent(target.sessionId, 'command.blocked', {
+            category: retryValidation.category,
+            ruleId: retryValidation.ruleId,
+            ruleSource: retryValidation.source,
+            operationMode: OPERATION_MODE,
+            ...summarizeCommandMeta(command),
+          });
         return createJsonToolResponse(applyToolContract({
           error: 'COMMAND_BLOCKED',
           category: retryValidation.category,
@@ -2011,12 +2006,13 @@ server.tool(
           summary: 'Retry command blocked by operation mode policy.',
           failureCategory: 'policy-blocked',
           nextAction: retryValidation.suggestion || 'Adjust the command or switch the terminal to a more suitable mode.',
-          evidence: [
-            `sessionRef=${sessionReadRef(target)}`,
-            `operationMode=${OPERATION_MODE}`,
-            `category=${retryValidation.category}`,
-          ],
-        }));
+            evidence: [
+              `sessionRef=${sessionReadRef(target)}`,
+              `operationMode=${OPERATION_MODE}`,
+              `category=${retryValidation.category}`,
+              `ruleId=${retryValidation.ruleId || '(none)'}`,
+            ],
+          }));
       }
 
       // Terminal mode checks

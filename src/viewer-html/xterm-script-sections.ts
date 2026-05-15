@@ -62,6 +62,7 @@ export function renderXtermSetupSection(options: {
     var settingLockFromServer = false;
     var reconnectAttempt = 0;
     var maxReconnectAttempts = 10;
+    var draftActive = false;
 
     function addCleanup(fn) {
       cleanupFns.push(fn);
@@ -96,6 +97,12 @@ ${renderSharedViewerScriptHelpers({
       return currentLock === 'agent';
     }
 
+    function setDraftState(active) {
+      if (draftActive === active) return;
+      draftActive = active;
+      sendJson({ type: 'draft_state', active: active });
+    }
+
     function updateLockUI(lock) {
       currentLock = lock;
       if (lock === 'agent') {
@@ -104,7 +111,7 @@ ${renderSharedViewerScriptHelpers({
         terminal.options.cursorBlink = false;
         terminal.options.disableStdin = true;
       } else if (lock === 'user') {
-        lockBadge.textContent = 'user active';
+        lockBadge.textContent = actorSelect.value === 'auto' ? 'user drafting' : 'user active';
         lockBadge.className = 'lock-badge user-lock';
         terminal.options.cursorBlink = true;
         terminal.options.disableStdin = false;
@@ -115,9 +122,9 @@ ${renderSharedViewerScriptHelpers({
         terminal.options.disableStdin = false;
       }
       settingLockFromServer = true;
-      if (lock === 'user' && actorSelect.value !== 'user') {
+      if (lock === 'user' && actorSelect.value !== 'user' && actorSelect.value !== 'auto') {
         actorSelect.value = 'user';
-      } else if (lock === 'none' && actorSelect.value !== 'common') {
+      } else if (lock === 'none' && actorSelect.value !== 'common' && actorSelect.value !== 'auto') {
         actorSelect.value = 'common';
       }
       settingLockFromServer = false;
@@ -185,11 +192,14 @@ export function renderXtermConnectionSection() {
           return;
         }
         connDot.className = 'conn-dot';
-        if (isFirstConnect) { isFirstConnect = false; }
-        reconnectAttempt = 0;
-        currentLine = '';
-        setStatus('Connected in ' + getLockMode() + ' mode', '');
-        scheduleScrollToBottom();
+      if (isFirstConnect) { isFirstConnect = false; }
+      reconnectAttempt = 0;
+      currentLine = '';
+      if (actorSelect.value === 'auto') {
+        setDraftState(false);
+      }
+      setStatus('Connected in ' + getLockMode() + ' mode', '');
+      scheduleScrollToBottom();
       };
 
       ws.onmessage = function(evt) {
@@ -270,21 +280,26 @@ export function renderXtermInputSection() {
       }
       var records = [];
       var normalized = data.replace(/\\r\\n/g, '\\n').replace(/\\r/g, '\\n');
+      var nextLine = currentLine;
       for (var i = 0; i < normalized.length; i++) {
         var ch = normalized[i];
         if (ch === '\\n') {
-          records.push({ actor: getInputActor(), text: currentLine.length > 0 ? currentLine : '<newline>', type: 'input' });
-          currentLine = '';
+          records.push({ actor: getInputActor(), text: nextLine.length > 0 ? nextLine : '<newline>', type: 'input' });
+          nextLine = '';
         } else if (ch === '\\u007f' || ch === '\\b') {
-          currentLine = currentLine.slice(0, -1);
+          nextLine = nextLine.slice(0, -1);
         } else if (ch === '\\u0003') {
-          currentLine = '';
+          nextLine = '';
           records.push({ actor: getInputActor(), text: 'ctrl_c', type: 'control' });
         } else if (ch === '\\u0004') {
           records.push({ actor: getInputActor(), text: 'ctrl_d', type: 'control' });
         } else if (ch >= ' ') {
-          currentLine += ch;
+          nextLine += ch;
         }
+      }
+      currentLine = nextLine;
+      if (actorSelect.value === 'auto') {
+        setDraftState(currentLine.length > 0);
       }
       var transportData = data.replace(/\\r\\n/g, '\\r').replace(/\\n/g, '\\r');
       sendJson({ type: 'input', data: transportData, records: records });
@@ -322,14 +337,27 @@ export function renderXtermLifecycleSection() {
       if (destroyed || settingLockFromServer) return;
       var lockMode = getLockMode();
       if (lockMode === 'common') {
+        setDraftState(false);
         sendJson({ type: 'lock', lock: 'none' });
         updateLockUI('none');
         setStatus('Switched to common mode. Both user and AI can type.', 'user');
       } else if (lockMode === 'user') {
+        setDraftState(false);
         sendJson({ type: 'lock', lock: 'user' });
         updateLockUI('user');
         setStatus('Switched to user mode. AI input is blocked.', 'user');
+      } else if (lockMode === 'auto') {
+        sendJson({ type: 'lock', lock: 'auto' });
+        if (currentLine.length > 0) {
+          setDraftState(true);
+          updateLockUI('user');
+        } else {
+          setDraftState(false);
+          updateLockUI('none');
+        }
+        setStatus('Switched to auto mode. AI input is blocked while you are typing.', 'user');
       } else {
+        setDraftState(false);
         sendJson({ type: 'lock', lock: 'agent' });
         updateLockUI('agent');
         setStatus('Switched to agent mode. AI controls the terminal. Your input is blocked.', 'session');
@@ -355,6 +383,11 @@ export function renderXtermLifecycleSection() {
     function shutdown() {
       if (destroyed) return;
       destroyed = true;
+      if (draftActive) {
+        try {
+          sendJson({ type: 'draft_state', active: false });
+        } catch (e) {}
+      }
       clearReconnectTimer();
       cancelScheduledScroll();
       closeSocket();

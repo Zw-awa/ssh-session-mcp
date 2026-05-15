@@ -430,6 +430,22 @@ export function sessionReadRef(session: SSHSession) {
   return session.metadata.sessionRef || session.sessionName || session.sessionId;
 }
 
+export function buildUserLockMessage(session: SSHSession, action: string) {
+  if (session.lockPolicy === 'auto' && session.userDraftActive) {
+    return `Terminal is auto-locked because the browser user has an unfinished draft command. The user must submit or clear the draft before AI can ${action}.`;
+  }
+
+  return `Terminal is locked by user. The user must switch to agent or common mode in the browser terminal before AI can ${action}.`;
+}
+
+export function buildUserLockEvidence(session: SSHSession) {
+  return [
+    `lockPolicy=${session.lockPolicy}`,
+    `userDraftActive=${session.userDraftActive}`,
+    `inputLock=${session.inputLock}`,
+  ];
+}
+
 export function pickMostRecentOpenSession() {
   return [...sessions.values()]
     .filter(session => !session.closed)
@@ -1702,9 +1718,18 @@ export async function launchBrowserViewer(url: string) {
 // ── broadcastLock & closeAllSessions ─────────────────────────────────────────
 
 export function broadcastLock(session: SSHSession) {
-  logSessionEvent(session.sessionId, 'session.lock', { lock: session.inputLock });
+  logSessionEvent(session.sessionId, 'session.lock', {
+    lock: session.inputLock,
+    lockPolicy: session.lockPolicy,
+    userDraftActive: session.userDraftActive,
+  });
   if (!viewerWss) return;
-  const msg = JSON.stringify({ type: 'lock', lock: session.inputLock });
+  const msg = JSON.stringify({
+    type: 'lock',
+    lock: session.inputLock,
+    lockPolicy: session.lockPolicy,
+    userDraftActive: session.userDraftActive,
+  });
   for (const client of viewerWss.clients) {
     if (viewerClientSessions.get(client) !== session.sessionId) {
       continue;
@@ -1718,6 +1743,7 @@ export function broadcastLock(session: SSHSession) {
 export function closeAllSessions(reason: string) {
   for (const session of sessions.values()) {
     try {
+      session.clearUserDraft();
       logSessionEvent(session.sessionId, 'session.close_all', { reason });
       session.close(reason);
     } catch {

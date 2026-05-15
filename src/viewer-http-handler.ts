@@ -15,7 +15,7 @@ import {
   openSSHSession, buildSessionMetadata, setActiveSession,
   DEFAULT_COLS, DEFAULT_ROWS, DEFAULT_TERM,
   DEFAULT_TIMEOUT, DEFAULT_CLOSED_RETENTION_MS,
-  type SessionWriteRecord, McpError, ErrorCode,
+  type SessionWriteRecord, McpError, ErrorCode, buildUserLockMessage,
 } from './server-state.js';
 import {
   renderViewerHomePage,
@@ -314,7 +314,7 @@ async function handleSessionAgentInputRequest(sessionRef: string, writers: Viewe
     const body = request ? await readJsonRequestBody(request) : {};
     const cmd = typeof body.command === 'string' ? body.command.trim() : '';
     if (!cmd) { writers.writeError(400, new McpError(ErrorCode.InvalidRequest, 'command required')); return; }
-    if (s.inputLock === 'user') { writers.writeError(403, new McpError(ErrorCode.InvalidRequest, 'Input locked by user. Switch to common or agent mode first.')); return; }
+    if (s.inputLock === 'user') { writers.writeError(403, new McpError(ErrorCode.InvalidRequest, buildUserLockMessage(s, 'send commands'))); return; }
     s.inputLock = 'agent';
     s.write(cmd + '\n', 'agent');
     s.inputLock = 'none';
