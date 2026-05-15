@@ -1,6 +1,6 @@
 # AI Agent Integration Guide
 
-`AGENT.md` is the main operator playbook for AI tools. This file stays as the compatibility guide for agents and workflows that already look for `AI_AGENT_GUIDE.md`.
+`AGENT.md` is the main operator playbook for AI tools. This file stays as the compatibility guide for agents and workflows that already look for `AI_AGENT_GUIDE.md`. For one-click installer flows such as Cline Marketplace, also see [llms-install.md](llms-install.md).
 
 See [AGENT.md](AGENT.md) first.
 

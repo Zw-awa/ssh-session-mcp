@@ -39,6 +39,8 @@
 
 如果你的目标是让 Claude Code、Codex、OpenCode 在 `mcp add` 时自动下载并运行这个 server，优先把 MCP 命令写成 `npx -y ssh-session-mcp`，而不是要求用户先全局安装。
 
+如果你是为了 Cline Marketplace 或其他 agent installer 做一键安装，请看 [llms-install.md](llms-install.md)。当前仓库已经按 `npx -y ssh-session-mcp --viewerPort=auto` 这种可自动下载的方式组织。
+
 #### Claude Code
 
 ```bash
@@ -351,6 +353,7 @@ npm run cleanup
 
 - [AGENT.md](AGENT.md)
 - [AI_AGENT_GUIDE.md](AI_AGENT_GUIDE.md)
+- [llms-install.md](llms-install.md)
 - [docs/contracts.md](docs/contracts.md)
 - [docs/failure-taxonomy.md](docs/failure-taxonomy.md)
 - [docs/acceptance-scenarios.md](docs/acceptance-scenarios.md)

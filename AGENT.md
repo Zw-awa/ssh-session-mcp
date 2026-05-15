@@ -2,6 +2,8 @@
 
 This file is the primary playbook for AI agents that need to install, inspect, configure, and operate `ssh-session-mcp` for a user.
 
+For marketplace-style one-click installation guidance, also see [llms-install.md](llms-install.md).
+
 ## Mission
 
 Help the user get to a stable shared terminal with the least friction possible:

@@ -39,6 +39,8 @@ Most SSH-oriented MCP servers can execute commands, but they do not manage termi
 
 If the goal is to let Claude Code, Codex, or OpenCode install the server automatically, prefer `npx -y ssh-session-mcp` in the MCP command instead of a prior global install.
 
+For Cline Marketplace and other agent installers, see [llms-install.md](llms-install.md). This repo is structured to be one-click installable through an `npx -y ssh-session-mcp --viewerPort=auto` command.
+
 #### Claude Code
 
 ```bash
@@ -351,6 +353,7 @@ More detail: [docs/platform-compatibility.md](docs/platform-compatibility.md)
 
 - [AGENT.md](AGENT.md)
 - [AI_AGENT_GUIDE.md](AI_AGENT_GUIDE.md)
+- [llms-install.md](llms-install.md)
 - [docs/contracts.md](docs/contracts.md)
 - [docs/failure-taxonomy.md](docs/failure-taxonomy.md)
 - [docs/acceptance-scenarios.md](docs/acceptance-scenarios.md)
