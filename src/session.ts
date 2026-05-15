@@ -654,11 +654,37 @@ export class SSHSession {
     this.policyRules = next;
   }
 
-  removePolicyRule(id: string) {
-    this.policyRules = this.policyRules.filter(rule => rule.id !== id);
+  private defaultPolicyRuleById(id: string) {
+    return this.defaultPolicyRules.find(rule => rule.id === id);
   }
 
-  resetPolicyRules() {
+  removePolicyRule(id: string) {
+    const active = this.policyRules.find(rule => rule.id === id);
+    if (!active) {
+      return { removed: false, reason: 'not_found' as const };
+    }
+
+    if (active.source !== 'session') {
+      return { removed: false, reason: 'default_rule_protected' as const };
+    }
+
+    this.policyRules = this.policyRules.filter(rule => !(rule.id === id && rule.source === 'session'));
+    const inherited = this.defaultPolicyRuleById(id);
+    if (inherited) {
+      this.policyRules.push({ ...inherited });
+      this.policyRules.sort((a, b) => a.id.localeCompare(b.id));
+      return { removed: true, reason: 'restored_default' as const };
+    }
+
+    return { removed: true, reason: 'removed_override' as const };
+  }
+
+  resetPolicyRules(rules?: CustomPolicyRule[]) {
+    if (rules) {
+      this.setInheritedPolicyRules(rules);
+      return;
+    }
+
     this.policyRules = this.defaultPolicyRules.map(rule => ({ ...rule }));
   }
 

@@ -533,7 +533,13 @@ export function resolveConfiguredDefaultDeviceId() {
 }
 
 export function buildConfiguredSessionPolicyRules(): CustomPolicyRule[] {
-  return (PROFILES.config?.policyRules || []).map(rule => ({
+  const latestProfiles = loadProfiles({
+    argvPath: argvConfig.config,
+    cwd: process.cwd(),
+    envPath: process.env.SSH_MCP_CONFIG,
+  });
+
+  return (latestProfiles.config?.policyRules || []).map(rule => ({
     ...rule,
     source: 'default' as const,
   }));

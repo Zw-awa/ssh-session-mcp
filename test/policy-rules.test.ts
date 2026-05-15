@@ -103,4 +103,67 @@ describe('session custom policy rules', () => {
 
     expect(session.getPolicyRules()).toEqual([]);
   });
+
+  it('restores an inherited default rule when a same-id session override is removed', () => {
+    const session = createSession();
+    session.setInheritedPolicyRules([
+      {
+        id: 'warn-terraform-apply',
+        enabled: true,
+        pattern: '\\bterraform\\s+apply\\b',
+        mode: 'both',
+        category: 'dangerous',
+        action: 'warn',
+        message: 'terraform apply is risky',
+        source: 'default',
+      },
+    ]);
+
+    session.upsertPolicyRule({
+      id: 'warn-terraform-apply',
+      enabled: true,
+      pattern: '\\bterraform\\s+apply\\b',
+      mode: 'both',
+      category: 'dangerous',
+      action: 'block',
+      message: 'session override',
+    });
+
+    const result = session.removePolicyRule('warn-terraform-apply');
+
+    expect(result).toEqual({ removed: true, reason: 'restored_default' });
+    expect(session.getPolicyRules()).toEqual([
+      expect.objectContaining({
+        id: 'warn-terraform-apply',
+        action: 'warn',
+        source: 'default',
+      }),
+    ]);
+  });
+
+  it('refuses to remove an inherited default rule directly', () => {
+    const session = createSession();
+    session.setInheritedPolicyRules([
+      {
+        id: 'warn-terraform-apply',
+        enabled: true,
+        pattern: '\\bterraform\\s+apply\\b',
+        mode: 'both',
+        category: 'dangerous',
+        action: 'warn',
+        message: 'terraform apply is risky',
+        source: 'default',
+      },
+    ]);
+
+    const result = session.removePolicyRule('warn-terraform-apply');
+
+    expect(result).toEqual({ removed: false, reason: 'default_rule_protected' });
+    expect(session.getPolicyRules()).toEqual([
+      expect.objectContaining({
+        id: 'warn-terraform-apply',
+        source: 'default',
+      }),
+    ]);
+  });
 });

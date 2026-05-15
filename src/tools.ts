@@ -165,6 +165,19 @@ function normalizePolicyRuleInput(input: {
   };
 }
 
+function buildValidationWarningMetadata(validation: ReturnType<typeof validateCommand>) {
+  if (validation.category === 'safe') {
+    return {};
+  }
+
+  return {
+    warning: validation.message,
+    warningRuleCategory: validation.category,
+    warningRuleId: validation.ruleId,
+    warningRuleSource: validation.source,
+  };
+}
+
 export function registerTools() {
 server.tool(
   'ssh-session-open',
@@ -962,11 +975,34 @@ server.tool(
   },
   async ({ session, id }) => {
     const target = resolveSession(session);
-    target.removePolicyRule(sanitizeRequiredText(id, 'id'));
+    const result = target.removePolicyRule(sanitizeRequiredText(id, 'id'));
+
+    if (!result.removed) {
+      return createJsonToolResponse(applyToolContract({
+        error: 'POLICY_RULE_REMOVE_REJECTED',
+        reason: result.reason,
+        session: target.summary(),
+      }, {
+        resultStatus: 'failure',
+        summary: result.reason === 'default_rule_protected'
+          ? `Cannot remove inherited default rule ${id} from ${sessionReadRef(target)} without changing configuration.`
+          : `No active custom policy rule with id ${id} exists on ${sessionReadRef(target)}.`,
+        failureCategory: 'config-error',
+        nextAction: result.reason === 'default_rule_protected'
+          ? 'Edit the default rule library with ssh-session-mcp-config policy commands or add a session override instead.'
+          : 'Use ssh-session-policy-list to inspect the active rules before removing one.',
+        evidence: [
+          `sessionRef=${sessionReadRef(target)}`,
+          `ruleId=${id}`,
+          `reason=${result.reason}`,
+        ],
+      }));
+    }
 
     return createJsonToolResponse(applyToolContract({
       session: target.summary(),
       removedRuleId: id,
+      removalResult: result.reason,
       sessionRuleCount: target.getPolicyRules().length,
       sessionRules: target.getPolicyRules(),
     }, {
@@ -989,11 +1025,12 @@ server.tool(
   },
   async ({ session }) => {
     const target = resolveSession(session);
-    target.resetPolicyRules();
+    const latestRules = buildConfiguredSessionPolicyRules();
+    target.resetPolicyRules(latestRules);
 
     return createJsonToolResponse(applyToolContract({
       session: target.summary(),
-      inheritedRuleCount: target.getDefaultPolicyRules().length,
+      inheritedRuleCount: latestRules.length,
       sessionRuleCount: target.getPolicyRules().length,
       sessionRules: target.getPolicyRules(),
     }, {
@@ -1619,6 +1656,9 @@ server.tool(
       operationMode: OPERATION_MODE,
       startedAt,
       lockPolicy: target.lockPolicy,
+      ruleCategory: validation.category !== 'safe' ? validation.category : undefined,
+      ruleId: validation.ruleId,
+      ruleSource: validation.source,
       terminalMode,
       userDraftActive: target.userDraftActive,
       ...commandMeta,
@@ -1672,6 +1712,9 @@ server.tool(
           actor: 'agent',
           commandId,
           lockPolicy: target.lockPolicy,
+          ruleCategory: validation.category !== 'safe' ? validation.category : undefined,
+          ruleId: validation.ruleId,
+          ruleSource: validation.source,
           startedAt,
           userDraftActive: target.userDraftActive,
           ...commandMeta,
@@ -1707,7 +1750,7 @@ server.tool(
         host: target.host,
         terminalMode,
         operationMode: OPERATION_MODE,
-        warning: validation.category !== 'safe' ? validation.message : undefined,
+        ...buildValidationWarningMetadata(validation),
         hint: `Command is still running. Use ssh-command-status with commandId="${commandId}" to check progress.`,
         readMore,
       }, {
@@ -1779,6 +1822,9 @@ server.tool(
       elapsedMs: completion.elapsedMs,
       exitCode,
       lockPolicy: target.lockPolicy,
+      ruleCategory: validation.category !== 'safe' ? validation.category : undefined,
+      ruleId: validation.ruleId,
+      ruleSource: validation.source,
       startedAt,
       status: 'completed',
       userDraftActive: target.userDraftActive,
@@ -1796,7 +1842,7 @@ server.tool(
         exitCode,
         terminalMode,
         operationMode: OPERATION_MODE,
-        warning: validation.category !== 'safe' ? validation.message : undefined,
+        ...buildValidationWarningMetadata(validation),
         parsed: parsed ? { type: parsed.type, data: parsed.data } : undefined,
         readMore: buildReadMoreHint({
           session: sessionReadRef(target),
@@ -2335,6 +2381,7 @@ server.tool(
             sessionRef: sessionReadRef(target),
             outputTruncatedAfter: snapshot.truncatedAfter,
             readMore,
+            ...buildValidationWarningMetadata(retryValidation),
             hint: snapshot.truncatedAfter
               ? `Command succeeded on attempt ${attempts}, but the returned output is partial.`
               : `Command succeeded on attempt ${attempts}.`,
@@ -2367,6 +2414,7 @@ server.tool(
             sessionRef: sessionReadRef(target),
             outputTruncatedAfter: snapshot.truncatedAfter,
             readMore,
+            ...buildValidationWarningMetadata(retryValidation),
             hint: snapshot.truncatedAfter
               ? `Command succeeded on attempt ${attempts}, but the returned output is partial.`
               : `Command succeeded on attempt ${attempts}.`,
@@ -2394,6 +2442,7 @@ server.tool(
             sessionRef: sessionReadRef(target),
             outputTruncatedAfter: snapshot.truncatedAfter,
             readMore,
+            ...buildValidationWarningMetadata(retryValidation),
             hint: snapshot.truncatedAfter
               ? `Command completed on attempt ${attempts}, but the returned output is partial.`
               : `Command completed on attempt ${attempts} (no exit code available).`,
