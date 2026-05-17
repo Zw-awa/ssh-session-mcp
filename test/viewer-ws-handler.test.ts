@@ -60,8 +60,8 @@ function createMockSession(overrides: Partial<Record<string, unknown>> = {}) {
     summary: vi.fn(() => ({
       sessionId: 'demo-session',
         sessionName: 'demo',
-        user: 'orangepi',
-        host: '192.168.10.58',
+        user: 'remote-user',
+        host: 'DEVICE_A_HOST',
         port: 22,
         lockPolicy: 'common',
         inputLock: 'none',
@@ -138,7 +138,7 @@ let setOperationMode: typeof import('../src/server-state.js').setOperationMode;
 const previousEnv = {
   SSH_MCP_DISABLE_MAIN: process.env.SSH_MCP_DISABLE_MAIN,
   SSH_MCP_CONFIG: process.env.SSH_MCP_CONFIG,
-  BOARD_A_PASSWORD: process.env.BOARD_A_PASSWORD,
+  DEVICE_A_PASSWORD: process.env.DEVICE_A_PASSWORD,
 };
 
 beforeAll(async () => {
@@ -146,20 +146,20 @@ beforeAll(async () => {
   const configPath = join(dir, 'ssh-session-mcp.config.json');
 
   writeFileSync(configPath, JSON.stringify({
-    defaultDevice: 'board-a',
+    defaultDevice: 'DEVICE_A_ID',
     devices: [
       {
-        id: 'board-a',
-        host: '192.168.10.58',
-        user: 'orangepi',
-        auth: { passwordEnv: 'BOARD_A_PASSWORD' },
+        id: 'DEVICE_A_ID',
+        host: 'DEVICE_A_HOST',
+        user: 'remote-user',
+        auth: { passwordEnv: 'DEVICE_A_PASSWORD' },
       },
     ],
   }, null, 2), 'utf8');
 
   process.env.SSH_MCP_DISABLE_MAIN = '1';
   process.env.SSH_MCP_CONFIG = configPath;
-  process.env.BOARD_A_PASSWORD = 'dummy-password';
+  process.env.DEVICE_A_PASSWORD = 'dummy-password';
 
   const serverState = await import('../src/server-state.js');
   sessions = serverState.sessions;
@@ -250,9 +250,9 @@ describe('viewer ws handler', () => {
     viewerBindings.set('demo-binding', {
       bindingKey: 'demo-binding',
       connectionKey: 'conn-demo',
-      host: '192.168.10.58',
+      host: 'DEVICE_A_HOST',
       port: 22,
-      user: 'orangepi',
+      user: 'remote-user',
       sessionId: 'demo-session',
       scope: 'connection',
       updatedAt: '2026-04-22T12:00:00.000Z',
@@ -379,8 +379,8 @@ describe('viewer ws handler', () => {
       summary: vi.fn(() => ({
         sessionId: 'session-a',
         sessionName: 'a',
-        user: 'orangepi',
-        host: '192.168.10.58',
+        user: 'remote-user',
+        host: 'DEVICE_A_HOST',
         port: 22,
         lockPolicy: 'common',
         inputLock: 'none',
@@ -395,8 +395,8 @@ describe('viewer ws handler', () => {
       summary: vi.fn(() => ({
         sessionId: 'session-b',
         sessionName: 'b',
-        user: 'orangepi',
-        host: '192.168.10.59',
+        user: 'remote-user',
+        host: 'DEVICE_B_HOST',
         port: 22,
         lockPolicy: 'common',
         inputLock: 'none',

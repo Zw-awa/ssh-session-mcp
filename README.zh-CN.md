@@ -7,9 +7,32 @@
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.9.2-blue)](https://www.typescriptlang.org/)
 [![npm version](https://img.shields.io/npm/v/ssh-session-mcp)](https://www.npmjs.com/package/ssh-session-mcp)
 
-`ssh-session-mcp` 是一个面向 MCP 客户端的持久化 SSH PTY 会话运行时。它让用户和 AI 共享同一个终端会话，补上浏览器 viewer、输入来源标记、长任务跟踪和会话级状态管理，不再把 SSH 交互退化成一次性命令调用。
+面向 MCP 客户端的共享 SSH 终端运行时。
+
+`ssh-session-mcp` 让用户和 AI 共享同一个 SSH PTY 会话，补上浏览器 viewer、输入来源标记、长任务跟踪和会话级状态管理，不再把 SSH 交互退化成一次性命令调用。
 
 ![ssh-session-mcp 首页动图](https://raw.githubusercontent.com/Zw-awa/ssh-session-mcp/main/site/assets/hero-loop.gif)
+
+## 目录
+
+- [安装方式一眼看懂](#安装方式一眼看懂)
+- [项目文件目录](#项目文件目录)
+- [快速开始](#快速开始)
+- [Docker 现状](#6-docker-现状)
+- [MCP 工具](#mcp-工具)
+- [配置摘要](#配置摘要)
+- [安全](#安全)
+- [文档](#文档)
+- [开发](#开发)
+
+## 安装方式一眼看懂
+
+- 普通用户不需要 `git clone` 这个仓库。
+- 面向 MCP client 的首选安装方式：`npx -y ssh-session-mcp --viewerPort=auto`
+- 面向本机操作者、希望拿到本地命令的安装方式：`npm install -g ssh-session-mcp`
+- 官方容器分发方式也支持，例如 `docker.io/zwawa/ssh-session-mcp`
+- `git clone` 只用于二次开发、源码构建和本地调试。
+- 对桌面侧 MCP 使用场景来说，`npx` 或全局 npm 安装仍然是推荐路径；Docker 更适合需要固定运行时、容器化部署或镜像仓库分发的场景。
 
 ## 它解决什么问题
 
@@ -32,6 +55,29 @@
 - 嵌入式、ROS、运维、远端调试这类需要真实终端状态的工作
 - 希望 AI 帮忙，但又不愿意把终端完全让出去的用户
 - 需要在 MCP Market / GitHub 首页快速讲清楚安装路径和协作模型的项目
+
+## 项目文件目录
+
+关键目录和文件如下：
+
+| 路径 | 用途 |
+|------|------|
+| `src/` | MCP server、SSH 会话运行时、viewer、工具和配置 CLI 的核心 TypeScript 实现 |
+| `src/viewer-html/` | 终端 viewer 的 HTML 页面生成器和浏览器侧脚本 |
+| `test/` | 覆盖运行时行为、viewer 契约、配置加载和仓库校验的 Vitest 测试 |
+| `docs/` | 契约、失败分类、平台说明、Docker 使用说明等补充文档 |
+| `docs/examples/` | 普通模式和 Docker 模式的配置示例 |
+| `scripts/` | 构建、版本同步和本地操作者 helper 脚本 |
+| `site/` | GitHub Pages 落地页源码 |
+| `dist/` | `npm run build:site` 生成的静态站点输出 |
+| `build/` | `npm run build` 生成的 JavaScript 构建产物 |
+| `Dockerfile` | 容器镜像构建定义 |
+| `docker-compose.yml` | profile 配置模式的 Docker Compose 示例 |
+| `docker-compose.env.yml` | legacy `.env` 风格的 Docker Compose 示例 |
+| `server.json` | 面向 marketplace 分发的 MCP server 元数据 |
+| `AGENT.md` | 主 Agent / 操作者执行手册 |
+| `llms-install.md` | 面向 Agent 的安装说明和环境变量确认清单 |
+| `.env.example` | legacy 单目标环境变量模板 |
 
 ## 快速开始
 
@@ -127,9 +173,9 @@ cp .env.example .env
 ```
 
 ```ini
-SSH_HOST=192.168.1.100
+SSH_HOST=YOUR_DEVICE_HOST
 SSH_PORT=22
-SSH_USER=username
+SSH_USER=YOUR_DEVICE_USER
 SSH_PASSWORD=
 SSH_KEY=
 VIEWER_PORT=auto
@@ -149,14 +195,14 @@ ssh-session-mcp-ctl launch --viewerPort=auto
 
 ```json
 {
-  "defaultDevice": "board-a",
+  "defaultDevice": "DEVICE_A_ID",
   "devices": [
     {
-      "id": "board-a",
-      "host": "192.168.10.58",
+      "id": "DEVICE_A_ID",
+      "host": "DEVICE_A_HOST",
       "port": 22,
-      "user": "orangepi",
-      "auth": { "passwordEnv": "BOARD_A_PASSWORD" },
+      "user": "DEVICE_A_USER",
+      "auth": { "passwordEnv": "DEVICE_A_PASSWORD" },
       "defaults": {
         "term": "xterm-256color",
         "cols": 120,
@@ -181,6 +227,86 @@ ssh-session-mcp-ctl launch --viewerPort=auto
 - 配置自动发现基于 MCP 进程工作目录
 - `auth.password` 故意不支持，请使用 `auth.passwordEnv` 或 `auth.keyPath`
 - 密码等 secret 应保存在 `.env` 或父进程环境中，不应写进受版本控制的 JSON
+
+### 6. Docker 现状
+
+当前仓库已经支持构建并发布官方 Docker 镜像，公开拉取建议优先走 Docker Hub，GHCR 作为补充：
+
+```bash
+docker.io/zwawa/ssh-session-mcp:<version>
+docker.io/zwawa/ssh-session-mcp:latest
+ghcr.io/zw-awa/ssh-session-mcp:<version>
+```
+
+连接真实 SSH 目标时，推荐这样启动：
+
+```bash
+docker run --rm -i \
+  -p 8793:8793 \
+  -e VIEWER_PORT=8793 \
+  -e VIEWER_HOST=0.0.0.0 \
+  -e SSH_HOST=YOUR_DEVICE_HOST \
+  -e SSH_PORT=22 \
+  -e SSH_USER=YOUR_DEVICE_USER \
+  -e SSH_PASSWORD \
+  docker.io/zwawa/ssh-session-mcp:latest
+```
+
+密码建议先在当前 shell 里导出，不要直接写进命令行。
+
+如果你走 profile 配置方式，推荐这样：
+
+```bash
+docker run --rm -i \
+  -p 8793:8793 \
+  -e VIEWER_PORT=8793 \
+  -e VIEWER_HOST=0.0.0.0 \
+  -e SSH_MCP_CONFIG=/workspace/ssh-session-mcp.config.json \
+  -v "$PWD/ssh-session-mcp.config.json:/workspace/ssh-session-mcp.config.json:ro" \
+  -v "/path/to/host/keys:/workspace/keys:ro" \
+  docker.io/zwawa/ssh-session-mcp:latest
+```
+
+等价的 Compose 用法：
+
+```bash
+docker compose up -d
+```
+
+可直接参考仓库里的 [docker-compose.yml](docker-compose.yml)。它已经包含 `ssh-session-mcp.config.json` 挂载、`8793` viewer 端口映射，以及通过 `SSH_KEY_DIR` 覆盖默认密钥目录；未设置时会回退到专门的 `./keys` 目录，而不是仓库根目录。
+更完整的 Docker 使用说明，包括旧式 `.env` compose 示例和 MCP client 配置片段，见 [docs/docker.md](docs/docker.md)。
+如果你想直接从容器友好的 profile 配置开始，可以参考 [docs/examples/ssh-session-mcp.config.docker.example.json](docs/examples/ssh-session-mcp.config.docker.example.json)。
+
+容器场景的额外说明：
+
+- 镜像内如果未显式设置 `VIEWER_PORT`，默认会使用 `8793`，方便稳定映射 browser viewer。
+- 镜像内如果未显式设置 `VIEWER_HOST`，默认会改成 `0.0.0.0`，这样宿主机才能访问映射出来的 viewer 端口。
+- 容器里默认把 `AUTO_OPEN_TERMINAL` 设为 `false`，因为在容器内部自动打开浏览器通常没有意义。
+- 配置文件和 SSH key 建议只读挂载。
+- SSH key 最好从仓库目录之外的宿主机目录挂载进来。
+- `docker-compose.yml` 里如果设置了 `SSH_KEY_DIR` 就优先使用它；未设置时会回退到 `./keys`，不会回退到仓库根目录。
+- 不要把密码直接写进命令行；优先用已导出的环境变量、Compose `.env` 或 `--env-file`。
+- 对 stdio MCP client 来说，Docker 可以用，但如果没有明确的容器化要求，宿主机直接用 `npx` 仍然更省事。
+
+把 Docker 作为 MCP server command 的示例：
+
+```bash
+# Claude Code
+claude mcp add --transport stdio ssh-session-mcp -- docker run --rm -i -p 8793:8793 -e VIEWER_PORT=8793 -e VIEWER_HOST=0.0.0.0 docker.io/zwawa/ssh-session-mcp:latest
+
+# Codex CLI
+codex mcp add ssh-session-mcp -- docker run --rm -i -p 8793:8793 -e VIEWER_PORT=8793 -e VIEWER_HOST=0.0.0.0 docker.io/zwawa/ssh-session-mcp:latest
+```
+
+对 JSON 配置式 MCP client，同样可以把 `docker` 作为 command，把后面的 `run ... docker.io/zwawa/ssh-session-mcp:latest` 拆成 args。
+
+Docker 适合这些情况：
+
+- 你想固定 Node 和运行时环境，不依赖本机安装。
+- 你想走镜像仓库分发给团队或托管环境。
+- 你希望 MCP server 进程本身有容器级隔离。
+
+但对大多数桌面用户来说，发布到 npm 并推荐 `npx -y ssh-session-mcp --viewerPort=auto` 仍然是摩擦最小的安装路径。
 
 ## Viewer 与协作模型
 
@@ -220,18 +346,23 @@ ssh-quick-connect -> ssh-run -> 看输出 -> 需要时查 ssh-command-status -> 
 
 | 模式 | 行为 |
 |------|------|
-| `safe` | 默认模式。阻止明显危险、交互式或不适合自主执行的流式命令。 |
-| `full` | 允许更宽的控制范围，但仍对极端危险操作保留最强拦截。 |
+| `safe` | 默认模式。自动拦截明显危险、交互式或不会自行结束的命令。 |
+| `full` | 更少保护，更适合高级使用场景，但仍会拦截少数非常明确的破坏性操作。 |
 
-## 输入锁
+默认规则集支持按需自定义。
 
-| 模式 | 谁可以输入 |
-|------|------------|
-| `common` | 用户和 AI |
-| `user` | 只有用户 |
-| `claude` / `codex` | 只有选中的 AI |
+## 输入锁策略
 
-当终端被用户锁住时，`ssh-run`、`ssh-session-send` 和 `ssh-session-control` 会返回 blocked，而不会强行把输入打进 PTY。
+浏览器终端 UI 里，操作者可以选择这些输入策略：
+
+| 策略 | 用户实际体验 |
+|------|--------------|
+| `common` | 用户和 agent 都可以向共享终端输入。 |
+| `user` | 只有用户可以输入，agent 的写入操作会被阻止。 |
+| `auto` | 用户开始输入时，不需要和 agent 抢输入权；在用户正在编辑输入草稿时，agent 写入会被阻止。 |
+| `agent` | 只有 agent 可以输入，直到策略再次切换前，用户输入都会被阻止。 |
+
+当终端当前不允许 agent 输入时，`ssh-run`、`ssh-session-send` 和 `ssh-session-control` 会返回 blocked，而不会强行把输入打进 PTY。
 
 ## MCP 工具
 
@@ -329,6 +460,39 @@ npm run cleanup
 | `AUTO_OPEN_TERMINAL` | 自动打开浏览器终端 | `false` |
 | `SSH_MCP_LOG_MODE` | `off` 或 `meta` JSONL 日志 | `off` |
 
+### 宏定义 / 环境变量对照表
+
+根据你的安装路径，使用这些变量：
+
+| 变量 | 何时必需 | 可接受值 / 示例 | 说明 |
+|------|----------|----------------|------|
+| `SSH_HOST` | 旧式单目标 SSH 模式 | `YOUR_DEVICE_HOST` | 除非你使用 `ssh-session-mcp.config.json` 或 `--local`，否则必填。 |
+| `SSH_PORT` | 旧式单目标 SSH 模式 | `22` | legacy 模式可省略，默认 `22`。 |
+| `SSH_USER` | 旧式单目标 SSH 模式 | `YOUR_DEVICE_USER` | 除非你使用 device profile，否则必填。 |
+| `SSH_PASSWORD` | 使用密码认证时 | 已导出的环境变量 | 优先用环境变量，不要把密码直接写进命令行。 |
+| `SSH_KEY` | legacy 模式下使用私钥认证时 | `/absolute/path/to/private/key` | 路径必须存在于运行 MCP server 的宿主机上。 |
+| `SSH_MCP_CONFIG` | profile 模式，或配置文件不在当前工作目录时 | `/path/to/ssh-session-mcp.config.json` | 当自动发现不够用时显式指定。 |
+| `SSH_MCP_INSTANCE` | 多 agent / 多客户端隔离时 | `agent-a` | 当两个 agent 不应该共享运行时状态时，必须用不同值。 |
+| `VIEWER_HOST` | 自定义 viewer 绑定地址时 | `127.0.0.1`, `0.0.0.0` | 容器里通常用 `0.0.0.0`；普通宿主机默认保持 `127.0.0.1`。 |
+| `VIEWER_PORT` | 需要 viewer 时 | `auto`, `0`, `8793` | `auto` 自动找空闲端口，`0` 关闭 viewer，固定端口更适合 Docker。 |
+| `AUTO_OPEN_TERMINAL` | 自动打开 viewer 页面时 | `true`, `false` | 容器里通常建议 `false`。 |
+| `SSH_MCP_MODE` | 运行时安全模式 | `safe`, `full` | 默认推荐 `safe`。 |
+| `SSH_MCP_LOCAL` | 本地演示模式 | `true`, `false` | 启动本地 shell，而不是 SSH。 |
+| `SSH_MCP_DEBUG` | 浏览器 debug 控件 | `true`, `false` | 主要用于演示和排障。 |
+| `SSH_MCP_LOG_MODE` | 运行时元数据日志 | `off`, `meta` | `meta` 会写 JSONL 元数据日志，但不应保存明文 secret。 |
+| `SSH_KEY_DIR` | Docker Compose profile 示例 | `/path/to/host/keys` | `docker-compose.yml` 里可选；未设置时回退到 `./keys`。 |
+| `SSH_SESSION_MCP_IMAGE` | Docker Compose 镜像覆盖 | `docker.io/zwawa/ssh-session-mcp:latest` | 当你要切换 tag 或镜像源时用它覆盖。 |
+
+### 最小必需配置
+
+按场景至少准备这些：
+
+- 本地演示：`SSH_MCP_LOCAL=true` 和 `VIEWER_PORT=auto`
+- legacy SSH + 密码：`SSH_HOST`、`SSH_USER`、`SSH_PASSWORD`
+- legacy SSH + 私钥：`SSH_HOST`、`SSH_USER`、`SSH_KEY`
+- profile 模式：`ssh-session-mcp.config.json`，以及该配置里引用到的 `passwordEnv` 变量
+- Docker Compose profile 模式：`ssh-session-mcp.config.json`，可选 `SSH_KEY_DIR`，可选 `SSH_SESSION_MCP_IMAGE`
+
 配置示例：[docs/examples/ssh-session-mcp.config.example.json](docs/examples/ssh-session-mcp.config.example.json)
 
 ## 安全
@@ -357,9 +521,12 @@ npm run cleanup
 - [docs/contracts.md](docs/contracts.md)
 - [docs/failure-taxonomy.md](docs/failure-taxonomy.md)
 - [docs/acceptance-scenarios.md](docs/acceptance-scenarios.md)
+- [docs/docker.md](docs/docker.md)
 - [CHANGELOG.md](CHANGELOG.md)
 
 ## 开发
+
+只有在你要改源码、跑测试或构建发布产物时，才需要 `git clone` 这个仓库。
 
 ```bash
 npm install

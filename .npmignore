@@ -76,9 +76,6 @@ pnpm-lock.yaml
 rollup.config.*
 webpack.config.*
 
-Dockerfile
-docker-compose.yml
-.dockerignore
 
 CHANGELOG.md
 CONTRIBUTING.md

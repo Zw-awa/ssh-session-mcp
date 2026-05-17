@@ -5,14 +5,20 @@ import { loadConfigFile } from './profiles.js';
 
 const REQUIRED_FILES = [
   '.env.example',
+  '.dockerignore',
   'AI_AGENT_GUIDE.md',
+  'Dockerfile',
   'README.md',
   'README.zh-CN.md',
+  'docker-compose.yml',
+  'docker-compose.env.yml',
   'docs/contracts.md',
+  'docs/docker.md',
   'docs/failure-taxonomy.md',
   'docs/acceptance-scenarios.md',
   'docs/platform-compatibility.md',
   'docs/examples/ssh-session-mcp.config.example.json',
+  'docs/examples/ssh-session-mcp.config.docker.example.json',
   'src/index.ts',
 ] as const;
 

@@ -19,6 +19,7 @@ Do not build wrapper scripts for normal terminal work unless the human explicitl
 - Prefer `ssh-session-mcp-ctl launch --local --viewerPort=auto` for a no-SSH demo.
 - Prefer `ssh-session-mcp-ctl launch --viewerPort=auto` for an operator who already configured `.env` or `ssh-session-mcp.config.json`.
 - If you are wiring an MCP client, run `ssh-session-mcp --viewerPort=auto`.
+- If the user explicitly wants containerized distribution, use `docker run --rm -i -p 8793:8793 -e VIEWER_PORT=8793 -e VIEWER_HOST=0.0.0.0 docker.io/zwawa/ssh-session-mcp:latest`.
 - If config may be ambiguous, check `ssh-device-list` before opening a session.
 
 ## High-Frequency Tools

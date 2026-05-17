@@ -1,7 +1,7 @@
 {
   "defaults": {
-    "viewerHost": "127.0.0.1",
-    "viewerPort": "auto",
+    "viewerHost": "0.0.0.0",
+    "viewerPort": 8793,
     "viewerMode": "browser",
     "viewerSingletonScope": "connection",
     "autoOpenTerminal": false,
@@ -12,7 +12,7 @@
   "devices": [
     {
       "id": "DEVICE_A_ID",
-      "label": "Example Primary Target",
+      "label": "Example Container Target",
       "host": "DEVICE_A_HOST",
       "port": 22,
       "user": "DEVICE_A_USER",
@@ -25,33 +25,12 @@
         "rows": 40,
         "idleTimeoutMs": 1800000,
         "closedRetentionMs": 300000,
-        "autoOpenViewer": true,
+        "autoOpenViewer": false,
         "viewerMode": "browser"
       },
       "tags": [
-        "example",
-        "primary"
-      ]
-    },
-    {
-      "id": "DEVICE_B_ID",
-      "label": "Example Secondary Target",
-      "host": "DEVICE_B_HOST",
-      "port": 22,
-      "user": "DEVICE_B_USER",
-      "auth": {
-        "keyPath": "/absolute/path/to/ssh/key"
-      },
-      "defaults": {
-        "term": "xterm-256color",
-        "cols": 140,
-        "rows": 42,
-        "autoOpenViewer": false,
-        "viewerMode": "terminal"
-      },
-      "tags": [
-        "example",
-        "secondary"
+        "docker",
+        "example"
       ]
     }
   ]

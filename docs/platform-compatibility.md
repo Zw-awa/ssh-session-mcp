@@ -28,4 +28,7 @@
 - Config discovery supports workspace config, user-global config, or explicit `--config`.
 - Runtime state is isolated by `SSH_MCP_INSTANCE`.
 - Viewer HTTP binds to `127.0.0.1` by default unless the user changes it.
+- In Docker, publish the viewer port and bind `VIEWER_HOST=0.0.0.0` inside the container.
 - No external service is required for the core SSH transport path.
+
+See [docker.md](docker.md) for container-specific setup details.

@@ -1,0 +1,23 @@
+services:
+  ssh-session-mcp:
+    image: ${SSH_SESSION_MCP_IMAGE:-docker.io/zwawa/ssh-session-mcp:latest}
+    container_name: ssh-session-mcp
+    restart: unless-stopped
+    stdin_open: true
+    tty: false
+    ports:
+      - "8793:8793"
+    environment:
+      VIEWER_PORT: "8793"
+      VIEWER_HOST: "0.0.0.0"
+      AUTO_OPEN_TERMINAL: "false"
+      SSH_MCP_CONFIG: /workspace/ssh-session-mcp.config.json
+    volumes:
+      - type: bind
+        source: ./ssh-session-mcp.config.json
+        target: /workspace/ssh-session-mcp.config.json
+        read_only: true
+      - type: bind
+        source: ${SSH_KEY_DIR:-./keys}
+        target: /workspace/keys
+        read_only: true

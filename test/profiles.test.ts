@@ -18,20 +18,20 @@ describe('profile config helpers', () => {
     const dir = mkdtempSync(join(tmpdir(), 'ssh-mcp-profiles-'));
     const configPath = join(dir, 'ssh-session-mcp.config.json');
     writeFileSync(configPath, JSON.stringify({
-      defaultDevice: 'board-a',
+      defaultDevice: 'DEVICE_A_ID',
       devices: [
         {
-          id: 'board-a',
-          host: '192.168.10.58',
+          id: 'DEVICE_A_ID',
+          host: 'DEVICE_A_HOST',
           port: 22,
-          user: 'orangepi',
-          auth: { passwordEnv: 'BOARD_A_PASSWORD' },
+          user: 'remote-user',
+          auth: { passwordEnv: 'DEVICE_A_PASSWORD' },
           defaults: { viewerMode: 'browser', autoOpenViewer: true },
         },
         {
-          id: 'board-b',
-          host: '192.168.10.59',
-          user: 'orangepi',
+          id: 'DEVICE_B_ID',
+          host: 'DEVICE_B_HOST',
+          user: 'remote-user',
           auth: { keyPath: '/tmp/id_rsa' },
         },
       ],
@@ -54,10 +54,10 @@ describe('profile config helpers', () => {
 
     expect(loaded.source).toBe('config');
     expect(loaded.path).toBe(configPath);
-    expect(resolveDefaultDeviceId(loaded)).toBe('board-a');
-    expect(resolveDeviceProfile(loaded, 'board-b')?.host).toBe('192.168.10.59');
-    expect(summarizeAuth(resolveDeviceProfile(loaded, 'board-a')!)).toBe('passwordEnv');
-    expect(summarizeAuth(resolveDeviceProfile(loaded, 'board-b')!)).toBe('keyPath');
+    expect(resolveDefaultDeviceId(loaded)).toBe('DEVICE_A_ID');
+    expect(resolveDeviceProfile(loaded, 'DEVICE_B_ID')?.host).toBe('DEVICE_B_HOST');
+    expect(summarizeAuth(resolveDeviceProfile(loaded, 'DEVICE_A_ID')!)).toBe('passwordEnv');
+    expect(summarizeAuth(resolveDeviceProfile(loaded, 'DEVICE_B_ID')!)).toBe('keyPath');
     expect(loaded.config?.policyRules).toHaveLength(1);
     expect(loaded.config?.policyRules[0].id).toBe('block-kubectl-delete');
   });
@@ -94,20 +94,20 @@ describe('profile config helpers', () => {
           mode: 'safe',
           logMode: 'meta',
         },
-        defaultDevice: 'board-b',
+        defaultDevice: 'DEVICE_B_ID',
         devices: [
           {
-            id: 'board-a',
-            label: 'Global Board A',
-            host: '192.168.10.58',
-            user: 'orangepi',
-            auth: { passwordEnv: 'BOARD_A_PASSWORD' },
+            id: 'DEVICE_A_ID',
+            label: 'DEVICE_A_LABEL',
+            host: 'DEVICE_A_HOST',
+            user: 'remote-user',
+            auth: { passwordEnv: 'DEVICE_A_PASSWORD' },
             tags: ['global'],
           },
           {
-            id: 'board-b',
-            host: '192.168.10.59',
-            user: 'orangepi',
+            id: 'DEVICE_B_ID',
+            host: 'DEVICE_B_HOST',
+            user: 'remote-user',
           },
         ],
       }, null, 2), 'utf8');
@@ -117,11 +117,11 @@ describe('profile config helpers', () => {
           viewerMode: 'terminal',
           viewerSingletonScope: 'session',
         },
-        defaultDevice: 'board-a',
+        defaultDevice: 'DEVICE_A_ID',
         devices: [
           {
-            id: 'board-a',
-            host: '192.168.10.60',
+            id: 'DEVICE_A_ID',
+            host: 'DEVICE_A_OVERRIDE_HOST',
             user: 'root',
             tags: ['workspace'],
           },
@@ -167,15 +167,15 @@ describe('profile config helpers', () => {
       expect(loaded.config?.defaults?.viewerMode).toBe('terminal');
       expect(loaded.config?.defaults?.viewerHost).toBe('127.0.0.1');
       expect(loaded.config?.defaults?.viewerSingletonScope).toBe('session');
-      expect(resolveDefaultDeviceId(loaded)).toBe('board-a');
-      expect(resolveDeviceProfile(loaded, 'board-a')).toEqual({
-        id: 'board-a',
-        host: '192.168.10.60',
+      expect(resolveDefaultDeviceId(loaded)).toBe('DEVICE_A_ID');
+      expect(resolveDeviceProfile(loaded, 'DEVICE_A_ID')).toEqual({
+        id: 'DEVICE_A_ID',
+        host: 'DEVICE_A_OVERRIDE_HOST',
         port: 22,
         user: 'root',
         tags: ['workspace'],
       });
-      expect(resolveDeviceProfile(loaded, 'board-b')?.host).toBe('192.168.10.59');
+      expect(resolveDeviceProfile(loaded, 'DEVICE_B_ID')?.host).toBe('DEVICE_B_HOST');
       expect(loaded.config?.policyRules.map(rule => rule.id).sort()).toEqual([
         'block-global-rule',
         'block-workspace-only',

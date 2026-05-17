@@ -340,7 +340,7 @@
 
     .install-grid {
       display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
+      grid-template-columns: repeat(3, minmax(0, 1fr));
       gap: 1rem;
     }
 
@@ -560,8 +560,15 @@
 
     <section class="install-card">
       <h2 class="section-title">Install paths</h2>
-      <p class="section-copy">Use the operator helper when a human wants the easiest local experience. Use the server binary directly when an MCP client needs a stdio command.</p>
+      <p class="section-copy">Pick the lightest path for the job: `npx` for agent-first install, local binaries for operator demos, and Docker when you want image-based distribution or a pinned runtime.</p>
       <div class="install-grid" style="margin-top: 1rem;">
+        <div class="code-card">
+          <div class="code-head">
+            <span>Agent-first install</span>
+            <button class="copy-button" data-copy="npx -y ssh-session-mcp --viewerPort=auto">Copy</button>
+          </div>
+          <pre><code>npx -y ssh-session-mcp --viewerPort=auto</code></pre>
+        </div>
         <div class="code-card">
           <div class="code-head">
             <span>Fast local demo</span>
@@ -572,13 +579,16 @@ ssh-session-mcp-ctl launch --local --viewerPort=auto</code></pre>
         </div>
         <div class="code-card">
           <div class="code-head">
-            <span>MCP stdio command</span>
-            <button class="copy-button" data-copy="ssh-session-mcp --viewerPort=auto">Copy</button>
+            <span>Docker runtime</span>
+            <button class="copy-button" data-copy="docker run --rm -i -p 8793:8793 -e VIEWER_PORT=8793 -e VIEWER_HOST=0.0.0.0 docker.io/&lt;namespace&gt;/ssh-session-mcp:latest">Copy</button>
           </div>
-          <pre><code>ssh-session-mcp --viewerPort=auto</code></pre>
+          <pre><code>docker run --rm -i -p 8793:8793 \
+-e VIEWER_PORT=8793 \
+-e VIEWER_HOST=0.0.0.0 \
+docker.io/&lt;namespace&gt;/ssh-session-mcp:latest</code></pre>
         </div>
       </div>
-      <div class="alert">Use `.env` for a single target. Use `ssh-session-mcp.config.json` for multi-device setups. Keep secrets in environment variables, not in tracked JSON.</div>
+      <div class="alert">Use `.env` for a single target. Use `ssh-session-mcp.config.json` for multi-device setups. Keep secrets in environment variables, not in tracked JSON. Compose examples, Docker notes, and Windows path guidance live in the repository docs.</div>
     </section>
 
     <section class="tools-card">

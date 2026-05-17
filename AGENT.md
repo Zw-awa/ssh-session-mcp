@@ -58,6 +58,14 @@ claude mcp add --transport stdio ssh-session-mcp -- ssh-session-mcp --viewerPort
 codex mcp add ssh-session-mcp -- ssh-session-mcp --viewerPort=auto
 ```
 
+### Path E: Containerized MCP Runtime
+
+Use this when the operator explicitly wants image-based distribution or a pinned container runtime.
+
+```bash
+docker run --rm -i -p 8793:8793 -e VIEWER_PORT=8793 -e VIEWER_HOST=0.0.0.0 docker.io/zwawa/ssh-session-mcp:latest
+```
+
 ## What To Inspect First
 
 Before doing interactive SSH work, check these in order:
@@ -67,6 +75,38 @@ Before doing interactive SSH work, check these in order:
 3. Does `.env` exist.
 4. Does `ssh-session-mcp.config.json` exist.
 5. Is the user asking for local demo mode or real SSH access.
+
+## Required User Confirmations
+
+Before you install or launch anything automatically, confirm these settings with the user:
+
+| Question | Why it matters | Typical answers |
+|----------|----------------|-----------------|
+| Which install path do you want? | Decides whether to use `npx`, global npm, or Docker. | `npx`, global npm, Docker |
+| Is this a local demo or a real SSH target? | Determines whether to set `SSH_MCP_LOCAL=true` or ask for real SSH settings. | local demo, real SSH |
+| Do you want legacy `.env` mode or profile-based config? | Determines whether to ask for `SSH_HOST` / `SSH_USER` or for `ssh-session-mcp.config.json`. | `.env`, profile config |
+| If using legacy mode, what are `SSH_HOST`, `SSH_PORT`, and `SSH_USER`? | Minimum SSH connection tuple. | host, port, user |
+| If using auth, do you want `SSH_PASSWORD` or `SSH_KEY` / `auth.keyPath`? | Avoid guessing auth mode and avoid putting secrets in tracked JSON. | password, key |
+| If using profile mode, where is `ssh-session-mcp.config.json`? | Needed when config is not in the current workspace. | workspace path, external path |
+| Which env vars referenced by config need to be exported? | `passwordEnv` values must exist before launch. | `DEVICE_A_PASSWORD`, `BOARD_B_PASSWORD` |
+| Do you want the browser viewer enabled, and on what port? | Needed for `VIEWER_PORT` and operator expectations. | `auto`, `8793`, `0` |
+| If using Docker, what image tag and optional `SSH_SESSION_MCP_IMAGE` should be used? | Avoid pulling the wrong image or tag. | `zwawa/ssh-session-mcp:latest`, version tag |
+| If using Docker with key auth, what should `SSH_KEY_DIR` be? | Prevents accidental repo-root mounting and clarifies key source. | external key directory, `./keys` |
+| Do you want `safe` or `full` mode? | Affects command blocking behavior. | `safe`, `full` |
+| Do you want multiple agent/client instances isolated? | Determines whether `SSH_MCP_INSTANCE` must be set explicitly. | default, custom instance id |
+
+If the user cannot answer these yet, pause installation and help them decide instead of inventing values.
+
+## Required Macro / Env Checklist
+
+When the agent prepares installation, collect or verify these variables as applicable:
+
+- Local demo: `SSH_MCP_LOCAL`, `VIEWER_PORT`
+- Legacy SSH + password: `SSH_HOST`, `SSH_PORT`, `SSH_USER`, `SSH_PASSWORD`
+- Legacy SSH + key: `SSH_HOST`, `SSH_PORT`, `SSH_USER`, `SSH_KEY`
+- Profile mode: `SSH_MCP_CONFIG`, plus all `passwordEnv` variables referenced by `ssh-session-mcp.config.json`
+- Docker profile mode: `SSH_SESSION_MCP_IMAGE`, optional `SSH_KEY_DIR`, `VIEWER_PORT`, `VIEWER_HOST`
+- Optional runtime controls: `SSH_MCP_MODE`, `AUTO_OPEN_TERMINAL`, `SSH_MCP_INSTANCE`, `SSH_MCP_LOG_MODE`
 
 ## Operator Commands
 
@@ -148,6 +188,7 @@ Do not jump to raw PTY tools unless the normal loop is insufficient.
 
 - Prefer `npm install -g ssh-session-mcp` for human operators.
 - Prefer `npx -y ssh-session-mcp --viewerPort=auto` when the user does not want a global install.
+- Prefer the published Docker Hub image when the user explicitly asks for Docker or containerized distribution.
 - Prefer `ssh-session-mcp-ctl launch --local --viewerPort=auto` for demos and debugging.
 - Do not tell the user to put passwords in `ssh-session-mcp.config.json`.
 - Do not assume a config file in another workspace will be auto-discovered.

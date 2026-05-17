@@ -31,13 +31,13 @@ Every JSON-style tool response may include these top-level fields:
 
 ```json
 {
-  "session": "board-a/main",
-  "terminalUrl": "http://127.0.0.1:8793/terminal/session/board-a%2Fmain",
+  "session": "DEVICE_A_ID/main",
+  "terminalUrl": "http://127.0.0.1:8793/terminal/session/DEVICE_A_ID%2Fmain",
   "resultStatus": "success",
-  "summary": "Connected to board-a/main and ensured a viewer.",
+  "summary": "Connected to DEVICE_A_ID/main and ensured a viewer.",
   "nextAction": "Use ssh-run to execute the next command.",
   "evidence": [
-    "device=board-a",
+    "device=DEVICE_A_ID",
     "connection=main",
     "viewerMode=browser"
   ]

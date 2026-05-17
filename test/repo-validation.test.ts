@@ -19,6 +19,11 @@ function writeValidRepositoryFixture(root: string) {
     'VIEWER_PORT=auto',
   ].join('\n'));
 
+  writeText(root, '.dockerignore', 'node_modules/\n');
+  writeText(root, 'Dockerfile', 'FROM node:20-bookworm-slim\n');
+  writeText(root, 'docker-compose.yml', 'services:\n  app:\n    image: example\n');
+  writeText(root, 'docker-compose.env.yml', 'services:\n  app:\n    image: example\n');
+
   writeText(root, 'src/index.ts', [
     "server.tool('ssh-quick-connect', '...', {}, async () => ({}));",
     "server.tool('ssh-run', '...', {}, async () => ({}));",
@@ -42,6 +47,7 @@ function writeValidRepositoryFixture(root: string) {
   ].join('\n'));
 
   writeText(root, 'docs/contracts.md', '# contracts\n');
+  writeText(root, 'docs/docker.md', '# docker\n');
   writeText(root, 'docs/failure-taxonomy.md', '# failure taxonomy\n');
   writeText(root, 'docs/platform-compatibility.md', '# compatibility\n');
   writeText(root, 'docs/acceptance-scenarios.md', [
@@ -67,13 +73,38 @@ function writeValidRepositoryFixture(root: string) {
         mode: 'safe',
         logMode: 'meta',
       },
-      defaultDevice: 'board-a',
+      defaultDevice: 'DEVICE_A_ID',
       devices: [
         {
-          id: 'board-a',
-          host: '192.168.10.58',
-          user: 'orangepi',
-          auth: { passwordEnv: 'BOARD_A_PASSWORD' },
+          id: 'DEVICE_A_ID',
+          host: 'DEVICE_A_HOST',
+          user: 'remote-user',
+          auth: { passwordEnv: 'DEVICE_A_PASSWORD' },
+          defaults: { viewerMode: 'browser' },
+        },
+      ],
+    }),
+  );
+
+  writeText(
+    root,
+    'docs/examples/ssh-session-mcp.config.docker.example.json',
+    JSON.stringify({
+      defaults: {
+        viewerHost: '0.0.0.0',
+        viewerPort: 8793,
+        viewerMode: 'browser',
+        viewerSingletonScope: 'connection',
+        mode: 'safe',
+        logMode: 'meta',
+      },
+      defaultDevice: 'DEVICE_A_ID',
+      devices: [
+        {
+          id: 'DEVICE_A_ID',
+          host: 'DEVICE_A_HOST',
+          user: 'remote-user',
+          auth: { passwordEnv: 'DEVICE_A_PASSWORD' },
           defaults: { viewerMode: 'browser' },
         },
       ],

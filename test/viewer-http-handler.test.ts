@@ -97,9 +97,9 @@ function createMockSession(overrides: Partial<Record<string, unknown>> = {}) {
     sessionName: 'demo',
     sessionRef: 'demo-ref',
     instanceId: 'test-instance',
-    host: '192.168.10.58',
+    host: 'DEVICE_A_HOST',
     port: 22,
-    user: 'orangepi',
+    user: 'remote-user',
     cols: 120,
     rows: 40,
     term: 'xterm-256color',
@@ -122,9 +122,9 @@ function createMockSession(overrides: Partial<Record<string, unknown>> = {}) {
     updatedAt,
     closed: false,
     idleTimeoutMs: 0,
-    host: '192.168.10.58',
+    host: 'DEVICE_A_HOST',
     port: 22,
-    user: 'orangepi',
+    user: 'remote-user',
     cols: 120,
     rows: 40,
     inputLock: 'none' as 'none' | 'agent' | 'user',
@@ -184,7 +184,7 @@ const previousEnv = {
   SSH_MCP_CONFIG: process.env.SSH_MCP_CONFIG,
   VIEWER_PORT: process.env.VIEWER_PORT,
   VIEWER_HOST: process.env.VIEWER_HOST,
-  BOARD_A_PASSWORD: process.env.BOARD_A_PASSWORD,
+  DEVICE_A_PASSWORD: process.env.DEVICE_A_PASSWORD,
 };
 
 beforeAll(async () => {
@@ -192,13 +192,13 @@ beforeAll(async () => {
   const configPath = join(dir, 'ssh-session-mcp.config.json');
 
   writeFileSync(configPath, JSON.stringify({
-    defaultDevice: 'board-a',
+    defaultDevice: 'DEVICE_A_ID',
     devices: [
       {
-        id: 'board-a',
-        host: '192.168.10.58',
-        user: 'orangepi',
-        auth: { passwordEnv: 'BOARD_A_PASSWORD' },
+        id: 'DEVICE_A_ID',
+        host: 'DEVICE_A_HOST',
+        user: 'remote-user',
+        auth: { passwordEnv: 'DEVICE_A_PASSWORD' },
       },
     ],
   }, null, 2), 'utf8');
@@ -207,7 +207,7 @@ beforeAll(async () => {
   process.env.SSH_MCP_CONFIG = configPath;
   process.env.VIEWER_PORT = '8793';
   process.env.VIEWER_HOST = '127.0.0.1';
-  process.env.BOARD_A_PASSWORD = 'dummy-password';
+  process.env.DEVICE_A_PASSWORD = 'dummy-password';
 
   const serverState = await import('../src/server-state.js');
   sessions = serverState.sessions;
@@ -362,9 +362,9 @@ describe('viewer http handler', () => {
     viewerBindings.set('demo-binding', {
       bindingKey: 'demo-binding',
       connectionKey: 'conn-demo',
-      host: '192.168.10.58',
+      host: 'DEVICE_A_HOST',
       port: 22,
-      user: 'orangepi',
+      user: 'remote-user',
       sessionId: 'demo-session',
       scope: 'connection',
       updatedAt: '2026-04-22T12:00:00.000Z',

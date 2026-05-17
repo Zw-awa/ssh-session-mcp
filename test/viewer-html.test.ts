@@ -20,7 +20,7 @@ const previousEnv = {
   SSH_MCP_CONFIG: process.env.SSH_MCP_CONFIG,
   VIEWER_PORT: process.env.VIEWER_PORT,
   VIEWER_HOST: process.env.VIEWER_HOST,
-  BOARD_A_PASSWORD: process.env.BOARD_A_PASSWORD,
+  DEVICE_A_PASSWORD: process.env.DEVICE_A_PASSWORD,
 };
 
 beforeAll(async () => {
@@ -28,13 +28,13 @@ beforeAll(async () => {
   const configPath = join(dir, 'ssh-session-mcp.config.json');
 
   writeFileSync(configPath, JSON.stringify({
-    defaultDevice: 'board-a',
+    defaultDevice: 'DEVICE_A_ID',
     devices: [
       {
-        id: 'board-a',
-        host: '192.168.10.58',
-        user: 'orangepi',
-        auth: { passwordEnv: 'BOARD_A_PASSWORD' },
+        id: 'DEVICE_A_ID',
+        host: 'DEVICE_A_HOST',
+        user: 'remote-user',
+        auth: { passwordEnv: 'DEVICE_A_PASSWORD' },
       },
     ],
   }, null, 2), 'utf8');
@@ -43,7 +43,7 @@ beforeAll(async () => {
   process.env.SSH_MCP_CONFIG = configPath;
   process.env.VIEWER_PORT = '8793';
   process.env.VIEWER_HOST = '127.0.0.1';
-  process.env.BOARD_A_PASSWORD = 'dummy-password';
+  process.env.DEVICE_A_PASSWORD = 'dummy-password';
 
   const serverStateModule = await import('../src/server-state.js');
   serverStateModule.setActualViewerPort(8793);
@@ -183,7 +183,7 @@ function createFakeSession() {
   };
   return new SSHSession(
     'demo-session', 'demo-session', metadata,
-    '192.168.1.1', 22, 'testuser',
+    'DEVICE_A_HOST', 22, 'DEVICE_A_USER',
     120, 40, 'xterm-256color',
     0, 300000, tuning,
     null as unknown as SSHConnection,
