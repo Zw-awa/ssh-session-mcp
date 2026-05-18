@@ -448,7 +448,7 @@ server.tool(
       throw new McpError(ErrorCode.InvalidParams, 'input cannot be empty');
     }
 
-    if (target.inputLock === 'user') {
+    if (target.effectiveInputLock() === 'user') {
       return createJsonToolResponse(applyToolContract({
         error: 'INPUT_LOCKED',
         lock: 'user',
@@ -723,7 +723,7 @@ server.tool(
   async ({ session, control, actor }) => {
     const target = resolveSession(session);
 
-    if (target.inputLock === 'user') {
+    if (target.effectiveInputLock() === 'user') {
       return createJsonToolResponse(applyToolContract({
         error: 'INPUT_LOCKED',
         lock: 'user',
@@ -1506,8 +1506,9 @@ server.tool(
     sweepSessions();
     const target = resolveSession(session);
     const commandMeta = summarizeCommandMeta(command);
+    const runningCommand = findRunningCommandForSession(target.sessionId);
 
-    if (target.inputLock === 'user') {
+    if (target.effectiveInputLock() === 'user') {
       return createJsonToolResponse(applyToolContract({
         error: 'INPUT_LOCKED',
         lock: 'user',
@@ -1522,7 +1523,7 @@ server.tool(
     }
 
     // Mutual exclusion: reject if another agent command is already running
-    if (target.inputLock === 'agent') {
+    if (runningCommand || target.agentInputActive) {
       return createJsonToolResponse(applyToolContract({
         error: 'AGENT_BUSY',
         lock: 'agent',
@@ -1534,7 +1535,7 @@ server.tool(
         nextAction: 'Wait for the running command to finish or check it with ssh-command-status.',
         evidence: [
           `sessionRef=${sessionReadRef(target)}`,
-          'inputLock=agent',
+          runningCommand ? `commandId=${runningCommand.commandId}` : 'agentInputActive=true',
         ],
       }));
     }
@@ -1632,7 +1633,7 @@ server.tool(
     }
 
     // Acquire agent lock
-    target.inputLock = 'agent';
+    target.setAgentInputActive(true);
     broadcastLock(target);
 
     try {
@@ -1724,7 +1725,7 @@ server.tool(
         });
 
       // Release lock
-      target.inputLock = 'none';
+      target.setAgentInputActive(false);
       broadcastLock(target);
 
       // Start background monitor
@@ -1779,7 +1780,7 @@ server.tool(
     const postTerminalMode = detectTerminalMode(target.buffer.slice(-2000));
     if (postTerminalMode === 'password_prompt') {
       // Release lock
-      target.inputLock = 'none';
+      target.setAgentInputActive(false);
       broadcastLock(target);
       logSessionEvent(target.sessionId, 'command.password_prompt', {
         actor: 'agent',
@@ -1812,7 +1813,7 @@ server.tool(
     }
 
     // Release lock
-    target.inputLock = 'none';
+    target.setAgentInputActive(false);
     broadcastLock(target);
 
     const exitCode = completion.exitCode;
@@ -1953,8 +1954,8 @@ server.tool(
 
     } finally {
       // Ensure lock is always released even if an error occurs
-      if (target.inputLock === 'agent') {
-        target.inputLock = 'none';
+      if (target.agentInputActive) {
+        target.setAgentInputActive(false);
         broadcastLock(target);
       }
     }
@@ -2208,7 +2209,7 @@ server.tool(
       }
 
       // Execute command
-      if (target.inputLock === 'user') {
+      if (target.effectiveInputLock() === 'user') {
         return createJsonToolResponse(applyToolContract({
           error: 'INPUT_LOCKED',
           lock: 'user',
@@ -2222,7 +2223,8 @@ server.tool(
         }));
       }
 
-      if (target.inputLock === 'agent') {
+      const runningRetryCommand = findRunningCommandForSession(target.sessionId);
+      if (runningRetryCommand || target.agentInputActive) {
         return createJsonToolResponse(applyToolContract({
           error: 'AGENT_BUSY',
           lock: 'agent',
@@ -2234,7 +2236,7 @@ server.tool(
           nextAction: 'Wait for the running command to finish or check it with ssh-command-status.',
           evidence: [
             `sessionRef=${sessionReadRef(target)}`,
-            'inputLock=agent',
+            runningRetryCommand ? `commandId=${runningRetryCommand.commandId}` : 'agentInputActive=true',
           ],
         }));
       }
@@ -2329,7 +2331,7 @@ server.tool(
         }));
       }
 
-      target.inputLock = 'agent';
+      target.setAgentInputActive(true);
       broadcastLock(target);
 
       try {
@@ -2463,8 +2465,8 @@ server.tool(
           }), [output]);
         }
       } finally {
-        if (target.inputLock === 'agent') {
-          target.inputLock = 'none';
+        if (target.agentInputActive) {
+          target.setAgentInputActive(false);
           broadcastLock(target);
         }
       }

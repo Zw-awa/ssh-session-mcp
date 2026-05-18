@@ -3,23 +3,54 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>__PACKAGE_NAME__</title>
-  <meta name="description" content="__PACKAGE_DESCRIPTION__">
+  <title>__PAGE_TITLE__</title>
+  <meta name="description" content="__PAGE_DESCRIPTION__">
+  <meta name="keywords" content="__SITE_KEYWORDS__">
+  <meta name="robots" content="__ROBOTS_CONTENT__">
+  <meta name="theme-color" content="#13171d">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="SSH Session MCP">
+  <meta property="og:title" content="__PAGE_TITLE__">
+  <meta property="og:description" content="__PAGE_DESCRIPTION__">
+  <meta property="og:url" content="__PAGE_URL__">
+  <meta property="og:image" content="__OG_IMAGE_URL__">
+  <meta property="og:locale" content="en_US">
+  <meta property="og:locale:alternate" content="zh_CN">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="__PAGE_TITLE__">
+  <meta name="twitter:description" content="__PAGE_DESCRIPTION__">
+  <meta name="twitter:image" content="__OG_IMAGE_URL__">
+  __CANONICAL_TAG__
+  <link rel="alternate" href="__SITE_URL__" hreflang="en">
+  <link rel="alternate" href="__SITE_URL__" hreflang="zh-CN">
+  <link rel="alternate" href="__SITE_URL__" hreflang="x-default">
+  <link rel="icon" type="image/png" href="assets/logo-monogram-v1.png">
+  <script type="application/ld+json">
+__SOFTWARE_APPLICATION_JSON__
+  </script>
+  <script type="application/ld+json">
+__WEBSITE_JSON__
+  </script>
+  <script type="application/ld+json">
+__FAQ_JSON__
+  </script>
   <style>
     :root {
-      --bg: #ede5d8;
-      --bg-strong: #e2d8c7;
-      --paper: rgba(255, 252, 247, 0.82);
+      --bg: #efe6d8;
+      --bg-strong: #e4d8c3;
+      --paper: rgba(255, 252, 247, 0.84);
+      --paper-strong: rgba(255, 250, 243, 0.94);
       --panel: #11161d;
       --panel-soft: #1b242e;
       --ink: #171412;
       --muted: #5f554d;
       --line: rgba(23, 20, 18, 0.12);
+      --line-strong: rgba(23, 20, 18, 0.2);
       --accent: #0b8f7b;
       --accent-soft: #8fdccf;
+      --accent-ink: #07241f;
       --alert: #db6a2c;
-      --code: #d5fff7;
-      --shadow: 0 28px 80px rgba(32, 27, 22, 0.18);
+      --shadow: 0 28px 80px rgba(32, 27, 22, 0.16);
       --radius-xl: 30px;
       --radius-lg: 20px;
       --radius-md: 14px;
@@ -41,7 +72,7 @@
       background:
         radial-gradient(circle at top left, rgba(11, 143, 123, 0.12), transparent 26rem),
         radial-gradient(circle at 80% 20%, rgba(219, 106, 44, 0.14), transparent 24rem),
-        linear-gradient(180deg, #f2ecdf 0%, var(--bg) 48%, #e7dece 100%);
+        linear-gradient(180deg, #f3ece1 0%, var(--bg) 48%, #e8ddcc 100%);
       text-wrap: pretty;
     }
 
@@ -51,15 +82,38 @@
       inset: 0;
       pointer-events: none;
       background-image:
-        linear-gradient(rgba(23, 20, 18, 0.035) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(23, 20, 18, 0.035) 1px, transparent 1px);
+        linear-gradient(rgba(23, 20, 18, 0.03) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(23, 20, 18, 0.03) 1px, transparent 1px);
       background-size: 32px 32px;
-      mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.45), transparent 70%);
+      mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.42), transparent 70%);
     }
 
     a {
       color: inherit;
       text-decoration: none;
+    }
+
+    button {
+      font: inherit;
+    }
+
+    [data-lang] {
+      display: none;
+    }
+
+    html[data-current-lang="en"] [data-lang="en"],
+    html[data-current-lang="zh-CN"] [data-lang="zh-CN"] {
+      display: revert;
+    }
+
+    html[data-current-lang="en"] [data-lang-block="en"],
+    html[data-current-lang="zh-CN"] [data-lang-block="zh-CN"] {
+      display: block;
+    }
+
+    html[data-current-lang="en"] [data-lang-flex="en"],
+    html[data-current-lang="zh-CN"] [data-lang-flex="zh-CN"] {
+      display: flex;
     }
 
     .shell {
@@ -96,6 +150,44 @@
       font-family: "IBM Plex Mono", Consolas, monospace;
     }
 
+    .masthead-actions {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+
+    .lang-switch {
+      display: inline-flex;
+      gap: 0.3rem;
+      padding: 0.25rem;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.48);
+    }
+
+    .lang-button {
+      min-width: 3.2rem;
+      min-height: 2.2rem;
+      padding: 0.4rem 0.8rem;
+      border: 0;
+      border-radius: 999px;
+      background: transparent;
+      color: var(--muted);
+      font: 700 0.82rem "IBM Plex Mono", Consolas, monospace;
+      cursor: pointer;
+      transition: background 180ms ease, color 180ms ease, transform 180ms ease;
+    }
+
+    .lang-button:hover {
+      transform: translateY(-1px);
+    }
+
+    html[data-current-lang="en"] .lang-button[data-lang-choice="en"],
+    html[data-current-lang="zh-CN"] .lang-button[data-lang-choice="zh-CN"] {
+      background: #13171d;
+      color: #f7f2ea;
+    }
+
     .version-pill {
       padding: 0.45rem 0.8rem;
       border: 1px solid var(--line);
@@ -110,11 +202,11 @@
       display: grid;
       grid-template-columns: 1.1fr 0.9fr;
       gap: 1.6rem;
-      margin: 1.25rem 0 2rem;
+      margin: 1.25rem 0 1.75rem;
       padding: 1.7rem;
       border-radius: var(--radius-xl);
-      background: linear-gradient(180deg, rgba(255, 253, 249, 0.8), rgba(245, 238, 227, 0.82));
-      border: 1px solid rgba(255, 255, 255, 0.45);
+      background: linear-gradient(180deg, rgba(255, 253, 249, 0.82), rgba(244, 236, 224, 0.84));
+      border: 1px solid rgba(255, 255, 255, 0.5);
       box-shadow: var(--shadow);
       overflow: hidden;
     }
@@ -154,18 +246,34 @@
 
     h1 {
       margin: 1rem 0 0.8rem;
-      max-width: 10ch;
-      font-size: clamp(3rem, 7vw, 5.6rem);
+      max-width: 12ch;
+      font-size: clamp(3rem, 7vw, 5.4rem);
       line-height: 0.94;
       letter-spacing: -0.04em;
     }
 
     .lede {
-      max-width: 60ch;
+      max-width: 62ch;
       margin: 0 0 1.2rem;
       color: var(--muted);
-      font-size: clamp(1.05rem, 1.8vw, 1.28rem);
-      line-height: 1.65;
+      font-size: clamp(1.03rem, 1.8vw, 1.24rem);
+      line-height: 1.66;
+    }
+
+    .keyword-strip {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.55rem;
+      margin: 1rem 0 0;
+    }
+
+    .keyword-pill {
+      padding: 0.5rem 0.75rem;
+      border: 1px solid rgba(17, 22, 29, 0.1);
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.62);
+      color: var(--muted);
+      font: 600 0.8rem "IBM Plex Mono", Consolas, monospace;
     }
 
     .cta-row {
@@ -207,20 +315,55 @@
       background: transparent;
     }
 
-    .meta-grid {
+    .meta-grid,
+    .three-up,
+    .install-grid,
+    .tool-list,
+    .faq-grid,
+    .resource-grid {
       display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
       gap: 0.8rem;
+    }
+
+    .meta-grid {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
       margin-top: 1.4rem;
+    }
+
+    .three-up {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      margin-bottom: 1rem;
+    }
+
+    .install-grid {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      margin-top: 1rem;
+    }
+
+    .tool-list {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      margin-top: 1rem;
+    }
+
+    .faq-grid {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      margin-top: 1rem;
+    }
+
+    .resource-grid {
+      grid-template-columns: 1.05fr 1.3fr;
+      margin-top: 1rem;
     }
 
     .meta-card,
     .info-card,
     .terminal-card,
     .install-card,
-    .gallery-card,
     .tools-card,
-    .footer-card {
+    .faq-card,
+    .resource-card,
+    .footer-card,
+    .notice-card {
       border-radius: var(--radius-lg);
       border: 1px solid rgba(17, 22, 29, 0.09);
       background: var(--paper);
@@ -228,11 +371,32 @@
       box-shadow: 0 16px 38px rgba(22, 18, 14, 0.08);
     }
 
-    .meta-card {
+    .meta-card,
+    .info-card,
+    .tool-item,
+    .faq-item,
+    .resource-card,
+    .notice-card {
       padding: 1rem;
     }
 
-    .meta-label {
+    .install-card,
+    .tools-card,
+    .faq-card,
+    .footer-card {
+      padding: 1.2rem;
+      margin: 0 0 1rem;
+    }
+
+    .notice-card {
+      margin: 0 0 1rem;
+      background: rgba(219, 106, 44, 0.09);
+      border-color: rgba(219, 106, 44, 0.18);
+    }
+
+    .meta-label,
+    .section-kicker,
+    .resource-label {
       margin-bottom: 0.45rem;
       color: var(--muted);
       font: 600 0.75rem "IBM Plex Mono", Consolas, monospace;
@@ -241,7 +405,7 @@
     }
 
     .meta-value {
-      font-size: 1.05rem;
+      font-size: 1.02rem;
       line-height: 1.5;
     }
 
@@ -258,69 +422,68 @@
       position: absolute;
       inset: 0;
       background:
-        linear-gradient(180deg, rgba(12, 255, 177, 0.08), transparent 32%),
-        radial-gradient(circle at top left, rgba(31, 255, 220, 0.08), transparent 18rem);
+        radial-gradient(circle at 20% 15%, rgba(11, 143, 123, 0.18), transparent 18rem),
+        linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0));
       pointer-events: none;
     }
 
     .terminal-bar {
+      position: relative;
+      z-index: 1;
       display: flex;
       justify-content: space-between;
-      align-items: center;
-      gap: 0.7rem;
-      margin-bottom: 0.9rem;
-      color: rgba(213, 255, 247, 0.78);
-      font: 600 0.8rem "IBM Plex Mono", Consolas, monospace;
+      gap: 1rem;
+      margin-bottom: 0.8rem;
+      color: rgba(223, 253, 245, 0.72);
+      font: 600 0.76rem "IBM Plex Mono", Consolas, monospace;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
     }
 
-    .terminal-visual {
+    .terminal-aside {
+      position: relative;
+      z-index: 1;
+      display: grid;
+      gap: 0.7rem;
+      margin-top: 0.9rem;
+    }
+
+    .terminal-note {
+      padding: 0.8rem 0.9rem;
+      border-radius: 1rem;
+      background: rgba(255, 255, 255, 0.06);
+      color: rgba(223, 253, 245, 0.86);
+      line-height: 1.55;
+    }
+
+    .hero-gif {
+      position: relative;
+      z-index: 1;
       width: 100%;
       border-radius: 1rem;
       border: 1px solid rgba(255, 255, 255, 0.08);
+      object-fit: cover;
       background: rgba(255, 255, 255, 0.02);
-      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.02);
     }
 
-    .grid {
-      display: grid;
-      gap: 1rem;
-      margin: 1rem 0;
-    }
-
-    .two-up {
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-    }
-
-    .three-up {
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-    }
-
-    .info-card,
-    .install-card,
-    .gallery-card,
-    .tools-card,
-    .footer-card {
-      padding: 1.2rem;
+    .stack > :first-child {
+      margin-top: 0;
     }
 
     .section-title {
-      margin: 0 0 0.4rem;
-      font-size: clamp(1.5rem, 2vw, 2rem);
+      margin: 0;
+      font-size: clamp(1.35rem, 2.6vw, 1.8rem);
+      line-height: 1.15;
       letter-spacing: -0.03em;
     }
 
     .section-copy,
     .info-card p,
-    .gallery-card p,
+    .faq-item p,
+    .resource-card p,
     .footer-card p {
-      margin: 0;
       color: var(--muted);
-      line-height: 1.65;
-    }
-
-    .stack {
-      display: grid;
-      gap: 0.85rem;
+      line-height: 1.68;
     }
 
     .chip-row {
@@ -333,54 +496,52 @@
     .chip {
       padding: 0.45rem 0.7rem;
       border-radius: 999px;
-      background: rgba(17, 22, 29, 0.07);
-      color: var(--ink);
-      font: 600 0.82rem "IBM Plex Mono", Consolas, monospace;
-    }
-
-    .install-grid {
-      display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-      gap: 1rem;
+      background: rgba(17, 22, 29, 0.06);
+      font: 600 0.8rem "IBM Plex Mono", Consolas, monospace;
+      color: var(--muted);
     }
 
     .code-card {
-      padding: 1rem;
-      border-radius: var(--radius-md);
-      background: #10151c;
-      color: var(--code);
-      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+      border-radius: 1rem;
+      border: 1px solid rgba(17, 22, 29, 0.1);
+      background: var(--paper-strong);
+      overflow: hidden;
     }
 
     .code-head {
       display: flex;
       justify-content: space-between;
       align-items: center;
-      gap: 0.7rem;
-      margin-bottom: 0.7rem;
-      font: 600 0.8rem "IBM Plex Mono", Consolas, monospace;
-      color: rgba(213, 255, 247, 0.72);
-      text-transform: uppercase;
+      gap: 0.8rem;
+      padding: 0.85rem 0.95rem;
+      border-bottom: 1px solid rgba(17, 22, 29, 0.08);
+      background: rgba(17, 22, 29, 0.05);
+      font: 700 0.82rem "IBM Plex Mono", Consolas, monospace;
     }
 
     .copy-button {
-      border: 0;
+      padding: 0.45rem 0.7rem;
+      border: 1px solid rgba(17, 22, 29, 0.12);
       border-radius: 999px;
-      padding: 0.45rem 0.75rem;
-      background: rgba(143, 220, 207, 0.12);
-      color: var(--code);
-      font: 600 0.74rem "IBM Plex Mono", Consolas, monospace;
+      background: rgba(255, 255, 255, 0.74);
+      color: var(--muted);
       cursor: pointer;
+      transition: background 180ms ease, color 180ms ease, transform 180ms ease;
+    }
+
+    .copy-button:hover {
+      transform: translateY(-1px);
+      background: rgba(255, 255, 255, 0.94);
+      color: var(--ink);
     }
 
     pre {
       margin: 0;
+      padding: 0.95rem;
       overflow: auto;
-      font: 500 0.92rem/1.65 "IBM Plex Mono", Consolas, monospace;
-    }
-
-    code {
-      font-family: "IBM Plex Mono", Consolas, monospace;
+      color: var(--accent-ink);
+      font: 600 0.83rem/1.6 "IBM Plex Mono", Consolas, monospace;
+      background: linear-gradient(180deg, rgba(143, 220, 207, 0.26), rgba(143, 220, 207, 0.08));
     }
 
     .alert {
@@ -390,41 +551,66 @@
       border-radius: 0 0.9rem 0.9rem 0;
       background: rgba(219, 106, 44, 0.08);
       color: #704728;
+      line-height: 1.65;
     }
 
-    .gallery-shot {
-      width: 100%;
-      border-radius: 1rem;
-      border: 1px solid rgba(17, 22, 29, 0.08);
-      background: rgba(255, 255, 255, 0.6);
-    }
-
-    .tool-list {
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 0.7rem;
-      margin-top: 1rem;
-    }
-
-    .tool-item {
-      padding: 0.85rem 0.95rem;
+    .tool-item,
+    .faq-item {
       border-radius: 1rem;
       background: rgba(17, 22, 29, 0.05);
       line-height: 1.55;
     }
 
-    .tool-item strong {
+    .tool-item strong,
+    .faq-item h3,
+    .resource-link-title {
       display: block;
-      margin-bottom: 0.25rem;
+      margin-bottom: 0.3rem;
       font: 700 0.88rem "IBM Plex Mono", Consolas, monospace;
+      color: var(--ink);
+    }
+
+    .faq-item h3 {
+      margin-top: 0;
+      margin-bottom: 0.45rem;
+    }
+
+    .resource-list {
+      display: grid;
+      gap: 0.65rem;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .resource-link {
+      display: block;
+      padding: 0.85rem 0.95rem;
+      border: 1px solid rgba(17, 22, 29, 0.08);
+      border-radius: 1rem;
+      background: rgba(255, 255, 255, 0.52);
+      transition: transform 180ms ease, border-color 180ms ease, background 180ms ease;
+    }
+
+    .resource-link:hover {
+      transform: translateY(-2px);
+      border-color: rgba(17, 22, 29, 0.16);
+      background: rgba(255, 255, 255, 0.78);
+    }
+
+    .resource-link-copy {
+      margin: 0;
+      color: var(--muted);
+      line-height: 1.55;
+      font-size: 0.95rem;
     }
 
     .footer-card {
       display: flex;
       justify-content: space-between;
-      align-items: center;
+      align-items: flex-start;
       gap: 1rem;
-      margin: 0 0 2rem;
+      margin-bottom: 2rem;
     }
 
     .footer-links {
@@ -440,12 +626,16 @@
       font: 600 0.82rem "IBM Plex Mono", Consolas, monospace;
     }
 
-    .hero-gif {
-      width: 100%;
-      border-radius: 1rem;
-      border: 1px solid rgba(255, 255, 255, 0.08);
-      object-fit: cover;
-      background: rgba(255, 255, 255, 0.02);
+    .sr-only {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
     }
 
     @keyframes pulse {
@@ -456,17 +646,48 @@
 
     @media (max-width: 980px) {
       .hero,
-      .two-up,
       .three-up,
       .install-grid,
       .tool-list,
-      .meta-grid {
+      .meta-grid,
+      .faq-grid,
+      .resource-grid {
         grid-template-columns: 1fr;
       }
 
-      .footer-card {
-        align-items: flex-start;
+      .footer-card,
+      .masthead {
         flex-direction: column;
+        align-items: flex-start;
+      }
+
+      .masthead-actions {
+        width: 100%;
+        justify-content: space-between;
+        flex-wrap: wrap;
+      }
+    }
+
+    @media (max-width: 640px) {
+      .shell {
+        width: min(calc(100% - 1rem), var(--max));
+      }
+
+      .hero,
+      .install-card,
+      .tools-card,
+      .faq-card,
+      .footer-card {
+        padding: 1rem;
+      }
+
+      .cta-row,
+      .footer-links {
+        width: 100%;
+      }
+
+      .button {
+        width: 100%;
       }
     }
 
@@ -476,6 +697,9 @@
       }
 
       .button,
+      .lang-button,
+      .copy-button,
+      .resource-link,
       .dot {
         animation: none;
         transition: none;
@@ -490,32 +714,82 @@
         <span class="brand-mark">ssh</span>
         <span>__PACKAGE_NAME__</span>
       </a>
-      <div class="version-pill">v__PACKAGE_VERSION__</div>
+      <div class="masthead-actions">
+        <div class="lang-switch" role="group" aria-label="Language switcher">
+          <button class="lang-button" type="button" data-lang-choice="en">EN</button>
+          <button class="lang-button" type="button" data-lang-choice="zh-CN">中文</button>
+        </div>
+        <div class="version-pill">v__PACKAGE_VERSION__</div>
+      </div>
     </header>
+
+    __PAGE_ALERT__
 
     <section class="hero">
       <div>
-        <div class="eyebrow"><span class="dot"></span> Shared PTY for human and agent</div>
-        <h1>One SSH terminal. Two operators. Less chaos.</h1>
-        <p class="lede">`ssh-session-mcp` gives MCP clients a persistent SSH runtime instead of a stateless shell wrapper. The user keeps the browser terminal open, the AI works through MCP tools, and both sides see the same session state.</p>
+        <div class="eyebrow">
+          <span class="dot"></span>
+          <span data-lang="en">Shared PTY for human and agent</span>
+          <span data-lang="zh-CN">面向人类与 Agent 的共享 PTY</span>
+        </div>
+        <h1>
+          <span data-lang="en">SSH MCP server with a real shared terminal.</span>
+          <span data-lang="zh-CN">把 SSH 变成真正可共享的 MCP 终端。</span>
+        </h1>
+        <p class="lede">
+          <span data-lang="en">`ssh-session-mcp` is a shared SSH MCP server for Codex, Claude Code, Cursor, and other AI agents. It keeps one persistent PTY alive, adds a browser terminal viewer, tracks who typed what, and makes remote install, debugging, and long-running work safer to operate.</span>
+          <span data-lang="zh-CN">`ssh-session-mcp` 是面向 Codex、Claude Code、Cursor 等 AI Agent 的共享 SSH MCP Server。它保留一条持久 PTY，会附带浏览器终端 viewer、输入来源跟踪和会话级状态管理，让远程安装、调试和长任务执行更可控。</span>
+        </p>
         <div class="cta-row">
-          <a class="button button-primary" href="__GITHUB_URL__">View Repository</a>
-          <a class="button button-secondary" href="__RELEASES_URL__">Latest Release</a>
-          <a class="button button-tertiary" href="__NPM_URL__">npm Package</a>
+          <a class="button button-primary" href="__NPM_URL__">
+            <span data-lang="en">Install from npm</span>
+            <span data-lang="zh-CN">从 npm 安装</span>
+          </a>
+          <a class="button button-secondary" href="__GITHUB_URL__">
+            <span data-lang="en">View Repository</span>
+            <span data-lang="zh-CN">查看仓库</span>
+          </a>
+          <a class="button button-tertiary" href="__RELEASES_URL__">
+            <span data-lang="en">Latest Release</span>
+            <span data-lang="zh-CN">最新发布</span>
+          </a>
         </div>
         <div class="meta-grid">
           <div class="meta-card">
-            <div class="meta-label">Best For</div>
-            <div class="meta-value">Remote Linux boards, SSH dev hosts, collaborative AI-assisted terminal work.</div>
+            <div class="meta-label">
+              <span data-lang="en">Best For</span>
+              <span data-lang="zh-CN">最适合</span>
+            </div>
+            <div class="meta-value">
+              <span data-lang="en">MCP + SSH install and usage, AI-assisted remote terminals, embedded Linux boards, deployment hosts, and remote debugging.</span>
+              <span data-lang="zh-CN">MCP + SSH 安装与使用、AI 辅助远程终端、嵌入式 Linux 板卡、部署机与远程调试。</span>
+            </div>
           </div>
           <div class="meta-card">
-            <div class="meta-label">Core Promise</div>
-            <div class="meta-value">Shared PTY, browser viewer, input lock, async tracking, diagnostics.</div>
+            <div class="meta-label">
+              <span data-lang="en">Core Promise</span>
+              <span data-lang="zh-CN">核心能力</span>
+            </div>
+            <div class="meta-value">
+              <span data-lang="en">Shared PTY, browser terminal, input lock, async command tracking, diagnostics, and safe/full execution modes.</span>
+              <span data-lang="zh-CN">共享 PTY、浏览器终端、输入锁、异步命令跟踪、诊断信息，以及 safe/full 执行模式。</span>
+            </div>
           </div>
           <div class="meta-card">
-            <div class="meta-label">Fastest Demo</div>
-            <div class="meta-value">`ssh-session-mcp-ctl launch --local --viewerPort=auto`</div>
+            <div class="meta-label">
+              <span data-lang="en">Fastest Demo</span>
+              <span data-lang="zh-CN">最快演示</span>
+            </div>
+            <div class="meta-value"><code>ssh-session-mcp-ctl launch --local --viewerPort=auto</code></div>
           </div>
+        </div>
+        <div class="keyword-strip" aria-label="SEO keywords">
+          <span class="keyword-pill">ssh mcp</span>
+          <span class="keyword-pill">mcp ssh server</span>
+          <span class="keyword-pill">codex ssh mcp</span>
+          <span class="keyword-pill">claude code ssh mcp</span>
+          <span class="keyword-pill">browser ssh terminal</span>
+          <span class="keyword-pill">shared pty</span>
         </div>
       </div>
 
@@ -525,33 +799,75 @@
           <span>safe mode</span>
         </div>
         <img class="hero-gif" src="assets/hero-loop.gif" alt="Animated shared terminal demo">
+        <div class="terminal-aside">
+          <div class="terminal-note">
+            <span data-lang="en">Install once, then let the MCP client reuse the same SSH session instead of spawning a stateless shell for every command.</span>
+            <span data-lang="zh-CN">安装后即可让 MCP client 复用同一条 SSH 会话，而不是每次命令都重新起一个无状态 shell。</span>
+          </div>
+          <div class="terminal-note">
+            <span data-lang="en">Useful for Codex, Claude Code, Cursor, OpenCode, and operators who still need manual takeover when the remote shell gets strange.</span>
+            <span data-lang="zh-CN">适合 Codex、Claude Code、Cursor、OpenCode，也适合需要在远端 shell 异常时随时人工接管的操作者。</span>
+          </div>
+        </div>
       </div>
     </section>
 
-    <section class="grid three-up">
+    <section class="three-up">
       <article class="info-card stack">
-        <h2 class="section-title">Why it matters</h2>
-        <p>Many MCP SSH integrations can execute commands, but they still lose the terminal as a shared runtime. This project keeps that runtime alive and inspectable.</p>
+        <div class="section-kicker">
+          <span data-lang="en">Why It Matters</span>
+          <span data-lang="zh-CN">为什么值得看</span>
+        </div>
+        <h2 class="section-title">
+          <span data-lang="en">Most SSH MCP tools run commands, but do not preserve the terminal as a shared runtime.</span>
+          <span data-lang="zh-CN">很多 SSH MCP 工具能执行命令，但保不住“共享终端运行时”。</span>
+        </h2>
+        <p>
+          <span data-lang="en">When installation prompts, long-running deploys, or remote debugging sessions depend on one real PTY, a stateless wrapper forces the user and the AI to guess. This project keeps both sides on the same terminal state.</span>
+          <span data-lang="zh-CN">当安装提示、长时间部署、远程调试依赖一条真实 PTY 时，无状态包装层会迫使用户和 AI 靠猜。这个项目的目标就是让双方看到同一份终端状态。</span>
+        </p>
         <div class="chip-row">
           <span class="chip">shared PTY</span>
           <span class="chip">browser terminal</span>
-          <span class="chip">input lock</span>
+          <span class="chip">remote debugging</span>
         </div>
       </article>
+
       <article class="info-card stack">
-        <h2 class="section-title">What it adds</h2>
-        <p>State-aware command handling, safe/full modes, async polling, viewer diagnostics, session history, and local debug mode for demos without SSH.</p>
+        <div class="section-kicker">
+          <span data-lang="en">What It Adds</span>
+          <span data-lang="zh-CN">它补上了什么</span>
+        </div>
+        <h2 class="section-title">
+          <span data-lang="en">A practical SSH MCP server for real operator + AI collaboration.</span>
+          <span data-lang="zh-CN">一个真正面向“操作者 + AI 协作”的 SSH MCP Server。</span>
+        </h2>
+        <p>
+          <span data-lang="en">State-aware command handling, safe/full modes, input lock, session history, async polling, viewer diagnostics, and a local demo path that explains the product without touching a real SSH target.</span>
+          <span data-lang="zh-CN">它提供状态感知的命令处理、safe/full 模式、输入锁、会话历史、异步轮询、viewer 诊断，以及无需真实 SSH 目标的本地演示路径。</span>
+        </p>
         <div class="chip-row">
           <span class="chip">safe/full mode</span>
           <span class="chip">async status</span>
-          <span class="chip">local debug</span>
+          <span class="chip">session history</span>
         </div>
       </article>
+
       <article class="info-card stack">
-        <h2 class="section-title">Who it helps</h2>
-        <p>Operators who want the AI to help with a real remote terminal, but still need visibility, manual intervention, and guardrails when the shell gets weird.</p>
+        <div class="section-kicker">
+          <span data-lang="en">Who It Helps</span>
+          <span data-lang="zh-CN">适合谁</span>
+        </div>
+        <h2 class="section-title">
+          <span data-lang="en">People searching for MCP + SSH setup, plus teams who need a visible remote terminal.</span>
+          <span data-lang="zh-CN">既适合在找 MCP + SSH 安装方案的人，也适合需要“可见远程终端”的团队。</span>
+        </h2>
+        <p>
+          <span data-lang="en">Use cases include Codex/Claude SSH setup, AI-assisted ops, embedded Linux boards, ROS or training hosts, deployment machines, and any workflow where the human must still inspect or override the shell.</span>
+          <span data-lang="zh-CN">适用场景包括 Codex/Claude 的 SSH 接入、AI 辅助运维、嵌入式 Linux 板卡、ROS 或训练机、部署机，以及所有“人仍要旁观或接管 shell”的工作流。</span>
+        </p>
         <div class="chip-row">
-          <span class="chip">embedded</span>
+          <span class="chip">embedded linux</span>
           <span class="chip">ops</span>
           <span class="chip">AI coding</span>
         </div>
@@ -559,28 +875,50 @@
     </section>
 
     <section class="install-card">
-      <h2 class="section-title">Install paths</h2>
-      <p class="section-copy">Pick the lightest path for the job: `npx` for agent-first install, local binaries for operator demos, and Docker when you want image-based distribution or a pinned runtime.</p>
-      <div class="install-grid" style="margin-top: 1rem;">
+      <div class="section-kicker">
+        <span data-lang="en">Install Paths</span>
+        <span data-lang="zh-CN">安装路径</span>
+      </div>
+      <h2 class="section-title">
+        <span data-lang="en">Start with npm or npx, then register the same command in your MCP client.</span>
+        <span data-lang="zh-CN">优先从 npm 或 npx 开始，再把同一条命令注册到 MCP client。</span>
+      </h2>
+      <p class="section-copy">
+        <span data-lang="en">The homepage is optimized for install and usage intent first: `npx` for agent-first setup, local binaries for operator demos, and Docker when you need a pinned runtime or image-based distribution.</span>
+        <span data-lang="zh-CN">首页主叙事优先覆盖“安装和使用”：`npx` 适合 Agent-first 场景，本地二进制适合操作者演示，Docker 适合需要固定运行时或镜像分发的场景。</span>
+      </p>
+      <div class="install-grid">
         <div class="code-card">
           <div class="code-head">
-            <span>Agent-first install</span>
-            <button class="copy-button" data-copy="npx -y ssh-session-mcp --viewerPort=auto">Copy</button>
+            <span data-lang="en">Agent-first install</span>
+            <span data-lang="zh-CN">面向 Agent 的安装</span>
+            <button class="copy-button" data-copy="npx -y ssh-session-mcp --viewerPort=auto">
+              <span data-lang="en">Copy</span>
+              <span data-lang="zh-CN">复制</span>
+            </button>
           </div>
           <pre><code>npx -y ssh-session-mcp --viewerPort=auto</code></pre>
         </div>
         <div class="code-card">
           <div class="code-head">
-            <span>Fast local demo</span>
-            <button class="copy-button" data-copy="npm install -g ssh-session-mcp&#10;ssh-session-mcp-ctl launch --local --viewerPort=auto">Copy</button>
+            <span data-lang="en">Fast local demo</span>
+            <span data-lang="zh-CN">最快本地演示</span>
+            <button class="copy-button" data-copy="npm install -g ssh-session-mcp&#10;ssh-session-mcp-ctl launch --local --viewerPort=auto">
+              <span data-lang="en">Copy</span>
+              <span data-lang="zh-CN">复制</span>
+            </button>
           </div>
           <pre><code>npm install -g ssh-session-mcp
 ssh-session-mcp-ctl launch --local --viewerPort=auto</code></pre>
         </div>
         <div class="code-card">
           <div class="code-head">
-            <span>Docker runtime</span>
-            <button class="copy-button" data-copy="docker run --rm -i -p 8793:8793 -e VIEWER_PORT=8793 -e VIEWER_HOST=0.0.0.0 docker.io/&lt;namespace&gt;/ssh-session-mcp:latest">Copy</button>
+            <span data-lang="en">Docker runtime</span>
+            <span data-lang="zh-CN">Docker 运行时</span>
+            <button class="copy-button" data-copy="docker run --rm -i -p 8793:8793 -e VIEWER_PORT=8793 -e VIEWER_HOST=0.0.0.0 docker.io/&lt;namespace&gt;/ssh-session-mcp:latest">
+              <span data-lang="en">Copy</span>
+              <span data-lang="zh-CN">复制</span>
+            </button>
           </div>
           <pre><code>docker run --rm -i -p 8793:8793 \
 -e VIEWER_PORT=8793 \
@@ -588,57 +926,286 @@ ssh-session-mcp-ctl launch --local --viewerPort=auto</code></pre>
 docker.io/&lt;namespace&gt;/ssh-session-mcp:latest</code></pre>
         </div>
       </div>
-      <div class="alert">Use `.env` for a single target. Use `ssh-session-mcp.config.json` for multi-device setups. Keep secrets in environment variables, not in tracked JSON. Compose examples, Docker notes, and Windows path guidance live in the repository docs.</div>
+      <div class="alert">
+        <span data-lang="en">Use `.env` for one target, `ssh-session-mcp.config.json` for multiple devices, and environment variables for secrets. The README, AGENT guide, and docs explain Codex, Claude Code, and other MCP setup details.</span>
+        <span data-lang="zh-CN">单目标优先用 `.env`，多设备优先用 `ssh-session-mcp.config.json`，secret 放环境变量。Codex、Claude Code 等 MCP 接入细节请看 README、AGENT guide 和文档。</span>
+      </div>
     </section>
 
     <section class="tools-card">
-      <h2 class="section-title">Core tool flow</h2>
-      <p class="section-copy">For agents, the normal loop should stay short and explicit: `ssh-device-list`, `ssh-quick-connect`, `ssh-run`, `ssh-status`, `ssh-command-status`, and `ssh-retry`. Drop to lower-level tools only when you need raw terminal control.</p>
+      <div class="section-kicker">
+        <span data-lang="en">Core Flow</span>
+        <span data-lang="zh-CN">核心工具流</span>
+      </div>
+      <h2 class="section-title">
+        <span data-lang="en">Keep the normal MCP + SSH loop short and explicit.</span>
+        <span data-lang="zh-CN">把正常的 MCP + SSH 工作流保持得短而明确。</span>
+      </h2>
+      <p class="section-copy">
+        <span data-lang="en">The common path should stay readable: list devices, connect, run commands, inspect state, poll async work, and retry when remote environments are flaky.</span>
+        <span data-lang="zh-CN">常用路径应该足够可读：列设备、建连接、执行命令、看状态、轮询异步任务，以及在远端环境不稳定时重试。</span>
+      </p>
       <div class="tool-list">
-        <div class="tool-item"><strong>`ssh-quick-connect`</strong>Open or reuse the common session and optionally launch the viewer.</div>
-        <div class="tool-item"><strong>`ssh-run`</strong>Execute a command with completion detection and exit-code capture.</div>
-        <div class="tool-item"><strong>`ssh-status`</strong>Inspect runtime state, viewer state, and active sessions.</div>
-        <div class="tool-item"><strong>`ssh-command-status`</strong>Poll async commands instead of guessing when long work is done.</div>
-        <div class="tool-item"><strong>`ssh-session-diagnostics`</strong>Inspect lock state, running command state, terminal warnings, and viewer health.</div>
-        <div class="tool-item"><strong>`ssh-retry`</strong>Retry flaky commands with a first-class backoff policy.</div>
+        <div class="tool-item"><strong>`ssh-quick-connect`</strong><span data-lang="en">Open or reuse the common SSH session and optionally launch the viewer.</span><span data-lang="zh-CN">打开或复用常用 SSH 会话，并可选启动 viewer。</span></div>
+        <div class="tool-item"><strong>`ssh-run`</strong><span data-lang="en">Execute commands with completion detection and exit-code capture.</span><span data-lang="zh-CN">执行命令，并跟踪完成状态与退出码。</span></div>
+        <div class="tool-item"><strong>`ssh-status`</strong><span data-lang="en">Inspect runtime state, viewer state, and active sessions.</span><span data-lang="zh-CN">查看运行时状态、viewer 状态和活跃会话。</span></div>
+        <div class="tool-item"><strong>`ssh-command-status`</strong><span data-lang="en">Poll long-running work instead of guessing when it is done.</span><span data-lang="zh-CN">轮询长任务，而不是猜它什么时候结束。</span></div>
+        <div class="tool-item"><strong>`ssh-session-diagnostics`</strong><span data-lang="en">Inspect lock state, running command state, warnings, and viewer health.</span><span data-lang="zh-CN">检查锁状态、运行中命令、警告和 viewer 健康度。</span></div>
+        <div class="tool-item"><strong>`ssh-retry`</strong><span data-lang="en">Retry flaky commands with a first-class backoff policy.</span><span data-lang="zh-CN">用一等重试策略处理易抖动的命令。</span></div>
+      </div>
+    </section>
+
+    <section class="faq-card">
+      <div class="section-kicker">
+        <span data-lang="en">Search-Friendly FAQ</span>
+        <span data-lang="zh-CN">可搜索 FAQ</span>
+      </div>
+      <h2 class="section-title">
+        <span data-lang="en">Answer the questions people actually search before they install.</span>
+        <span data-lang="zh-CN">先回答用户在安装前真正会搜索的问题。</span>
+      </h2>
+      <div class="faq-grid">
+        <article class="faq-item">
+          <h3>
+            <span data-lang="en">What is the difference between SSH Session MCP and a normal SSH wrapper?</span>
+            <span data-lang="zh-CN">SSH Session MCP 和普通 SSH 包装层有什么区别？</span>
+          </h3>
+          <p>
+            <span data-lang="en">A normal wrapper executes one command at a time. SSH Session MCP preserves a shared PTY, so the user and AI agent see the same terminal state, prompts, history, and long-running process lifecycle.</span>
+            <span data-lang="zh-CN">普通包装层通常一次执行一条命令。SSH Session MCP 会保留共享 PTY，让用户和 AI Agent 看到同一份终端状态、提示符、历史和长任务生命周期。</span>
+          </p>
+        </article>
+        <article class="faq-item">
+          <h3>
+            <span data-lang="en">How do I install it for Codex or Claude Code?</span>
+            <span data-lang="zh-CN">如何给 Codex 或 Claude Code 安装它？</span>
+          </h3>
+          <p>
+            <span data-lang="en">Use `npx -y ssh-session-mcp --viewerPort=auto` for the lightest path, then register that command as an MCP server in Codex CLI, Claude Code, Cursor, or another MCP client.</span>
+            <span data-lang="zh-CN">最轻量的路径是 `npx -y ssh-session-mcp --viewerPort=auto`，然后把这条命令注册成 Codex CLI、Claude Code、Cursor 或其他 MCP client 的 server。</span>
+          </p>
+        </article>
+        <article class="faq-item">
+          <h3>
+            <span data-lang="en">Where is it useful beyond install demos?</span>
+            <span data-lang="zh-CN">除了安装演示，它还适合哪些场景？</span>
+          </h3>
+          <p>
+            <span data-lang="en">It is useful for embedded Linux boards, remote deployment hosts, AI-assisted ops, ROS or training machines, and any environment where a human must still inspect or override the shell.</span>
+            <span data-lang="zh-CN">它适合嵌入式 Linux 板卡、远程部署机、AI 辅助运维、ROS 或训练机，以及所有需要人工旁观或接管 shell 的环境。</span>
+          </p>
+        </article>
+      </div>
+    </section>
+
+    <section class="footer-card" aria-labelledby="resource-links-heading">
+      <div style="flex: 1 1 18rem;">
+        <div class="section-kicker">
+          <span data-lang="en">Resources</span>
+          <span data-lang="zh-CN">资源链接</span>
+        </div>
+        <h2 class="section-title" id="resource-links-heading">
+          <span data-lang="en">More reading, official links, and mirrors.</span>
+          <span data-lang="zh-CN">更多阅读、官方链接与镜像。</span>
+        </h2>
+        <p>
+          <span data-lang="en">This footer section stays low-noise for readers but keeps crawlable links in plain HTML, so search engines and scripts can discover the official package, source, write-ups, and mirrors.</span>
+          <span data-lang="zh-CN">这个页脚区对读者干扰较低，但会用普通 HTML 链接保留可抓取入口，让搜索引擎和脚本都能发现官方包、源码、文章和镜像。</span>
+        </p>
+
+        <div class="resource-grid">
+          <div class="resource-card">
+            <div class="resource-label">
+              <span data-lang="en">Official</span>
+              <span data-lang="zh-CN">官方</span>
+            </div>
+            <ul class="resource-list">
+              <li>
+                <a class="resource-link" href="__NPM_URL__">
+                  <span class="resource-link-title">ssh-session-mcp on npm</span>
+                  <p class="resource-link-copy">
+                    <span data-lang="en">Package install page for MCP + SSH usage.</span>
+                    <span data-lang="zh-CN">面向 MCP + SSH 使用场景的 npm 安装页。</span>
+                  </p>
+                </a>
+              </li>
+              <li>
+                <a class="resource-link" href="__GITHUB_URL__">
+                  <span class="resource-link-title">GitHub source for ssh-session-mcp</span>
+                  <p class="resource-link-copy">
+                    <span data-lang="en">Source, issues, release notes, and repository docs.</span>
+                    <span data-lang="zh-CN">源码、Issue、发布说明和仓库文档。</span>
+                  </p>
+                </a>
+              </li>
+              <li>
+                <a class="resource-link" href="https://gitee.com/Zw-awa/ssh-session-mcp">
+                  <span class="resource-link-title">Gitee mirror for ssh-session-mcp</span>
+                  <p class="resource-link-copy">
+                    <span data-lang="en">Mirror repository for regions or users who prefer Gitee.</span>
+                    <span data-lang="zh-CN">适合偏好 Gitee 或访问 GitHub 不稳定的用户。</span>
+                  </p>
+                </a>
+              </li>
+            </ul>
+          </div>
+
+          <div class="resource-card">
+            <div class="resource-label">
+              <span data-lang="en">Articles & Guides</span>
+              <span data-lang="zh-CN">文章与指南</span>
+            </div>
+            <ul class="resource-list">
+              <li>
+                <a class="resource-link" href="https://dev.to/zwawa/i-got-tired-of-splitting-my-brain-between-local-ai-and-remote-ssh-so-i-built-ssh-session-mcp-d0e">
+                  <span class="resource-link-title">How to use SSH Session MCP for shared AI + remote SSH work</span>
+                  <p class="resource-link-copy">
+                    <span data-lang="en">The project story and why a shared SSH terminal matters for AI agents.</span>
+                    <span data-lang="zh-CN">项目缘起，以及为什么 AI Agent 需要共享 SSH 终端。</span>
+                  </p>
+                </a>
+              </li>
+              <li>
+                <a class="resource-link" href="https://blog.csdn.net/XW_mmQAQ/article/details/160383144">
+                  <span class="resource-link-title">SSH Session MCP 中文介绍与安装说明</span>
+                  <p class="resource-link-copy">
+                    <span data-lang="en">Chinese overview focused on installation and usage.</span>
+                    <span data-lang="zh-CN">偏安装与使用的中文介绍文章。</span>
+                  </p>
+                </a>
+              </li>
+              <li>
+                <a class="resource-link" href="https://juejin.cn/post/7631182856620212264">
+                  <span class="resource-link-title">SSH Session MCP on Juejin</span>
+                  <p class="resource-link-copy">
+                    <span data-lang="en">Chinese developer article for search and community discovery.</span>
+                    <span data-lang="zh-CN">用于中文开发者社区传播与搜索发现。</span>
+                  </p>
+                </a>
+              </li>
+              <li>
+                <a class="resource-link" href="https://my.oschina.net/u/9755759/blog/19588988">
+                  <span class="resource-link-title">SSH Session MCP on OSChina</span>
+                  <p class="resource-link-copy">
+                    <span data-lang="en">Additional Chinese article and mirror-style discovery path.</span>
+                    <span data-lang="zh-CN">额外的中文文章入口和镜像式发现路径。</span>
+                  </p>
+                </a>
+              </li>
+            </ul>
+          </div>
+        </div>
       </div>
     </section>
 
     <section class="footer-card">
       <div>
-        <h2 class="section-title" style="margin-bottom: 0.35rem;">Operate, integrate, ship</h2>
-        <p>Read `AGENT.md` for AI-first setup instructions, `README.md` for operator onboarding, and the GitHub workflows for CI, Pages, and Release automation.</p>
+        <div class="section-kicker">
+          <span data-lang="en">Docs</span>
+          <span data-lang="zh-CN">文档</span>
+        </div>
+        <h2 class="section-title" style="margin-bottom: 0.35rem;">
+          <span data-lang="en">Operate, integrate, ship.</span>
+          <span data-lang="zh-CN">接入、运行、交付。</span>
+        </h2>
+        <p>
+          <span data-lang="en">Use the repository docs for AI-first setup, operator onboarding, configuration examples, and release automation.</span>
+          <span data-lang="zh-CN">仓库文档里已经包含面向 AI 的接入说明、操作者入门、配置示例和发布自动化说明。</span>
+        </p>
       </div>
       <div class="footer-links">
-        <a href="__GITHUB_URL__">GitHub</a>
-        <a href="__RELEASES_URL__">Releases</a>
-        <a href="__NPM_URL__">npm</a>
+        <a href="__README_URL__">README.md</a>
+        <a href="__README_ZH_URL__">README.zh-CN.md</a>
+        <a href="__AGENT_GUIDE_URL__">AGENT.md</a>
         <a href="__ISSUES_URL__">Issues</a>
       </div>
     </section>
   </div>
 
   <script>
+    const siteMetadata = __SITE_METADATA_JSON__;
+    const langButtons = document.querySelectorAll('[data-lang-choice]');
     const copyButtons = document.querySelectorAll('.copy-button');
+    const defaultLang = 'en';
+    const storageKey = 'ssh-session-mcp-lang';
+
+    function setLanguage(lang) {
+      const metadata = siteMetadata[lang] || siteMetadata[defaultLang];
+      document.documentElement.dataset.currentLang = lang;
+      document.documentElement.lang = lang;
+      document.title = metadata.title;
+
+      const description = document.querySelector('meta[name="description"]');
+      const ogTitle = document.querySelector('meta[property="og:title"]');
+      const ogDescription = document.querySelector('meta[property="og:description"]');
+      const twitterTitle = document.querySelector('meta[name="twitter:title"]');
+      const twitterDescription = document.querySelector('meta[name="twitter:description"]');
+
+      if (description) description.setAttribute('content', metadata.description);
+      if (ogTitle) ogTitle.setAttribute('content', metadata.title);
+      if (ogDescription) ogDescription.setAttribute('content', metadata.description);
+      if (twitterTitle) twitterTitle.setAttribute('content', metadata.title);
+      if (twitterDescription) twitterDescription.setAttribute('content', metadata.description);
+
+      for (const button of langButtons) {
+        button.setAttribute('aria-pressed', String(button.getAttribute('data-lang-choice') === lang));
+      }
+
+      for (const button of copyButtons) {
+        button.textContent = metadata.copyLabel;
+      }
+
+      try {
+        localStorage.setItem(storageKey, lang);
+      } catch {}
+    }
+
+    for (const button of langButtons) {
+      button.addEventListener('click', () => {
+        const nextLang = button.getAttribute('data-lang-choice') || defaultLang;
+        setLanguage(nextLang);
+      });
+    }
+
+    function updateCopyButtonLabel(button, key) {
+      const currentLang = document.documentElement.dataset.currentLang || defaultLang;
+      const labels = siteMetadata[currentLang] || siteMetadata[defaultLang];
+      button.textContent = labels[key];
+    }
+
+    function resetCopyButtons() {
+      for (const button of copyButtons) {
+        updateCopyButtonLabel(button, 'copyLabel');
+      }
+    }
+
     for (const button of copyButtons) {
       button.addEventListener('click', async () => {
         const text = button.getAttribute('data-copy');
         if (!text) return;
         try {
           await navigator.clipboard.writeText(text.replaceAll('&#10;', '\n'));
-          const previous = button.textContent;
-          button.textContent = 'Copied';
+          updateCopyButtonLabel(button, 'copiedLabel');
           setTimeout(() => {
-            button.textContent = previous;
+            updateCopyButtonLabel(button, 'copyLabel');
           }, 1200);
         } catch {
-          button.textContent = 'Copy failed';
+          updateCopyButtonLabel(button, 'failedLabel');
           setTimeout(() => {
-            button.textContent = 'Copy';
+            updateCopyButtonLabel(button, 'copyLabel');
           }, 1200);
         }
       });
     }
+
+    try {
+      const storedLang = localStorage.getItem(storageKey);
+      setLanguage(storedLang && siteMetadata[storedLang] ? storedLang : defaultLang);
+    } catch {
+      setLanguage(defaultLang);
+    }
+
+    resetCopyButtons();
   </script>
 </body>
 </html>

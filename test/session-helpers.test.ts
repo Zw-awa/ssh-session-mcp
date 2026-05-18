@@ -18,7 +18,9 @@ import {
   extractExitCodeFromText,
   findSentinelOutputInText,
   normalizeCompletionText,
+  SSHSession,
 } from '../src/session';
+import type { SessionMetadata, SessionTuning, SSHConnection } from '../src/session';
 
 let buildSentinelCommandSuffix: typeof import('../src/index').buildSentinelCommandSuffix;
 let appendSentinelToCommand: typeof import('../src/index').appendSentinelToCommand;
@@ -277,5 +279,73 @@ describe('cli config parsing', () => {
     } finally {
       process.argv = previousArgv;
     }
+  });
+});
+
+describe('session output decoding', () => {
+  it('preserves utf-8 characters split across multiple chunks', () => {
+    const listeners = new Map<string, Array<(...args: any[]) => void>>();
+    const metadata: SessionMetadata = {
+      instanceId: 'test-instance',
+      sessionRef: 'decode/demo',
+      profileSource: 'manual',
+    };
+    const tuning: SessionTuning = {
+      maxBufferChars: 200000,
+      defaultReadChars: 4000,
+      maxTranscriptEvents: 2000,
+      maxTranscriptChars: 200000,
+      maxTranscriptEventChars: 40000,
+      defaultDashboardRightEvents: 40,
+      defaultDashboardLeftChars: 12000,
+      maxHistoryLines: 4000,
+    };
+    const stream = {
+      on(event: string, handler: (...args: any[]) => void) {
+        const existing = listeners.get(event) || [];
+        existing.push(handler);
+        listeners.set(event, existing);
+      },
+      write: () => true,
+      end: () => {},
+      setWindow: () => {},
+      stderr: {
+        on(event: string, handler: (...args: any[]) => void) {
+          const key = `stderr:${event}`;
+          const existing = listeners.get(key) || [];
+          existing.push(handler);
+          listeners.set(key, existing);
+        },
+      },
+    };
+
+    const session = new SSHSession(
+      'decode-session',
+      'decode-session',
+      metadata,
+      'host',
+      22,
+      'user',
+      120,
+      40,
+      'xterm-256color',
+      0,
+      300000,
+      tuning,
+      { close: () => {}, isConnected: () => true } as unknown as SSHConnection,
+      stream as any,
+    );
+
+    const emit = (event: string, ...args: any[]) => {
+      for (const handler of listeners.get(event) || []) {
+        handler(...args);
+      }
+    };
+
+    emit('data', Buffer.from([0xE4, 0xB8]));
+    emit('data', Buffer.from([0xAD]));
+
+    expect(session.buffer).toContain('中');
+    expect(session.buffer).not.toContain('��');
   });
 });

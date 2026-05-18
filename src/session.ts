@@ -1,5 +1,6 @@
 import { ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
 import { Client, type ClientChannel, type ConnectConfig } from 'ssh2';
+import { StringDecoder } from 'node:string_decoder';
 
 import {
   createBufferSnapshot,
@@ -238,6 +239,7 @@ export class SSHSession {
   public closed = false;
   public lockPolicy: 'common' | 'agent' | 'user' | 'auto' = 'common';
   public inputLock: 'none' | 'agent' | 'user' = 'none';
+  public agentInputActive = false;
   public userDraftActive = false;
   public userDraftUpdatedAt: string | undefined;
 
@@ -250,6 +252,7 @@ export class SSHSession {
   private readonly eventListeners = new Set<(event: TranscriptEvent) => void>();
   private readonly outputNotifyListeners = new Set<() => void>();
   private readonly history: SessionHistory;
+  private readonly outputDecoder = new StringDecoder('utf8');
   private lastActivityMs = Date.now();
   private readonly activeUserDraftViewers = new Set<string>();
   private defaultPolicyRules: CustomPolicyRule[] = [];
@@ -275,7 +278,7 @@ export class SSHSession {
 
     const onData = (chunk: Buffer | string) => {
       const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-      const text = buf.toString();
+      const text = this.outputDecoder.write(buf);
       this.appendOutput(text, buf);
     };
 
@@ -551,10 +554,15 @@ export class SSHSession {
     if (this.closed) return;
 
     const at = nowIso();
+    const decoderRemainder = this.outputDecoder.end();
+    if (decoderRemainder.length > 0) {
+      this.appendOutput(decoderRemainder, Buffer.from(decoderRemainder));
+    }
     this.history.flushPendingOutput();
     this.closed = true;
     this.closedAt = at;
     this.closeReason = reason;
+    this.agentInputActive = false;
     this.pushEvent('lifecycle', reason, undefined, at, false);
 
     if (options.closeStream !== false) {
@@ -618,7 +626,7 @@ export class SSHSession {
       eventEndSeq: this.currentEventEnd(),
       customPolicyRuleCount: this.policyRules.length,
       lockPolicy: this.lockPolicy,
-      inputLock: this.inputLock,
+      inputLock: this.effectiveInputLock(),
       userDraftActive: this.userDraftActive,
       userDraftUpdatedAt: this.userDraftUpdatedAt,
     };
@@ -690,34 +698,14 @@ export class SSHSession {
 
   setLockPolicy(policy: 'common' | 'agent' | 'user' | 'auto') {
     this.lockPolicy = policy;
-
-    if (policy === 'agent') {
-      this.inputLock = 'agent';
-      this.clearUserDraft();
-      return;
-    }
-
-    if (policy === 'user') {
-      this.inputLock = 'user';
-      this.clearUserDraft();
-      return;
-    }
-
-    if (policy === 'common') {
-      this.inputLock = 'none';
-      this.clearUserDraft();
-      return;
-    }
-
-    this.inputLock = this.userDraftActive ? 'user' : 'none';
+    this.clearUserDraft();
+    this.inputLock = this.computePolicyInputLock();
   }
 
   setUserDraftActive(active: boolean) {
     this.userDraftActive = active;
     this.userDraftUpdatedAt = active ? nowIso() : undefined;
-    if (this.lockPolicy === 'auto') {
-      this.inputLock = active ? 'user' : 'none';
-    }
+    this.inputLock = this.computePolicyInputLock();
   }
 
   setViewerDraftState(viewerId: string, active: boolean) {
@@ -738,9 +726,35 @@ export class SSHSession {
     this.activeUserDraftViewers.clear();
     this.userDraftActive = false;
     this.userDraftUpdatedAt = undefined;
-    if (this.lockPolicy === 'auto') {
-      this.inputLock = 'none';
+    this.inputLock = this.computePolicyInputLock();
+  }
+
+  private computePolicyInputLock(): 'none' | 'agent' | 'user' {
+    if (this.lockPolicy === 'agent') {
+      return 'agent';
     }
+
+    if (this.lockPolicy === 'user') {
+      return 'user';
+    }
+
+    if (this.lockPolicy === 'auto') {
+      return this.userDraftActive ? 'user' : 'none';
+    }
+
+    return 'none';
+  }
+
+  effectiveInputLock(): 'none' | 'agent' | 'user' {
+    if (this.agentInputActive) {
+      return 'agent';
+    }
+
+    return this.computePolicyInputLock();
+  }
+
+  setAgentInputActive(active: boolean) {
+    this.agentInputActive = active;
   }
 
   // --- waitForCompletion ---

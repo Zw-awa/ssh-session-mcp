@@ -182,8 +182,9 @@ function handleViewerSocketMessage(ws: WebSocket, session: SSHSession, viewerId:
     }
 
     if (msg.type === 'input' && typeof msg.data === 'string' && msg.data.length > 0) {
-      if (session.inputLock === 'agent') {
-        sendLockRejected(ws, session.inputLock, 'Input locked by AI agent. Switch to "common" or "user" mode to type.');
+      const effectiveLock = session.effectiveInputLock();
+      if (effectiveLock === 'agent') {
+        sendLockRejected(ws, effectiveLock, 'Input locked by AI agent. Switch to "common" or "user" mode to type.');
         return;
       }
 
@@ -197,8 +198,9 @@ function handleViewerSocketMessage(ws: WebSocket, session: SSHSession, viewerId:
     }
 
     if (msg.type === 'control' && typeof msg.key === 'string') {
-      if (session.inputLock === 'agent') {
-        sendLockRejected(ws, session.inputLock, 'Input locked by AI agent.');
+      const effectiveLock = session.effectiveInputLock();
+      if (effectiveLock === 'agent') {
+        sendLockRejected(ws, effectiveLock, 'Input locked by AI agent.');
         return;
       }
       if (!isControlKey(msg.key)) {

@@ -455,7 +455,7 @@ export function buildUserLockEvidence(session: SSHSession) {
   return [
     `lockPolicy=${session.lockPolicy}`,
     `userDraftActive=${session.userDraftActive}`,
-    `inputLock=${session.inputLock}`,
+    `inputLock=${session.effectiveInputLock()}`,
   ];
 }
 
@@ -1781,15 +1781,17 @@ export async function launchBrowserViewer(url: string) {
 
 export function broadcastLock(session: SSHSession) {
   logSessionEvent(session.sessionId, 'session.lock', {
-    lock: session.inputLock,
+    lock: session.effectiveInputLock(),
     lockPolicy: session.lockPolicy,
+    agentInputActive: session.agentInputActive,
     userDraftActive: session.userDraftActive,
   });
   if (!viewerWss) return;
   const msg = JSON.stringify({
     type: 'lock',
-    lock: session.inputLock,
+    lock: session.effectiveInputLock(),
     lockPolicy: session.lockPolicy,
+    agentInputActive: session.agentInputActive,
     userDraftActive: session.userDraftActive,
   });
   for (const client of viewerWss.clients) {

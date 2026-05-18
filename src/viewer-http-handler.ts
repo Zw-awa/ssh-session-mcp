@@ -208,7 +208,7 @@ async function handleAttachInputRequest(
       throw new McpError(ErrorCode.InvalidRequest, 'data must be a non-empty string');
     }
 
-    if (session.inputLock === 'agent') {
+    if (session.effectiveInputLock() === 'agent') {
       throw new McpError(ErrorCode.InvalidRequest, 'Input locked by AI agent. Switch the terminal back to common or user mode before typing here.');
     }
 
@@ -315,10 +315,10 @@ async function handleSessionAgentInputRequest(sessionRef: string, writers: Viewe
     const body = request ? await readJsonRequestBody(request) : {};
     const cmd = typeof body.command === 'string' ? body.command.trim() : '';
     if (!cmd) { writers.writeError(400, new McpError(ErrorCode.InvalidRequest, 'command required')); return; }
-    if (s.inputLock === 'user') { writers.writeError(403, new McpError(ErrorCode.InvalidRequest, buildUserLockMessage(s, 'send commands'))); return; }
-    s.inputLock = 'agent';
+    if (s.effectiveInputLock() === 'user') { writers.writeError(403, new McpError(ErrorCode.InvalidRequest, buildUserLockMessage(s, 'send commands'))); return; }
+    s.setAgentInputActive(true);
     s.write(cmd + '\n', 'agent');
-    s.inputLock = 'none';
+    s.setAgentInputActive(false);
     writers.writeJson(200, { ok: true, sent: cmd, sessionRef: s.metadata.sessionRef });
   } catch (error) { writers.writeError(404, error); }
 }

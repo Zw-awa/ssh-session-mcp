@@ -53,6 +53,7 @@ function createMockSession(overrides: Partial<Record<string, unknown>> = {}) {
     lockPolicy: 'common' as 'common' | 'agent' | 'user' | 'auto',
     inputLock: 'none' as 'none' | 'agent' | 'user',
     userDraftActive: false,
+    agentInputActive: false,
     rawBufferStart: 0,
     rawBuffer: Buffer.from('abcdef'),
     cols: 120,
@@ -86,6 +87,9 @@ function createMockSession(overrides: Partial<Record<string, unknown>> = {}) {
     writeRaw: vi.fn(),
     sendControl: vi.fn(),
     resize: vi.fn(),
+    effectiveInputLock: vi.fn(function (this: any) {
+      return this.agentInputActive ? 'agent' : this.inputLock;
+    }),
     setLockPolicy: vi.fn(function (this: any, policy: 'common' | 'agent' | 'user' | 'auto') {
       this.lockPolicy = policy;
       this.inputLock = policy === 'common' ? 'none' : (policy === 'auto' ? (this.userDraftActive ? 'user' : 'none') : policy);

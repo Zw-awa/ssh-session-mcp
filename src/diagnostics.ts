@@ -107,7 +107,7 @@ export function buildSessionDiagnosticReport(options: {
     });
   }
 
-  if (options.session.inputLock === 'agent' && !options.runningCommand) {
+  if (options.session.inputLock === 'agent' && options.session.lockPolicy !== 'agent' && !options.runningCommand) {
     warnings.push({
       code: 'agent_lock_without_command',
       severity: 'warning',

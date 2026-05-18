@@ -85,6 +85,26 @@ describe('LocalShellStream', () => {
     expect(stderr).toContain('ERR_TEST');
     stream.close();
   }, 8000);
+
+  it('does not echo arrow-key escape sequences back as visible text on Windows', async () => {
+    if (process.platform !== 'win32') {
+      return;
+    }
+
+    const stream = new LocalShellStream();
+    let output = '';
+    stream.on('data', (chunk: Buffer) => {
+      output += chunk.toString('utf8');
+    });
+
+    await new Promise(resolve => setTimeout(resolve, 250));
+    output = '';
+    stream.write('\x1b[A');
+    await new Promise(resolve => setTimeout(resolve, 250));
+
+    expect(output).not.toContain('[A');
+    stream.close();
+  });
 });
 
 describe('LocalConnection', () => {

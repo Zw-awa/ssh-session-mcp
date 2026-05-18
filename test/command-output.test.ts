@@ -149,10 +149,12 @@ describe('viewer lock broadcast', () => {
       sessionId: 'session-a',
       lockPolicy: 'common',
       inputLock: 'agent',
+      agentInputActive: false,
+      effectiveInputLock: () => 'agent',
       userDraftActive: false,
     } as any);
 
-    expect(sendA).toHaveBeenCalledWith(JSON.stringify({ type: 'lock', lock: 'agent', lockPolicy: 'common', userDraftActive: false }));
+    expect(sendA).toHaveBeenCalledWith(JSON.stringify({ type: 'lock', lock: 'agent', lockPolicy: 'common', agentInputActive: false, userDraftActive: false }));
     expect(sendB).not.toHaveBeenCalled();
   });
 });

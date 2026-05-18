@@ -9,6 +9,7 @@ export class LocalShellStream extends EventEmitter {
   private child: ChildProcess;
   public readonly stderr: EventEmitter;
   private lineBuffer = '';
+  private pendingEscape = '';
 
   constructor() {
     super();
@@ -27,6 +28,10 @@ export class LocalShellStream extends EventEmitter {
 
     this.child.stdout?.on('data', (chunk: Buffer) => {
       this.emit('data', chunk);
+    });
+
+    this.child.stdin?.on('error', () => {
+      // Child shutdown can race with buffered writes during tests/cleanup.
     });
 
     this.child.stderr?.on('data', (chunk: Buffer) => {
@@ -51,14 +56,35 @@ export class LocalShellStream extends EventEmitter {
       return true;
     }
 
-    // --- Windows cooked-mode line editing ---
+    // --- Windows pipe-mode input normalization ---
+    // Keep line-buffered editing for plain text so local mode still feels usable,
+    // but forward escape/control sequences verbatim instead of degrading them
+    // into visible characters like "[A".
     let echo = '';
-    for (const ch of raw) {
-      if (ch === '\r') {
-        // Enter: flush ONLY if there's a non-empty line
+    const chars = this.pendingEscape.length > 0 ? this.pendingEscape + raw : raw;
+    this.pendingEscape = '';
+    for (let i = 0; i < chars.length; i += 1) {
+      const ch = chars[i];
+      if (ch === '\x1b') {
         if (this.lineBuffer.length > 0) {
-          this.child.stdin?.write(`${this.lineBuffer}\n`);
+          this.child.stdin?.write(this.lineBuffer);
+          this.lineBuffer = '';
         }
+        const remaining = chars.slice(i);
+        const seq = this.consumeEscapeSequence(remaining);
+        if (seq.complete) {
+          this.child.stdin?.write(seq.value);
+          i += seq.value.length - 1;
+        } else {
+          this.pendingEscape = seq.value;
+          break;
+        }
+        continue;
+      }
+
+      if (ch === '\r') {
+        if (this.lineBuffer.length > 0) this.child.stdin?.write(this.lineBuffer);
+        this.child.stdin?.write('\n');
         this.lineBuffer = '';
         echo += '\r\n';
       } else if (ch === '\x7f' || ch === '\b') {
@@ -67,12 +93,14 @@ export class LocalShellStream extends EventEmitter {
           echo += '\b \b';
         }
       } else if (ch === '\x03') {
-        // Ctrl‑C through a Windows pipe is a no‑op.
-        // Just clear current input — don't send \x03 (it becomes garbage).
+        if (this.lineBuffer.length > 0) {
+          this.lineBuffer = '';
+        }
+        this.child.stdin?.write('\x03');
         this.lineBuffer = '';
         echo += '^C';
       } else if (ch === '\x04') {
-        // Ctrl‑D through a Windows pipe is a no‑op.
+        this.child.stdin?.write('\x04');
         echo += '^D';
       } else if (ch === '\t') {
         this.lineBuffer += '\t';
@@ -88,6 +116,27 @@ export class LocalShellStream extends EventEmitter {
     return true;
   }
 
+  private consumeEscapeSequence(input: string): { complete: boolean; value: string } {
+    if (input.length === 1) {
+      return { complete: false, value: input };
+    }
+
+    if (input[1] !== '[' && input[1] !== 'O') {
+      return { complete: true, value: input[0] };
+    }
+
+    let index = 2;
+    while (index < input.length) {
+      const current = input[index];
+      if ((current >= '@' && current <= '~') || (current >= 'A' && current <= 'Z') || (current >= 'a' && current <= 'z')) {
+        return { complete: true, value: input.slice(0, index + 1) };
+      }
+      index += 1;
+    }
+
+    return { complete: false, value: input };
+  }
+
   setWindow(_rows: number, _cols: number, _height: number, _width: number): void {
     // Local shells don't support PTY window resizing.  Ignored.
   }
@@ -97,6 +146,7 @@ export class LocalShellStream extends EventEmitter {
   }
 
   close(): void {
+    this.pendingEscape = '';
     try {
       this.child.stdin?.end();
     } catch {

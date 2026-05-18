@@ -166,4 +166,30 @@ describe('session custom policy rules', () => {
       }),
     ]);
   });
+
+  it('keeps agent lock policy persistent after agent activity finishes', () => {
+    const session = createSession();
+
+    session.setLockPolicy('agent');
+    expect(session.summary().inputLock).toBe('agent');
+
+    session.setAgentInputActive(true);
+    expect(session.summary().inputLock).toBe('agent');
+
+    session.setAgentInputActive(false);
+    expect(session.summary().inputLock).toBe('agent');
+  });
+
+  it('overrides common mode with a temporary agent-active lock only while a command is running', () => {
+    const session = createSession();
+
+    session.setLockPolicy('common');
+    expect(session.summary().inputLock).toBe('none');
+
+    session.setAgentInputActive(true);
+    expect(session.summary().inputLock).toBe('agent');
+
+    session.setAgentInputActive(false);
+    expect(session.summary().inputLock).toBe('none');
+  });
 });

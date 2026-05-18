@@ -128,6 +128,7 @@ function createMockSession(overrides: Partial<Record<string, unknown>> = {}) {
     cols: 120,
     rows: 40,
     inputLock: 'none' as 'none' | 'agent' | 'user',
+    agentInputActive: false,
     summary: vi.fn(() => summary),
     currentBufferEnd: vi.fn(() => 8),
     currentEventEnd: vi.fn(() => 2),
@@ -166,6 +167,9 @@ function createMockSession(overrides: Partial<Record<string, unknown>> = {}) {
     close: vi.fn(),
     writeRaw: vi.fn(),
     resize: vi.fn(),
+    effectiveInputLock: vi.fn(function (this: any) {
+      return this.agentInputActive ? 'agent' : this.inputLock;
+    }),
     ...overrides,
   };
 
