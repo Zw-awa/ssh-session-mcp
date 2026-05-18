@@ -338,12 +338,12 @@ const pageDefs = [
       });
 
       const internalLinks = renderSection({
-        kickerEn: 'Common Paths',
-        kickerZh: '常见路径',
-        titleEn: 'If you are not sure where to go next, start here.',
-        titleZh: '如果你还不确定下一步看哪里，可以从这里开始。',
-        copyEn: 'Use install for setup, resources for links and writeups, FAQ for direct answers, and use cases for workflow context.',
-        copyZh: '安装页适合看接入步骤，资源页适合找链接和文章，FAQ 适合找直接答案，场景页适合理解工作流价值。',
+        kickerEn: 'Next',
+        kickerZh: '下一步',
+        titleEn: 'Not sure where to go next?',
+        titleZh: '还不确定下一步看哪里？',
+        copyEn: 'Go to install for setup, resources for links, FAQ for answers, and use cases for examples.',
+        copyZh: '安装页看接入，资源页看链接，FAQ 看答案，场景页看例子。',
         body: [
           '<div class="grid two-up">',
           `<article class="surface-card stack"><h3>${renderBilingual('If you need install commands, start with the install guide.', '如果你需要安装命令，先去安装页。')}</h3><p>${renderBilingual('That page keeps Codex, Claude Code, Cline, OpenCode, npm, Docker, and Windows setup in one place.', '那一页把 Codex、Claude Code、Cline、OpenCode、npm、Docker 和 Windows 的接入方式都放在一起。')}</p><div class="chip-row"><a class="button button-secondary" href="${relativeHref(variant.route, variant.lookup.install.route)}">${renderBilingual('Open Install Guide', '查看安装指南')}</a></div></article>`,
@@ -506,8 +506,8 @@ const pageDefs = [
       });
 
       const longTailFaq = renderSection({
-        kickerEn: 'Common Setup Questions',
-        kickerZh: '常见安装问题',
+        kickerEn: 'Setup Questions',
+        kickerZh: '安装问题',
         titleEn: 'Short answers for the setup details people ask most.',
         titleZh: '把大家最常问的安装细节快速答清楚。',
         copyEn: 'Use these when you already know you want the project and just need the exact setup path.',
@@ -523,12 +523,12 @@ const pageDefs = [
       });
 
       const internalLinks = renderSection({
-        kickerEn: 'Keep Going',
-        kickerZh: '继续查看',
-        titleEn: 'After setup, these pages usually answer the next question.',
-        titleZh: '装好以后，下一步常见的问题通常在这些页面里。',
-        copyEn: 'Most people next want the official links, practical answers, or examples of where the runtime helps.',
-        copyZh: '大多数人接下来会去看官方链接、实际问答，或者这个运行时在哪些场景里真正有帮助。',
+        kickerEn: 'Next',
+        kickerZh: '下一步',
+        titleEn: 'After setup, you will probably want one of these.',
+        titleZh: '装好以后，下一步大多会看这几页。',
+        copyEn: 'Most people next want the official links, a quick answer, or a few real examples.',
+        copyZh: '大多数人接下来会去看官方链接、直接答案，或者几个实际例子。',
         body: [
           '<div class="grid three-up">',
           `<a class="path-card stack" href="${relativeHref(variant.route, variant.lookup.resources.route)}"><div class="path-label">${renderBilingual('Resources', '资源')}</div><div class="path-title">${renderBilingual('Official links, registry details, and articles', '官方链接、registry 信息和相关文章')}</div><div class="path-copy">${renderBilingual('Use this when you want the main links gathered in one place.', '如果你想把主要链接一次性看全，去这里。')}</div></a>`,
@@ -705,8 +705,8 @@ const pageDefs = [
       });
 
       const longTailCommands = renderSection({
-        kickerEn: 'Common Command Questions',
-        kickerZh: '常见命令问题',
+        kickerEn: 'Command Questions',
+        kickerZh: '命令问题',
         titleEn: 'Short answers for the command names people forget.',
         titleZh: '把大家最容易忘的命令名快速解释清楚。',
         copyEn: 'These are useful when you saw a tool once in a log, prompt, or example and want a fast reminder.',
@@ -722,12 +722,12 @@ const pageDefs = [
       });
 
       const internalLinks = renderSection({
-        kickerEn: 'Keep Going',
-        kickerZh: '继续查看',
-        titleEn: 'If the command name helps but the bigger question remains, go on from here.',
-        titleZh: '如果命令名已经对上了，但你接下来还有更大的问题，就继续往下看。',
-        copyEn: 'Most people next want setup steps, runtime behavior answers, or a clearer explanation of the architecture.',
-        copyZh: '大多数人接下来会想看安装步骤、运行时行为说明，或者更清楚的架构解释。',
+        kickerEn: 'Next',
+        kickerZh: '下一步',
+        titleEn: 'If the command is clear, these pages cover the rest.',
+        titleZh: '如果命令已经看明白了，剩下的问题在这些页面里。',
+        copyEn: 'Most people next want setup steps, practical answers, or the bigger picture.',
+        copyZh: '大多数人接下来会去看安装步骤、实际问答，或者更完整的背景。',
         body: [
           '<div class="grid three-up">',
           `<a class="path-card stack" href="${relativeHref(variant.route, variant.lookup.install.route)}"><div class="path-label">${renderBilingual('Install', '安装')}</div><div class="path-title">${renderBilingual('Need the full setup path?', '如果还需要完整接入路径？')}</div><div class="path-copy">${renderBilingual('Open the install guide for Codex, Claude Code, Cline, OpenCode, npm, Docker, and Windows setup.', '去安装页看 Codex、Claude Code、Cline、OpenCode、npm、Docker 和 Windows 的完整接入方式。')}</div></a>`,
@@ -856,12 +856,12 @@ const pageDefs = [
       });
 
       const internalLinks = renderSection({
-        kickerEn: 'More To Explore',
-        kickerZh: '继续查看',
-        titleEn: 'After the links, these pages help with the next question.',
-        titleZh: '看完链接之后，下一步常见的问题在这些页面里。',
-        copyEn: 'Most people open resources to find a source of truth, then continue with setup, direct answers, or examples.',
-        copyZh: '大多数人先来这里找主入口，然后继续去看安装、直接问答或场景例子。',
+        kickerEn: 'Next',
+        kickerZh: '下一步',
+        titleEn: 'After the links, these pages usually help next.',
+        titleZh: '看完链接之后，下一步通常看这些。',
+        copyEn: 'Most people then move on to setup, answers, or examples.',
+        copyZh: '大多数人接下来会去看安装、答案或例子。',
         body: [
           '<div class="grid three-up">',
           `<a class="path-card stack" href="${relativeHref(variant.route, variant.lookup.install.route)}"><div class="path-label">${renderBilingual('Install', '安装')}</div><div class="path-title">${renderBilingual('Ready to set it up?', '准备开始安装？')}</div><div class="path-copy">${renderBilingual('If you already know you want it, the install page has the setup steps.', '如果你已经确定想装，安装页会把步骤列清楚。')}</div></a>`,
@@ -1041,12 +1041,12 @@ const pageDefs = [
       });
 
       const related = renderSection({
-        kickerEn: 'Keep Going',
-        kickerZh: '继续查看',
-        titleEn: 'If one answer leads to the next question, these pages help.',
-        titleZh: '如果一个答案又引出了下一个问题，这些页面会接得上。',
-        copyEn: 'Use install for exact commands, resources for official links, and use cases for workflow context.',
-        copyZh: '安装页适合看精确命令，资源页适合找官方链接，场景页适合理解工作流背景。',
+        kickerEn: 'Next',
+        kickerZh: '下一步',
+        titleEn: 'If one answer leads to the next question, start here.',
+        titleZh: '如果一个答案又引出了下一个问题，从这里继续。',
+        copyEn: 'Install keeps the commands together, resources keeps the links together, and use cases gives the wider context.',
+        copyZh: '安装页把命令放在一起，资源页把链接放在一起，场景页补更完整的背景。',
         body: [
           '<div class="grid three-up">',
           `<a class="path-card stack" href="${relativeHref(variant.route, variant.lookup.install.route)}"><div class="path-label">${renderBilingual('Install', '安装')}</div><div class="path-title">${renderBilingual('Still need the exact client commands?', '如果还需要精确的客户端命令？')}</div><div class="path-copy">${renderBilingual('The install page keeps Codex, Claude Code, Cline, OpenCode, npm, Docker, and Windows setup together.', '安装页把 Codex、Claude Code、Cline、OpenCode、npm、Docker 和 Windows 的接入方式都放在了一起。')}</div></a>`,
@@ -1221,12 +1221,12 @@ const pageDefs = [
       ];
 
       const related = renderSection({
-        kickerEn: 'Keep Going',
-        kickerZh: '继续查看',
-        titleEn: 'Once the idea makes sense, these pages help with the next step.',
-        titleZh: '如果你已经理解了这个思路，下一步可以看这些页面。',
+        kickerEn: 'Next',
+        kickerZh: '下一步',
+        titleEn: 'If the idea makes sense, these pages help next.',
+        titleZh: '如果这个思路已经看明白了，下一步看这些。',
         copyEn: 'Most people then want install steps, direct answers, or the official links.',
-        copyZh: '这时候大多数人会继续去看安装步骤、直接问答，或者官方链接。',
+        copyZh: '这时候大多数人会继续去看安装步骤、直接问答或官方链接。',
         body: [
           '<div class="grid three-up">',
           `<a class="path-card stack" href="${relativeHref(variant.route, variant.lookup.install.route)}"><div class="path-label">${renderBilingual('Install', '安装')}</div><div class="path-title">${renderBilingual('Convinced already? Install it.', '已经被说服了？那就去安装。')}</div><div class="path-copy">${renderBilingual('Use the install page for Codex, Claude Code, Cline, OpenCode, npm, Docker, and Windows details.', '去安装页看 Codex、Claude Code、Cline、OpenCode、npm、Docker 和 Windows 的细节。')}</div></a>`,
@@ -1386,12 +1386,12 @@ const pageDefs = [
       });
 
       const internalLinks = renderSection({
-        kickerEn: 'Next Steps',
+        kickerEn: 'Next',
         kickerZh: '下一步',
-        titleEn: 'If the difference is clear, these pages help you move forward.',
-        titleZh: '如果差异已经看明白了，下一步可以从这些页面继续。',
-        copyEn: 'Most people then want install steps, scenario examples, or concrete Q&A.',
-        copyZh: '这时候大多数人会继续去看安装步骤、场景例子或具体问答。',
+        titleEn: 'If the difference is clear, these pages help next.',
+        titleZh: '如果差异已经看明白了，下一步看这些。',
+        copyEn: 'Most people then want install steps, examples, or a few direct answers.',
+        copyZh: '这时候大多数人会继续去看安装步骤、例子或几个直接答案。',
         body: [
           '<div class="grid three-up">',
           `<a class="path-card stack" href="${relativeHref(variant.route, variant.lookup.install.route)}"><div class="path-label">${renderBilingual('Install', '安装')}</div><div class="path-title">${renderBilingual('Ready to try it?', '如果你已经想试一试？')}</div><div class="path-copy">${renderBilingual('The install guide covers Codex, Claude Code, Cline, OpenCode, npm, Docker, and Windows setup.', '安装页覆盖了 Codex、Claude Code、Cline、OpenCode、npm、Docker 和 Windows 配置。')}</div></a>`,
@@ -1402,8 +1402,8 @@ const pageDefs = [
       });
 
       const compareFaq = renderSection({
-        kickerEn: 'Common Comparison Questions',
-        kickerZh: '常见对比问题',
+        kickerEn: 'Comparison Questions',
+        kickerZh: '对比问题',
         titleEn: 'A few direct answers for people who are still deciding.',
         titleZh: '给还在比较阶段的人几个直接答案。',
         copyEn: 'If you are still judging whether this is meaningfully different, start with these.',

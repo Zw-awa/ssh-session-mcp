@@ -54,14 +54,16 @@ describe('build-site', () => {
     expect(zhIndexHtml).toContain('href="../"');
     expect(indexHtml).toContain('https://zw-awa.github.io/ssh-session-mcp/');
     expect(indexHtml).toContain('MCP + SSH install guide');
-    expect(zhIndexHtml).toContain('常见路径');
+    expect(zhIndexHtml).toContain('下一步');
+    expect(indexHtml).toContain('Need the details?');
+    expect(zhIndexHtml).toContain('这些页面适合快速了解。更完整的命令细节和示例，请直接看仓库文档。');
 
     expect(installHtml).toContain('SSH Session MCP Install Guide');
     expect(zhInstallHtml).toContain('SSH Session MCP 安装指南');
     expect(installHtml).toContain('codex mcp add ssh-session-mcp -- npx -y ssh-session-mcp --viewerPort=auto');
     expect(installHtml).toContain('cmd /c npx -y ssh-session-mcp --viewerPort=auto');
     expect(installHtml).toContain('docker.io/zwawa/ssh-session-mcp:latest');
-    expect(zhInstallHtml).toContain('装好以后，下一步常见的问题通常在这些页面里');
+    expect(zhInstallHtml).toContain('装好以后，下一步大多会看这几页');
     expect(installHtml).toContain('How do I add SSH Session MCP to Codex CLI?');
     expect(zhInstallHtml).toContain('怎么在 Windows 上给 Claude Code 安装？');
     expect(installHtml).toContain('"@type": "FAQPage"');
@@ -81,7 +83,7 @@ describe('build-site', () => {
     expect(resourcesHtml).toContain('MCP registry metadata in server.json');
     expect(resourcesHtml).toContain('https://gitee.com/Zw-awa/ssh-session-mcp');
     expect(resourcesHtml).toContain('https://dev.to/zwawa/i-got-tired-of-splitting-my-brain-between-local-ai-and-remote-ssh-so-i-built-ssh-session-mcp-d0e');
-    expect(zhResourcesHtml).toContain('看完链接之后，下一步常见的问题在这些页面里');
+    expect(zhResourcesHtml).toContain('看完链接之后，下一步通常看这些');
 
     expect(faqHtml).toContain('SSH Session MCP FAQ');
     expect(zhFaqHtml).toContain('SSH Session MCP FAQ');
@@ -95,7 +97,7 @@ describe('build-site', () => {
     expect(zhUseCasesHtml).toContain('SSH Session MCP 使用场景');
     expect(useCasesHtml).toContain('Remote debugging on embedded Linux boards');
     expect(useCasesHtml).toContain('Long-running builds, training jobs, and flaky remote work');
-    expect(zhUseCasesHtml).toContain('如果你已经理解了这个思路，下一步可以看这些页面');
+    expect(zhUseCasesHtml).toContain('如果这个思路已经看明白了，下一步看这些');
 
     expect(compareHtml).toContain('SSH Session MCP Comparison');
     expect(compareHtml).toContain('Normal SSH Wrapper');
