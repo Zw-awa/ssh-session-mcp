@@ -298,7 +298,7 @@ const pageDefs = [
       const landingGrid = [
         '<div class="grid three-up">',
         [
-          ['Why It Matters', '为什么值得看', 'Most SSH MCP tools run commands, but do not preserve the terminal as a shared runtime.', '很多 SSH MCP 工具能执行命令，但保不住“共享终端运行时”。', 'When installation prompts, long-running deploys, or remote debugging sessions depend on one real PTY, a stateless wrapper forces the user and the AI to guess. This project keeps both sides on the same terminal state.', '当安装提示、长时间部署、远程调试依赖一条真实 PTY 时，无状态包装层会迫使用户和 AI 靠猜。这个项目的目标就是让双方看到同一份终端状态。', ['shared PTY', 'browser terminal', 'remote debugging']],
+          ['Why It Matters', '为什么值得看', 'Most SSH MCP tools run commands, but do not preserve the terminal as a shared runtime.', '很多 SSH MCP 工具能执行命令，但保不住“共享终端运行时”。', 'When installation prompts, long-running deploys, or remote debugging sessions depend on one real PTY, a stateless wrapper leaves both sides guessing. This project keeps both sides on the same terminal state.', '当安装提示、长时间部署、远程调试依赖一条真实 PTY 时，无状态包装层会让双方都只能靠猜。这个项目的目标就是让双方看到同一份终端状态。', ['shared PTY', 'browser terminal', 'remote debugging']],
           ['What It Adds', '它补上了什么', 'A practical SSH MCP server for real operator + AI collaboration.', '一个真正面向“操作者 + AI 协作”的 SSH MCP Server。', 'State-aware command handling, safe/full modes, input lock, session history, async polling, viewer diagnostics, and a local demo path that explains the product without touching a real SSH target.', '它提供状态感知的命令处理、safe/full 模式、输入锁、会话历史、异步轮询、viewer 诊断，以及无需真实 SSH 目标的本地演示路径。', ['safe/full mode', 'async status', 'session history']],
           ['Where To Go Next', '下一步看哪里', 'Each page helps with a different kind of question.', '不同页面分别解决不同的问题。', 'Start here for the overview, then jump to install, resources, FAQ, or use cases when you want the next layer of detail.', '先在这里看总览；如果你接下来想看安装、资源、问答或使用场景，再继续往下跳转。', ['install guide', 'resources', 'FAQ']],
         ].map(([kEn, kZh, tEn, tZh, pEn, pZh, chips]) => [
@@ -444,7 +444,7 @@ const pageDefs = [
         visualImageAlt: 'Animated shared terminal install demo',
         visualNotes: [
           { en: 'Preferred install path: `npx -y ssh-session-mcp --viewerPort=auto`.', zh: '首选安装路径：`npx -y ssh-session-mcp --viewerPort=auto`。' },
-          { en: 'Use Docker only when the user explicitly wants a containerized runtime or a pinned image.', zh: '只有在用户明确想要容器化运行时或固定镜像时，再走 Docker。' },
+          { en: 'Use Docker only when you want a containerized runtime or a pinned image.', zh: '只有在你明确想要容器化运行时或固定镜像时，再走 Docker。' },
         ],
       }, variant);
 
@@ -485,8 +485,8 @@ const pageDefs = [
       const windowsAndRuntime = renderSection({
         kickerEn: 'Windows And Runtime Notes',
         kickerZh: 'Windows 与运行时说明',
-        titleEn: 'Windows users should treat `cmd /c npx` as the safe fallback for stdio launchers.',
-        titleZh: 'Windows 用户在 stdio 启动器里，应把 `cmd /c npx` 当成稳妥回退方案。',
+        titleEn: 'On Windows, `cmd /c npx` is the safe fallback for stdio launchers.',
+        titleZh: '在 Windows 上，`cmd /c npx` 是更稳妥的 stdio 回退方案。',
         copyEn: 'If Windows stdio launch feels flaky, keep the `cmd /c` fallback in mind.',
         copyZh: '如果 Windows 上的 stdio 拉起不稳定，记住 `cmd /c` 这个回退方案就够了。',
         body: [
@@ -527,13 +527,13 @@ const pageDefs = [
         kickerZh: '下一步',
         titleEn: 'After setup, you will probably want one of these.',
         titleZh: '装好以后，下一步大多会看这几页。',
-        copyEn: 'Most people next want the official links, a quick answer, or a few real examples.',
-        copyZh: '大多数人接下来会去看官方链接、直接答案，或者几个实际例子。',
+        copyEn: 'From here, the next step is usually links, answers, or examples.',
+        copyZh: '从这里继续，下一步通常就是去看链接、答案或例子。',
         body: [
           '<div class="grid three-up">',
           `<a class="path-card stack" href="${relativeHref(variant.route, variant.lookup.resources.route)}"><div class="path-label">${renderBilingual('Resources', '资源')}</div><div class="path-title">${renderBilingual('Official links, registry details, and articles', '官方链接、registry 信息和相关文章')}</div><div class="path-copy">${renderBilingual('Use this when you want the main links gathered in one place.', '如果你想把主要链接一次性看全，去这里。')}</div></a>`,
           `<a class="path-card stack" href="${relativeHref(variant.route, variant.lookup.faq.route)}"><div class="path-label">${renderBilingual('FAQ', '问答')}</div><div class="path-title">${renderBilingual('Common setup and runtime answers', '常见安装与运行时问题')}</div><div class="path-copy">${renderBilingual('Use this when setup naturally turns into trust or behavior questions.', '如果安装过程中自然冒出了信任或行为问题，就去这里。')}</div></a>`,
-          `<a class="path-card stack" href="${relativeHref(variant.route, variant.lookup['use-cases'].route)}"><div class="path-label">${renderBilingual('Use Cases', '场景')}</div><div class="path-title">${renderBilingual('See where shared PTY and viewer help most', '看看 shared PTY 和 viewer 最适合用在哪些地方')}</div><div class="path-copy">${renderBilingual('Use this if you already know how to install and want to see when the shared runtime becomes useful.', '如果你已经知道怎么装，接下来想看这个共享运行时在什么场景里真正有用，就去这里。')}</div></a>`,
+          `<a class="path-card stack" href="${relativeHref(variant.route, variant.lookup['use-cases'].route)}"><div class="path-label">${renderBilingual('Use Cases', '场景')}</div><div class="path-title">${renderBilingual('See where shared PTY and viewer help most', '看看 shared PTY 和 viewer 最适合用在哪些地方')}</div><div class="path-copy">${renderBilingual('Open this when the setup is clear and you want to see where the shared runtime helps most.', '如果你已经知道怎么装，接下来想看这个共享运行时最适合用在哪些地方，就去这里。')}</div></a>`,
           '</div>',
         ].join('\n'),
       });
@@ -726,8 +726,8 @@ const pageDefs = [
         kickerZh: '下一步',
         titleEn: 'If the command is clear, these pages cover the rest.',
         titleZh: '如果命令已经看明白了，剩下的问题在这些页面里。',
-        copyEn: 'Most people next want setup steps, practical answers, or the bigger picture.',
-        copyZh: '大多数人接下来会去看安装步骤、实际问答，或者更完整的背景。',
+        copyEn: 'From here, the next step is usually setup, answers, or the bigger picture.',
+        copyZh: '从这里继续，下一步通常就是去看安装、答案，或者更完整的背景。',
         body: [
           '<div class="grid three-up">',
           `<a class="path-card stack" href="${relativeHref(variant.route, variant.lookup.install.route)}"><div class="path-label">${renderBilingual('Install', '安装')}</div><div class="path-title">${renderBilingual('Need the full setup path?', '如果还需要完整接入路径？')}</div><div class="path-copy">${renderBilingual('Open the install guide for Codex, Claude Code, Cline, OpenCode, npm, Docker, and Windows setup.', '去安装页看 Codex、Claude Code、Cline、OpenCode、npm、Docker 和 Windows 的完整接入方式。')}</div></a>`,
@@ -806,8 +806,8 @@ const pageDefs = [
       const official = renderSection({
         kickerEn: 'Official',
         kickerZh: '官方',
-        titleEn: 'Primary links users should trust first.',
-        titleZh: '用户应优先信任的主入口。',
+        titleEn: 'Start with the main official links.',
+        titleZh: '先看几个主要的官方入口。',
         copyEn: 'These are the core destinations: source, package install page, release feed, issue tracker, and registry metadata.',
         copyZh: '这些是主入口：源码、包安装页、发布页、Issue 跟踪和 registry 元数据。',
         body: [
@@ -818,7 +818,7 @@ const pageDefs = [
             { titleEn: 'MCP registry metadata in server.json', titleZh: 'server.json 里的 MCP registry 元数据', copyEn: 'Registry-facing metadata and environment variable declarations.', copyZh: '面向 registry 的元数据和环境变量声明。', href: registryUrl },
             { titleEn: 'GitHub releases', titleZh: 'GitHub 发布页', copyEn: 'Tagged releases and version history.', copyZh: '标签发布与版本历史。', href: releasesUrl },
             { titleEn: 'Issue tracker', titleZh: 'Issue 跟踪', copyEn: 'Bug reports, feature requests, and operator questions.', copyZh: 'Bug、功能请求和操作者问题。', href: issuesUrl },
-            { titleEn: 'Gitee mirror', titleZh: 'Gitee 镜像', copyEn: 'Alternative repository mirror for users who prefer Gitee.', copyZh: '适合偏好 Gitee 或访问 GitHub 不稳定的用户。', href: giteeUrl },
+            { titleEn: 'Gitee mirror', titleZh: 'Gitee 镜像', copyEn: 'Alternative repository mirror if you prefer Gitee.', copyZh: '如果你更习惯用 Gitee，可以从这里进入。', href: giteeUrl },
           ].map((item) => [
             `<a class="path-card stack" href="${item.href}">`,
             `  <div class="path-label">${renderBilingual('Link', '链接')}</div>`,
@@ -860,12 +860,12 @@ const pageDefs = [
         kickerZh: '下一步',
         titleEn: 'After the links, these pages usually help next.',
         titleZh: '看完链接之后，下一步通常看这些。',
-        copyEn: 'Most people then move on to setup, answers, or examples.',
-        copyZh: '大多数人接下来会去看安装、答案或例子。',
+        copyEn: 'From here, the next step is usually setup, answers, or examples.',
+        copyZh: '从这里继续，下一步通常就是去看安装、答案或例子。',
         body: [
           '<div class="grid three-up">',
-          `<a class="path-card stack" href="${relativeHref(variant.route, variant.lookup.install.route)}"><div class="path-label">${renderBilingual('Install', '安装')}</div><div class="path-title">${renderBilingual('Ready to set it up?', '准备开始安装？')}</div><div class="path-copy">${renderBilingual('If you already know you want it, the install page has the setup steps.', '如果你已经确定想装，安装页会把步骤列清楚。')}</div></a>`,
-          `<a class="path-card stack" href="${relativeHref(variant.route, variant.lookup.faq.route)}"><div class="path-label">${renderBilingual('FAQ', '问答')}</div><div class="path-title">${renderBilingual('Want quick answers?', '想先看几个直接答案？')}</div><div class="path-copy">${renderBilingual('If you are more concerned about trust, behavior, viewer, or lock questions, go to the FAQ page.', '如果你现在更关心信任、行为、viewer 或输入锁问题，就去 FAQ。')}</div></a>`,
+          `<a class="path-card stack" href="${relativeHref(variant.route, variant.lookup.install.route)}"><div class="path-label">${renderBilingual('Install', '安装')}</div><div class="path-title">${renderBilingual('Ready to set it up?', '准备开始安装？')}</div><div class="path-copy">${renderBilingual('The install page has the setup steps in one place.', '安装页会把接入步骤集中放在一起。')}</div></a>`,
+          `<a class="path-card stack" href="${relativeHref(variant.route, variant.lookup.faq.route)}"><div class="path-label">${renderBilingual('FAQ', '问答')}</div><div class="path-title">${renderBilingual('Want quick answers?', '想先看几个直接答案？')}</div><div class="path-copy">${renderBilingual('Go to the FAQ page for trust, behavior, viewer, or lock questions.', '如果你现在更关心信任、行为、viewer 或输入锁问题，就去 FAQ。')}</div></a>`,
           `<a class="path-card stack" href="${relativeHref(variant.route, variant.lookup['use-cases'].route)}"><div class="path-label">${renderBilingual('Use Cases', '场景')}</div><div class="path-title">${renderBilingual('Want to see where it fits?', '想看它适合用在哪些地方？')}</div><div class="path-copy">${renderBilingual('Use the scenario page for embedded Linux, deployment, remote debugging, and operator workflows.', '去场景页看嵌入式 Linux、部署、远程调试和操作者工作流里的用法。')}</div></a>`,
           '</div>',
         ].join('\n'),
@@ -1045,8 +1045,8 @@ const pageDefs = [
         kickerZh: '下一步',
         titleEn: 'If one answer leads to the next question, start here.',
         titleZh: '如果一个答案又引出了下一个问题，从这里继续。',
-        copyEn: 'Install keeps the commands together, resources keeps the links together, and use cases gives the wider context.',
-        copyZh: '安装页把命令放在一起，资源页把链接放在一起，场景页补更完整的背景。',
+        copyEn: 'Install keeps the commands together, resources keeps the links together, and use cases adds context.',
+        copyZh: '安装页集中命令，资源页集中链接，场景页补背景。',
         body: [
           '<div class="grid three-up">',
           `<a class="path-card stack" href="${relativeHref(variant.route, variant.lookup.install.route)}"><div class="path-label">${renderBilingual('Install', '安装')}</div><div class="path-title">${renderBilingual('Still need the exact client commands?', '如果还需要精确的客户端命令？')}</div><div class="path-copy">${renderBilingual('The install page keeps Codex, Claude Code, Cline, OpenCode, npm, Docker, and Windows setup together.', '安装页把 Codex、Claude Code、Cline、OpenCode、npm、Docker 和 Windows 的接入方式都放在了一起。')}</div></a>`,
@@ -1225,12 +1225,12 @@ const pageDefs = [
         kickerZh: '下一步',
         titleEn: 'If the idea makes sense, these pages help next.',
         titleZh: '如果这个思路已经看明白了，下一步看这些。',
-        copyEn: 'Most people then want install steps, direct answers, or the official links.',
-        copyZh: '这时候大多数人会继续去看安装步骤、直接问答或官方链接。',
+        copyEn: 'From here, the next step is usually install steps, direct answers, or official links.',
+        copyZh: '从这里继续，下一步通常就是去看安装、答案或官方链接。',
         body: [
           '<div class="grid three-up">',
           `<a class="path-card stack" href="${relativeHref(variant.route, variant.lookup.install.route)}"><div class="path-label">${renderBilingual('Install', '安装')}</div><div class="path-title">${renderBilingual('Convinced already? Install it.', '已经被说服了？那就去安装。')}</div><div class="path-copy">${renderBilingual('Use the install page for Codex, Claude Code, Cline, OpenCode, npm, Docker, and Windows details.', '去安装页看 Codex、Claude Code、Cline、OpenCode、npm、Docker 和 Windows 的细节。')}</div></a>`,
-          `<a class="path-card stack" href="${relativeHref(variant.route, variant.lookup.faq.route)}"><div class="path-label">${renderBilingual('FAQ', '问答')}</div><div class="path-title">${renderBilingual('Need narrower behavior answers?', '如果还要更细的行为问题？')}</div><div class="path-copy">${renderBilingual('Use the FAQ page when the user still has install, lock, viewer, or Docker questions.', '如果用户还在问安装、输入锁、viewer 或 Docker 相关问题，就去 FAQ。')}</div></a>`,
+          `<a class="path-card stack" href="${relativeHref(variant.route, variant.lookup.faq.route)}"><div class="path-label">${renderBilingual('FAQ', '问答')}</div><div class="path-title">${renderBilingual('Need narrower behavior answers?', '如果还要更细的行为问题？')}</div><div class="path-copy">${renderBilingual('The FAQ page keeps install, lock, viewer, and Docker questions together.', 'FAQ 会把安装、输入锁、viewer 和 Docker 相关问题集中放在一起。')}</div></a>`,
           `<a class="path-card stack" href="${relativeHref(variant.route, variant.lookup.resources.route)}"><div class="path-label">${renderBilingual('Resources', '资源')}</div><div class="path-title">${renderBilingual('Need source, registry, mirrors, or articles?', '如果需要源码、registry、镜像或文章？')}</div><div class="path-copy">${renderBilingual('Use the resources page for official links and discovery paths.', '去资源页看官方链接和外部发现路径。')}</div></a>`,
           '</div>',
         ].join('\n'),
@@ -1390,8 +1390,8 @@ const pageDefs = [
         kickerZh: '下一步',
         titleEn: 'If the difference is clear, these pages help next.',
         titleZh: '如果差异已经看明白了，下一步看这些。',
-        copyEn: 'Most people then want install steps, examples, or a few direct answers.',
-        copyZh: '这时候大多数人会继续去看安装步骤、例子或几个直接答案。',
+        copyEn: 'From here, the next step is usually install steps, examples, or a few direct answers.',
+        copyZh: '从这里继续，下一步通常就是去看安装、例子或几个直接答案。',
         body: [
           '<div class="grid three-up">',
           `<a class="path-card stack" href="${relativeHref(variant.route, variant.lookup.install.route)}"><div class="path-label">${renderBilingual('Install', '安装')}</div><div class="path-title">${renderBilingual('Ready to try it?', '如果你已经想试一试？')}</div><div class="path-copy">${renderBilingual('The install guide covers Codex, Claude Code, Cline, OpenCode, npm, Docker, and Windows setup.', '安装页覆盖了 Codex、Claude Code、Cline、OpenCode、npm、Docker 和 Windows 配置。')}</div></a>`,
