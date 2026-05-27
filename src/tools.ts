@@ -123,6 +123,7 @@ import {
   summarizeAuth,
   summarizeCommandMeta,
   validateCommand,
+  normalizePolicyRuleAction,
   detectTerminalMode,
   isKnownSlowCommand,
   tryParseCommandOutput,
@@ -132,7 +133,7 @@ import {
 
 const POLICY_RULE_CATEGORIES = ['dangerous', 'blocked', 'interactive', 'streaming', 'long_running'] as const;
 const POLICY_RULE_MODES = ['safe', 'full', 'both'] as const;
-const POLICY_RULE_ACTIONS = ['block', 'warn'] as const;
+const POLICY_RULE_ACTIONS = ['error', 'warning', 'log'] as const;
 
 function normalizePolicyRuleInput(input: {
   action: PolicyRuleAction;
@@ -143,6 +144,7 @@ function normalizePolicyRuleInput(input: {
   message: string;
   mode?: PolicyRuleMode;
   pattern: string;
+  priority?: number;
   suggestion?: string;
 }): CustomPolicyRule {
   const id = sanitizeRequiredText(input.id, 'id');
@@ -156,9 +158,10 @@ function normalizePolicyRuleInput(input: {
     enabled: input.enabled !== false,
     pattern,
     flags,
+    priority: sanitizeNonNegativeInt(input.priority, 'priority', 1000),
     mode: input.mode || 'safe',
     category: input.category,
-    action: input.action,
+    action: normalizePolicyRuleAction(input.action),
     message,
     suggestion: sanitizeOptionalText(input.suggestion),
     source: 'session',
@@ -166,15 +169,16 @@ function normalizePolicyRuleInput(input: {
 }
 
 function buildValidationWarningMetadata(validation: ReturnType<typeof validateCommand>) {
-  if (validation.category === 'safe') {
+  if (validation.category === 'safe' || validation.action === 'error') {
     return {};
   }
 
   return {
-    warning: validation.message,
-    warningRuleCategory: validation.category,
-    warningRuleId: validation.ruleId,
-    warningRuleSource: validation.source,
+    policyNoticeLevel: validation.action,
+    policyNotice: validation.message,
+    policyRuleCategory: validation.category,
+    policyRuleId: validation.ruleId,
+    policyRuleSource: validation.source,
   };
 }
 
@@ -927,17 +931,19 @@ server.tool(
     flags: z.string().optional().describe('Optional JavaScript regex flags, for example i or gi'),
     mode: z.enum(POLICY_RULE_MODES).optional().describe('Which operation mode the rule applies to'),
     category: z.enum(POLICY_RULE_CATEGORIES).describe('Rule category shown in blocked/warned responses'),
-    action: z.enum(POLICY_RULE_ACTIONS).describe('block rejects the command, warn allows it with warning metadata'),
+    action: z.enum(POLICY_RULE_ACTIONS).describe('error blocks the command, warning allows it with warning metadata, log only annotates it'),
     message: z.string().min(1).describe('Human-readable reason shown when the rule matches'),
+    priority: z.number().int().nonnegative().optional().describe('Lower numbers run earlier within the same severity band'),
     suggestion: z.string().optional().describe('Optional remediation hint shown alongside the message'),
     enabled: z.boolean().optional().describe('Whether the rule is active. Defaults to true'),
   },
-  async ({ session, id, pattern, flags, mode, category, action, message, suggestion, enabled }) => {
+  async ({ session, id, pattern, flags, mode, category, action, message, priority, suggestion, enabled }) => {
     const target = resolveSession(session);
     const rule = normalizePolicyRuleInput({
       id,
       pattern,
       flags,
+      priority,
       mode,
       category,
       action,
@@ -1505,6 +1511,7 @@ server.tool(
   async ({ command, session, waitMs, idleMs, maxChars }) => {
     sweepSessions();
     const target = resolveSession(session);
+    const operationMode = target.operationMode;
     const commandMeta = summarizeCommandMeta(command);
     const runningCommand = findRunningCommandForSession(target.sessionId);
 
@@ -1541,21 +1548,23 @@ server.tool(
     }
 
     // Command validation
-    const validation = validateCommand(command, OPERATION_MODE, target.getPolicyRules());
+    const validation = validateCommand(command, operationMode, target.getPolicyRules());
     if (!validation.allowed) {
         logSessionEvent(target.sessionId, 'command.blocked', {
           category: validation.category,
+          action: validation.action,
           ruleId: validation.ruleId,
           ruleSource: validation.source,
-          operationMode: OPERATION_MODE,
+          operationMode,
           ...commandMeta,
         });
       return createJsonToolResponse(applyToolContract({
         error: 'COMMAND_BLOCKED',
         category: validation.category,
+        action: validation.action,
         message: validation.message,
         suggestion: validation.suggestion,
-        operationMode: OPERATION_MODE,
+        operationMode,
       }, {
         resultStatus: 'blocked',
         summary: 'Command policy blocked execution in the current operation mode.',
@@ -1563,7 +1572,7 @@ server.tool(
         nextAction: validation.suggestion || 'Adjust the command or switch the terminal to a more suitable mode.',
           evidence: [
             `sessionRef=${sessionReadRef(target)}`,
-            `operationMode=${OPERATION_MODE}`,
+            `operationMode=${operationMode}`,
             `category=${validation.category}`,
             `ruleId=${validation.ruleId || '(none)'}`,
           ],
@@ -1579,7 +1588,7 @@ server.tool(
       logSessionEvent(target.sessionId, 'command.blocked_password_prompt', {
         actor: 'agent',
         lockPolicy: target.lockPolicy,
-        operationMode: OPERATION_MODE,
+        operationMode,
         userDraftActive: target.userDraftActive,
         ...commandMeta,
       });
@@ -1588,7 +1597,7 @@ server.tool(
         terminalMode: 'password_prompt',
         message: 'Terminal is at a password prompt. DO NOT send commands — they will be typed as the password.',
         suggestion: 'Options: (1) Ask the user to enter the password in the browser terminal. (2) Use ssh-session-control to send ctrl_c to cancel. (3) If you know the password, use ssh-session-send to type it directly.',
-        operationMode: OPERATION_MODE,
+        operationMode,
       }, {
         resultStatus: 'blocked',
         summary: 'Command execution was blocked because the terminal is currently waiting for a password.',
@@ -1602,11 +1611,11 @@ server.tool(
     }
 
     // Editor/pager check — only blocks in safe mode
-    if (OPERATION_MODE === 'safe' && (terminalMode === 'editor' || terminalMode === 'pager')) {
+    if (operationMode === 'safe' && (terminalMode === 'editor' || terminalMode === 'pager')) {
       logSessionEvent(target.sessionId, 'command.blocked_terminal_mode', {
         actor: 'agent',
         lockPolicy: target.lockPolicy,
-        operationMode: OPERATION_MODE,
+        operationMode,
         terminalMode,
         userDraftActive: target.userDraftActive,
         ...commandMeta,
@@ -1617,7 +1626,7 @@ server.tool(
         message: `Terminal is in ${terminalMode} mode. Cannot execute commands in this state.`,
         suggestion: terminalMode === 'editor' ? 'Send ctrl_c or ctrl_d via ssh-session-control to exit the editor first.'
           : 'Send "q" via ssh-session-control to exit the pager first.',
-        operationMode: OPERATION_MODE,
+        operationMode,
       }, {
         resultStatus: 'blocked',
         summary: `Command execution was blocked because the terminal is in ${terminalMode} mode.`,
@@ -1654,7 +1663,7 @@ server.tool(
     const sentinelSuffix = sentinelCommand?.sentinelSuffix;
     logSessionEvent(target.sessionId, 'command.started', {
       actor: 'agent',
-      operationMode: OPERATION_MODE,
+      operationMode,
       startedAt,
       lockPolicy: target.lockPolicy,
       ruleCategory: validation.category !== 'safe' ? validation.category : undefined,
@@ -1753,7 +1762,7 @@ server.tool(
         sessionRef: sessionReadRef(target),
         host: target.host,
         terminalMode,
-        operationMode: OPERATION_MODE,
+        operationMode,
         ...buildValidationWarningMetadata(validation),
         hint: `Command is still running. Use ssh-command-status with commandId="${commandId}" to check progress.`,
         readMore,
@@ -1797,7 +1806,7 @@ server.tool(
         host: target.host,
         error: 'PASSWORD_REQUIRED',
         terminalMode: 'password_prompt',
-        operationMode: OPERATION_MODE,
+        operationMode,
         message: 'The command is waiting for a password input. The terminal is now at a password prompt.',
         suggestion: 'DO NOT send another ssh-run command — it will be typed into the password field. Options: (1) Ask the user to enter the password in the browser terminal. (2) Use ssh-session-control to send ctrl_c to cancel the command. (3) If you know the password, use ssh-session-send to send it (not recommended for security).',
       }, {
@@ -1845,7 +1854,7 @@ server.tool(
         elapsedMs: completion.elapsedMs,
         exitCode,
         terminalMode,
-        operationMode: OPERATION_MODE,
+        operationMode,
         ...buildValidationWarningMetadata(validation),
         parsed: parsed ? { type: parsed.type, data: parsed.data } : undefined,
         readMore: buildReadMoreHint({
@@ -1893,7 +1902,7 @@ server.tool(
         completionReason: completion.reason,
         elapsedMs: completion.elapsedMs,
         terminalMode,
-        operationMode: OPERATION_MODE,
+        operationMode,
         readMore: buildReadMoreHint({
           session: sessionReadRef(target),
           offset: beforeOffset,
@@ -1932,7 +1941,7 @@ server.tool(
       completionReason: completion.reason,
       elapsedMs: completion.elapsedMs,
       terminalMode,
-      operationMode: OPERATION_MODE,
+      operationMode,
       readMore: buildReadMoreHint({
         session: sessionReadRef(target),
         offset: omittedStart,
@@ -1982,6 +1991,7 @@ server.tool(
         ? `${getViewerBaseUrl()}/terminal/session/${encodeURIComponent(s.sessionId)}`
         : undefined,
       idleMinutes: Math.round((Date.now() - Date.parse(s.lastActivityAt)) / 60000),
+      operationMode: s.operationMode,
       terminalMode: detectTerminalMode(s.buffer.slice(-2000)),
     }));
 
@@ -1997,7 +2007,6 @@ server.tool(
       configPaths: PROFILES.paths,
       configResolution: PROFILES.resolution,
       configuredDevices: PROFILES.config?.devices.map(device => device.id) || [],
-      operationMode: OPERATION_MODE,
       logging: logger.getConfig(),
       hint: active.length === 0
         ? 'No active sessions. Use ssh-quick-connect to start one.'
@@ -2168,6 +2177,7 @@ server.tool(
   async ({ command, session, maxRetries, backoff, delayMs, successPattern, failPattern }) => {
     sweepSessions();
     const target = resolveSession(session);
+    const operationMode = target.operationMode;
 
     const resolvedMaxRetries = maxRetries ?? 3;
     const resolvedBackoff = backoff ?? 'exponential';
@@ -2242,21 +2252,23 @@ server.tool(
       }
 
       // Command validation
-      const retryValidation = validateCommand(command, OPERATION_MODE, target.getPolicyRules());
+      const retryValidation = validateCommand(command, operationMode, target.getPolicyRules());
       if (!retryValidation.allowed) {
           logSessionEvent(target.sessionId, 'command.blocked', {
             category: retryValidation.category,
+            action: retryValidation.action,
             ruleId: retryValidation.ruleId,
             ruleSource: retryValidation.source,
-            operationMode: OPERATION_MODE,
+            operationMode,
             ...summarizeCommandMeta(command),
           });
         return createJsonToolResponse(applyToolContract({
           error: 'COMMAND_BLOCKED',
           category: retryValidation.category,
+          action: retryValidation.action,
           message: retryValidation.message,
           suggestion: retryValidation.suggestion,
-          operationMode: OPERATION_MODE,
+          operationMode,
         }, {
           resultStatus: 'blocked',
           summary: 'Retry command blocked by operation mode policy.',
@@ -2264,7 +2276,7 @@ server.tool(
           nextAction: retryValidation.suggestion || 'Adjust the command or switch the terminal to a more suitable mode.',
             evidence: [
               `sessionRef=${sessionReadRef(target)}`,
-              `operationMode=${OPERATION_MODE}`,
+              `operationMode=${operationMode}`,
               `category=${retryValidation.category}`,
               `ruleId=${retryValidation.ruleId || '(none)'}`,
             ],
@@ -2279,7 +2291,7 @@ server.tool(
         logSessionEvent(target.sessionId, 'command.blocked_password_prompt', {
           actor: 'agent',
           lockPolicy: target.lockPolicy,
-          operationMode: OPERATION_MODE,
+          operationMode,
           userDraftActive: target.userDraftActive,
           ...summarizeCommandMeta(command),
         });
@@ -2288,7 +2300,7 @@ server.tool(
           terminalMode: 'password_prompt',
           message: 'Terminal is at a password prompt. DO NOT send commands — they will be typed as the password.',
           suggestion: 'Options: (1) Ask the user to enter the password in the browser terminal. (2) Use ssh-session-control to send ctrl_c to cancel. (3) If you know the password, use ssh-session-send to type it directly.',
-          operationMode: OPERATION_MODE,
+          operationMode,
         }, {
           resultStatus: 'blocked',
           summary: 'Retry execution was blocked because the terminal is currently waiting for a password.',
@@ -2301,11 +2313,11 @@ server.tool(
         }));
       }
 
-      if (OPERATION_MODE === 'safe' && (retryTerminalMode === 'editor' || retryTerminalMode === 'pager')) {
+      if (operationMode === 'safe' && (retryTerminalMode === 'editor' || retryTerminalMode === 'pager')) {
         logSessionEvent(target.sessionId, 'command.blocked_terminal_mode', {
           actor: 'agent',
           lockPolicy: target.lockPolicy,
-          operationMode: OPERATION_MODE,
+          operationMode,
           terminalMode: retryTerminalMode,
           userDraftActive: target.userDraftActive,
           ...summarizeCommandMeta(command),
@@ -2316,7 +2328,7 @@ server.tool(
           message: `Terminal is in ${retryTerminalMode} mode. Cannot execute commands in this state.`,
           suggestion: retryTerminalMode === 'editor' ? 'Send ctrl_c or ctrl_d via ssh-session-control to exit the editor first.'
             : 'Send "q" via ssh-session-control to exit the pager first.',
-          operationMode: OPERATION_MODE,
+          operationMode,
         }, {
           resultStatus: 'blocked',
           summary: `Retry execution was blocked because the terminal is in ${retryTerminalMode} mode.`,

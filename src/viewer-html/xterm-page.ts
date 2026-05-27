@@ -1,7 +1,6 @@
 import {
   escapeHtml,
   sessionDisplayName,
-  OPERATION_MODE,
 } from '../server-state.js';
 import { renderXtermTerminalScript } from './xterm-script.js';
 import { renderViewerDocument } from './page-shell.js';
@@ -19,6 +18,7 @@ export interface XtermTerminalPageOptions {
   footerLabel: string;
   footerValue: string;
   meta: string;
+  operationMode: 'safe' | 'full';
   subtitle: string;
   title: string;
 }
@@ -28,7 +28,7 @@ export function renderXtermTerminalPage(options: XtermTerminalPageOptions) {
     ? `/ws/attach/binding/${encodeURIComponent(options.attachRef)}`
     : `/ws/attach/session/${encodeURIComponent(options.attachRef)}`;
   const script = renderXtermTerminalScript({
-    operationMode: OPERATION_MODE,
+    operationMode: options.operationMode,
     wsPath,
   });
 
@@ -44,15 +44,15 @@ export function renderXtermTerminalPage(options: XtermTerminalPageOptions) {
     </div>
     <div class="header-actions">
       <a href="${options.baseUrl}" class="btn">Home</a>
-      <select id="actorSelect" class="btn" title="Switch input mode: common = both can type, user = only you type (agent blocked), auto = agent is blocked while you are typing, agent = agent types (your input blocked)">
-        <option value="common" selected>common</option>
+      <select id="actorSelect" class="btn" title="Switch input mode: auto = agent is blocked while you are typing, common = both can type, user = only you type (agent blocked), agent = agent types (your input blocked)">
+        <option value="auto" selected>auto</option>
+        <option value="common">common</option>
         <option value="user">user</option>
-        <option value="auto">auto</option>
         <option value="agent">agent</option>
       </select>
       <select id="modeSelect" class="btn" title="Operation mode: safe = blocks dangerous commands, full = AI has full control">
-        <option value="safe"${OPERATION_MODE === 'safe' ? ' selected' : ''}>safe</option>
-        <option value="full"${OPERATION_MODE === 'full' ? ' selected' : ''}>full</option>
+        <option value="safe"${options.operationMode === 'safe' ? ' selected' : ''}>safe</option>
+        <option value="full"${options.operationMode === 'full' ? ' selected' : ''}>full</option>
       </select>
       <span id="lockBadge" class="lock-badge none">connecting...</span>
     </div>
@@ -82,6 +82,7 @@ export function renderXtermSessionPage(sessionRef: string) {
     footerLabel,
     footerValue,
     meta: formatViewerConnectionMeta(sessionData),
+    operationMode: sessionData.operationMode,
     subtitle: 'Shared SSH Terminal',
     title: sessionDisplayName(sessionData),
   });
@@ -102,6 +103,7 @@ export function renderXtermBindingPage(bindingKey: string) {
     footerLabel,
     footerValue,
     meta: formatViewerConnectionMeta(sessionData),
+    operationMode: sessionData.operationMode,
     subtitle: 'Shared SSH Terminal',
     title: sessionDisplayName(sessionData),
   });

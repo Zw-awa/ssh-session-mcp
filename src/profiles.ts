@@ -11,7 +11,11 @@ const runtimeDefaultsSchema = z.object({
   logDir: z.string().min(1).optional(),
   logMode: z.enum(['off', 'meta']).optional(),
   mode: z.enum(['safe', 'full']).optional(),
+  viewerAccessMode: z.enum(['allow_all', 'allowlist', 'denylist']).optional(),
   viewerHost: z.string().min(1).optional(),
+  viewerAllowedOrigins: z.array(z.string().min(1)).optional(),
+  viewerIpAllowlist: z.array(z.string().min(1)).optional(),
+  viewerIpDenylist: z.array(z.string().min(1)).optional(),
   viewerMode: z.enum(['browser', 'terminal']).optional(),
   viewerPort: z.union([
     z.literal('auto'),
@@ -51,9 +55,10 @@ const policyRuleSchema = z.object({
   enabled: z.boolean().optional().default(true),
   pattern: z.string().min(1),
   flags: z.string().optional().default(''),
+  priority: z.number().int().nonnegative().optional().default(1000),
   mode: z.enum(['safe', 'full', 'both']).optional().default('safe'),
   category: z.enum(['dangerous', 'blocked', 'interactive', 'streaming', 'long_running']),
-  action: z.enum(['block', 'warn']),
+  action: z.enum(['error', 'warning', 'log', 'block', 'warn']),
   message: z.string().min(1),
   suggestion: z.string().optional(),
 }).strict();

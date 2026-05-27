@@ -4,7 +4,7 @@ import { stripAnsi } from './shared.js';
 
 export type OperationMode = 'safe' | 'full';
 export type PolicyRuleMode = 'safe' | 'full' | 'both';
-export type PolicyRuleAction = 'block' | 'warn';
+export type PolicyRuleAction = 'error' | 'warning' | 'log' | 'block' | 'warn';
 export type PolicyRuleCategory = 'dangerous' | 'blocked' | 'interactive' | 'streaming' | 'long_running';
 
 // --- Terminal Mode Detection ---
@@ -41,6 +41,7 @@ export function detectTerminalMode(bufferTail: string): TerminalMode {
 export interface ValidationResult {
   allowed: boolean;
   category: 'safe' | 'dangerous' | 'blocked' | 'interactive' | 'streaming' | 'long_running';
+  action?: PolicyRuleAction;
   ruleId?: string;
   source?: 'built-in' | 'default' | 'session';
   message?: string;
@@ -52,6 +53,7 @@ export interface CustomPolicyRule {
   enabled: boolean;
   pattern: string;
   flags?: string;
+  priority: number;
   mode: PolicyRuleMode;
   category: PolicyRuleCategory;
   action: PolicyRuleAction;
@@ -64,49 +66,50 @@ interface BuiltInPolicyEntry {
   id: string;
   pattern: RegExp;
   category: ValidationResult['category'];
-  action: 'block' | 'warn';
+  action: 'error' | 'warning';
   message: string;
   suggestion?: string;
   source: 'built-in';
 }
 
 const ALWAYS_BLOCKED: BuiltInPolicyEntry[] = [
-  { id: 'block-fork-bomb', pattern: /:\(\)\{.*:\|:.*\};:/, category: 'blocked', action: 'block', message: 'Fork bomb detected', source: 'built-in' },
-  { id: 'block-dd-disk-write', pattern: /\bdd\b.*\bof=\/dev\/[sh]d/, category: 'blocked', action: 'block', message: 'Direct disk write via dd', source: 'built-in' },
-  { id: 'block-rm-rf-root', pattern: /\brm\s+-[a-zA-Z]*r[a-zA-Z]*f[a-zA-Z]*\s+\/\s*$/, category: 'blocked', action: 'block', message: 'rm -rf / (root filesystem)', source: 'built-in' },
-  { id: 'block-rm-rf-system-root', pattern: /\brm\s+-[a-zA-Z]*r[a-zA-Z]*f[a-zA-Z]*\s+\/[a-z]*\s*$/, category: 'blocked', action: 'block', message: 'rm -rf on system root directory', source: 'built-in' },
-  { id: 'block-mkfs-disk-device', pattern: /\bmkfs\b.*\/dev\/[sh]d/, category: 'blocked', action: 'block', message: 'Filesystem format on disk device', source: 'built-in' },
+  { id: 'block-fork-bomb', pattern: /:\(\)\{.*:\|:.*\};:/, category: 'blocked', action: 'error', message: 'Fork bomb detected', source: 'built-in' },
+  { id: 'block-dd-disk-write', pattern: /\bdd\b.*\bof=\/dev\/[sh]d/, category: 'blocked', action: 'error', message: 'Direct disk write via dd', source: 'built-in' },
+  { id: 'block-rm-rf-root', pattern: /\brm\s+-[a-zA-Z]*r[a-zA-Z]*f[a-zA-Z]*\s+\/\s*$/, category: 'blocked', action: 'error', message: 'rm -rf / (root filesystem)', source: 'built-in' },
+  { id: 'block-rm-rf-system-root', pattern: /\brm\s+-[a-zA-Z]*r[a-zA-Z]*f[a-zA-Z]*\s+\/[a-z]*\s*$/, category: 'blocked', action: 'error', message: 'rm -rf on system root directory', source: 'built-in' },
+  { id: 'block-mkfs-disk-device', pattern: /\bmkfs\b.*\/dev\/[sh]d/, category: 'blocked', action: 'error', message: 'Filesystem format on disk device', source: 'built-in' },
 ];
 
 const SAFE_MODE_BLOCKED: BuiltInPolicyEntry[] = [
   // Match rm with a single short flag containing both r and f (e.g. -rf, -fr, -Rf).
   // Uses a negative lookahead to skip long options like --reference.
-  { id: 'safe-block-rm-rf', pattern: /\brm\s+.*-(?![a-zA-Z]{4,})(?=[a-zA-Z]*[rR])[a-zA-Z]*[fF]/, category: 'dangerous', action: 'warn', message: 'Recursive force delete', suggestion: 'Ask the user to run this command manually in the browser terminal.', source: 'built-in' },
-  { id: 'safe-block-mkfs', pattern: /\bmkfs\b/, category: 'dangerous', action: 'warn', message: 'Filesystem format command', suggestion: 'Ask the user to run this command manually.', source: 'built-in' },
-  { id: 'safe-block-tail-follow', pattern: /\btail\s+.*-[a-zA-Z]*f/, category: 'streaming', action: 'warn', message: 'Streaming tail command will not terminate', suggestion: 'Use tail without -f, or use tail -n to get last N lines.', source: 'built-in' },
+  { id: 'safe-block-rm-rf', pattern: /\brm\s+.*-(?![a-zA-Z]{4,})(?=[a-zA-Z]*[rR])[a-zA-Z]*[fF]/, category: 'dangerous', action: 'warning', message: 'Recursive force delete', suggestion: 'Ask the user to run this command manually in the browser terminal.', source: 'built-in' },
+  { id: 'safe-block-mkfs', pattern: /\bmkfs\b/, category: 'dangerous', action: 'warning', message: 'Filesystem format command', suggestion: 'Ask the user to run this command manually.', source: 'built-in' },
+  { id: 'safe-block-tail-follow', pattern: /\btail\s+.*-[a-zA-Z]*f/, category: 'streaming', action: 'warning', message: 'Streaming tail command will not terminate', suggestion: 'Use tail without -f, or use tail -n to get last N lines.', source: 'built-in' },
   // Only match nohup at the start of a command, not inside quoted strings or comments.
-  { id: 'safe-block-nohup', pattern: /^\s*nohup\b/, category: 'long_running', action: 'warn', message: 'Background process via nohup', suggestion: 'Ask the user to run background processes manually in the browser terminal.', source: 'built-in' },
+  { id: 'safe-block-nohup', pattern: /^\s*nohup\b/, category: 'long_running', action: 'warning', message: 'Background process via nohup', suggestion: 'Ask the user to run background processes manually in the browser terminal.', source: 'built-in' },
   // Trailing & as background indicator: must not be inside quotes. Use negative lookbehind
   // to avoid matching & when preceded by a quote char on the same line.
-  { id: 'safe-block-background-ampersand', pattern: /(?<![`"'])\s*&\s*$/, category: 'long_running', action: 'warn', message: 'Background process (trailing &)', suggestion: 'Remove the trailing & or ask the user to run it manually.', source: 'built-in' },
-  { id: 'safe-block-watch', pattern: /\bwatch\s+/, category: 'streaming', action: 'warn', message: 'watch command runs indefinitely', suggestion: 'Run the underlying command once instead of using watch.', source: 'built-in' },
+  { id: 'safe-block-background-ampersand', pattern: /(?<![`"'])\s*&\s*$/, category: 'long_running', action: 'warning', message: 'Background process (trailing &)', suggestion: 'Remove the trailing & or ask the user to run it manually.', source: 'built-in' },
+  { id: 'safe-block-watch', pattern: /\bwatch\s+/, category: 'streaming', action: 'warning', message: 'watch command runs indefinitely', suggestion: 'Run the underlying command once instead of using watch.', source: 'built-in' },
 ];
 
 const INTERACTIVE_PATTERNS: BuiltInPolicyEntry[] = [
-  { id: 'safe-block-editors', pattern: /\b(vim?|nvim|emacs|nano|pico|joe|micro)\b/, category: 'interactive', action: 'warn', message: 'Interactive editor', suggestion: 'Use non-interactive alternatives (sed, echo >>, etc.) or ask the user to edit manually.', source: 'built-in' },
-  { id: 'safe-block-htop', pattern: /\bhtop\b/, category: 'interactive', action: 'warn', message: 'Interactive process viewer', suggestion: 'Use ps aux or top -bn1 for non-interactive process info.', source: 'built-in' },
-  { id: 'safe-block-top', pattern: /\btop\s*$/, category: 'interactive', action: 'warn', message: 'Interactive process viewer', suggestion: 'Use top -bn1 for a single snapshot.', source: 'built-in' },
-  { id: 'safe-block-nmtui', pattern: /\bnmtui\b/, category: 'interactive', action: 'warn', message: 'Interactive network config', suggestion: 'Use nmcli for non-interactive network configuration.', source: 'built-in' },
-  { id: 'safe-block-raspi-config', pattern: /\braspi-config\b/, category: 'interactive', action: 'warn', message: 'Interactive system config', suggestion: 'Ask the user to run raspi-config manually.', source: 'built-in' },
-  { id: 'safe-block-fish-config', pattern: /\bfish_config\b/, category: 'interactive', action: 'warn', message: 'Interactive shell config', suggestion: 'Use fish -c "set -U ..." for direct configuration.', source: 'built-in' },
-  { id: 'safe-block-less', pattern: /\bless\s/, category: 'interactive', action: 'warn', message: 'Interactive pager', suggestion: 'Use cat or head/tail instead.', source: 'built-in' },
-  { id: 'safe-block-more', pattern: /\bmore\s/, category: 'interactive', action: 'warn', message: 'Interactive pager', suggestion: 'Use cat or head/tail instead.', source: 'built-in' },
+  { id: 'safe-block-editors', pattern: /\b(vim?|nvim|emacs|nano|pico|joe|micro)\b/, category: 'interactive', action: 'warning', message: 'Interactive editor', suggestion: 'Use non-interactive alternatives (sed, echo >>, etc.) or ask the user to edit manually.', source: 'built-in' },
+  { id: 'safe-block-htop', pattern: /\bhtop\b/, category: 'interactive', action: 'warning', message: 'Interactive process viewer', suggestion: 'Use ps aux or top -bn1 for non-interactive process info.', source: 'built-in' },
+  { id: 'safe-block-top', pattern: /\btop\s*$/, category: 'interactive', action: 'warning', message: 'Interactive process viewer', suggestion: 'Use top -bn1 for a single snapshot.', source: 'built-in' },
+  { id: 'safe-block-nmtui', pattern: /\bnmtui\b/, category: 'interactive', action: 'warning', message: 'Interactive network config', suggestion: 'Use nmcli for non-interactive network configuration.', source: 'built-in' },
+  { id: 'safe-block-raspi-config', pattern: /\braspi-config\b/, category: 'interactive', action: 'warning', message: 'Interactive system config', suggestion: 'Ask the user to run raspi-config manually.', source: 'built-in' },
+  { id: 'safe-block-fish-config', pattern: /\bfish_config\b/, category: 'interactive', action: 'warning', message: 'Interactive shell config', suggestion: 'Use fish -c "set -U ..." for direct configuration.', source: 'built-in' },
+  { id: 'safe-block-less', pattern: /\bless\s/, category: 'interactive', action: 'warning', message: 'Interactive pager', suggestion: 'Use cat or head/tail instead.', source: 'built-in' },
+  { id: 'safe-block-more', pattern: /\bmore\s/, category: 'interactive', action: 'warning', message: 'Interactive pager', suggestion: 'Use cat or head/tail instead.', source: 'built-in' },
 ];
 
 function toValidationResult(entry: BuiltInPolicyEntry, allowed: boolean): ValidationResult {
   return {
     allowed,
     category: entry.category,
+    action: entry.action,
     ruleId: entry.id,
     source: entry.source,
     message: entry.message,
@@ -131,8 +134,42 @@ function customRuleApplies(rule: CustomPolicyRule, mode: OperationMode) {
   return rule.enabled && (rule.mode === 'both' || rule.mode === mode);
 }
 
+export function normalizePolicyRuleAction(action: PolicyRuleAction): 'error' | 'warning' | 'log' {
+  if (action === 'block') {
+    return 'error';
+  }
+  if (action === 'warn') {
+    return 'warning';
+  }
+  return action;
+}
+
+function ruleActionRank(action: PolicyRuleAction) {
+  switch (normalizePolicyRuleAction(action)) {
+    case 'error':
+      return 3;
+    case 'warning':
+      return 2;
+    case 'log':
+      return 1;
+  }
+}
+
+function sortCustomRulesForEvaluation(rules: CustomPolicyRule[]) {
+  return [...rules].sort((a, b) => {
+    const actionRankDiff = ruleActionRank(b.action) - ruleActionRank(a.action);
+    if (actionRankDiff !== 0) {
+      return actionRankDiff;
+    }
+    if (a.priority !== b.priority) {
+      return a.priority - b.priority;
+    }
+    return a.id.localeCompare(b.id);
+  });
+}
+
 function matchCustomRule(command: string, mode: OperationMode, rules: CustomPolicyRule[]) {
-  for (const rule of rules) {
+  for (const rule of sortCustomRulesForEvaluation(rules)) {
     if (!customRuleApplies(rule, mode)) {
       continue;
     }
@@ -153,9 +190,11 @@ export function validateCommand(command: string, mode: OperationMode, customRule
 
   const customMatch = matchCustomRule(command, mode, customRules);
   if (customMatch) {
+    const normalizedAction = normalizePolicyRuleAction(customMatch.action);
     return {
-      allowed: customMatch.action !== 'block',
+      allowed: normalizedAction !== 'error',
       category: customMatch.category,
+      action: normalizedAction,
       ruleId: customMatch.id,
       source: customMatch.source,
       message: customMatch.message,
@@ -187,7 +226,7 @@ export function validateCommand(command: string, mode: OperationMode, customRule
     }
   }
 
-  return { allowed: true, category: 'safe' };
+  return { allowed: true, category: 'safe', action: 'log' };
 }
 
 // --- Slow Command Detection ---

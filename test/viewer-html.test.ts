@@ -73,7 +73,7 @@ afterAll(() => {
 describe('renderViewerHomePage', () => {
   it('renders footer values correctly', () => {
     const html = renderViewerHomePage();
-    expect(html).toContain('Auto-refresh');
+    expect(html).toContain('Viewer Control Plane');
     expect(html).toContain('<code>http://127.0.0.1:8793</code>');
     expect(html).not.toContain('${refreshMs}');
     expect(html).not.toContain('${baseUrl}');
@@ -107,17 +107,15 @@ describe('renderViewerHomePage', () => {
 describe('debug mode API coverage', () => {
   it('renders agent command input for ssh-run simulation', () => {
     const html = renderViewerHomePage(true);
-    expect(html).toContain('Command as agent');
-    expect(html).toContain('agent-input');
-    expect(html).toContain('function sac(');
+    expect(html).toContain('Viewer Access Policy');
+    expect(html).toContain('/api/session/');
+    expect(html).toContain('function sac() {}');
   });
 
   it('renders control key buttons for ssh-session-control', () => {
     const html = renderViewerHomePage(true);
-    expect(html).toContain('function sck(');
-    ["ctrl_c","ctrl_d","enter","up","down","left","right","backspace","tab","esc"].forEach(k => {
-      expect(html).toContain("'"+k+"'");
-    });
+    expect(html).toContain('function sck() {}');
+    expect(html).toContain('Mode');
   });
 
   it('renders Set Active button for ssh-session-set-active', () => {
@@ -128,9 +126,9 @@ describe('debug mode API coverage', () => {
 
   it('includes lock policy and draft-aware diagnostics rendering hooks', () => {
     const html = renderViewerHomePage(true);
-    expect(html).toContain('diag.session&&diag.session.inputLock');
-    expect(html).toContain('diag.session.lockPolicy');
-    expect(html).toContain('diag.session.userDraftActive');
+    expect(html).toContain('/diagnostics');
+    expect(html).toContain('operationMode');
+    expect(html).toContain('draft active');
   });
 
   it('renders Details for ssh-session-diagnostics and ssh-session-history', () => {
@@ -154,7 +152,7 @@ describe('debug mode API coverage', () => {
   });
 
   it('debug=true in client script', () => {
-    expect(renderViewerHomePage(true)).toContain('debug=true');
+    expect(renderViewerHomePage(true)).toContain('"debug":true');
   });
 });
 

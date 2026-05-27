@@ -4,6 +4,7 @@ export type ViewerAttachSuffix = '' | '/input' | '/resize';
 export type ViewerHttpRoute =
   | { type: 'health' }
   | { type: 'sessions-api' }
+  | { type: 'viewer-access-policy-api' }
   | { type: 'attach-read'; kind: ViewerAttachKind; ref: string }
   | { type: 'attach-input'; kind: ViewerAttachKind; ref: string }
   | { type: 'attach-resize'; kind: ViewerAttachKind; ref: string }
@@ -11,6 +12,8 @@ export type ViewerHttpRoute =
   | { type: 'session-close'; sessionRef: string }
   | { type: 'session-diagnostics'; sessionRef: string }
   | { type: 'session-history'; sessionRef: string }
+  | { type: 'session-policy-api'; sessionRef: string }
+  | { type: 'session-mode-api'; sessionRef: string }
   | { type: 'session-agent-input'; sessionRef: string }
   | { type: 'session-control'; sessionRef: string }
   | { type: 'session-set-active'; sessionRef: string }
@@ -71,6 +74,10 @@ export function matchViewerHttpRoute(method: string | undefined, pathname: strin
     return { type: 'sessions-api' };
   }
 
+  if (pathname === '/api/viewer-access-policy') {
+    return { type: 'viewer-access-policy-api' };
+  }
+
   for (const kind of ['session', 'binding'] as const) {
     if (normalizedMethod === 'GET') {
       const attachReadRef = tryMatchAttachRoute(pathname, kind, '');
@@ -100,6 +107,10 @@ export function matchViewerHttpRoute(method: string | undefined, pathname: strin
       return { type: 'session-diagnostics', sessionRef: rest.slice(0, -12) };
     if (rest.endsWith('/history'))
       return { type: 'session-history', sessionRef: rest.slice(0, -8) };
+    if (rest.endsWith('/policy'))
+      return { type: 'session-policy-api', sessionRef: rest.slice(0, -7) };
+    if (rest.endsWith('/mode'))
+      return { type: 'session-mode-api', sessionRef: rest.slice(0, -5) };
     if (rest.endsWith('/agent-input') && normalizedMethod === 'POST')
       return { type: 'session-agent-input', sessionRef: rest.slice(0, -12) };
     if (rest.endsWith('/control') && normalizedMethod === 'POST')

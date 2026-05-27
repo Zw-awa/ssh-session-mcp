@@ -347,10 +347,18 @@ Use [AGENT.md](AGENT.md) when you want the AI to install, inspect config, connec
 
 | Mode | Behavior |
 |------|----------|
-| `safe` | Default. Automatically blocks obviously dangerous, interactive, or never-ending commands. |
-| `full` | Relaxes the guardrails for advanced use, while still blocking a small set of clearly destructive abuse cases. |
+| `safe` | Default per session. Automatically blocks obviously dangerous, interactive, or never-ending commands. |
+| `full` | Per session. Relaxes the guardrails for advanced use, while still blocking a small set of clearly destructive abuse cases. |
 
-The default rule set can be customized if needed.
+Each session now owns its own `safe` / `full` mode. Switching one browser terminal to `full` does not change other sessions.
+
+The default rule set can be customized if needed. Custom rules now support:
+
+- `error`: block the command
+- `warning`: allow but surface a warning
+- `log`: allow and annotate only
+
+Rule precedence is `error > warning > log`, and within the same level, earlier rules win.
 
 ## Lock Policy
 
@@ -426,8 +434,8 @@ Default rule library management for operators:
 
 ```bash
 ssh-session-mcp-config policy list --scope=merged
-ssh-session-mcp-config policy set block-kubectl-delete --pattern="\\bkubectl\\s+delete\\b" --category=dangerous --action=block --message="kubectl delete is blocked in safe mode"
-ssh-session-mcp-config policy remove block-kubectl-delete
+ssh-session-mcp-config policy set error-kubectl-delete --pattern="\\bkubectl\\s+delete\\b" --category=dangerous --action=error --priority=0 --message="kubectl delete is blocked in safe mode"
+ssh-session-mcp-config policy remove error-kubectl-delete
 ```
 
 Equivalent repo-local commands also exist:
@@ -455,6 +463,7 @@ Key environment variables:
 | `SSH_MCP_CONFIG` | Explicit config file path | auto-discovery |
 | `VIEWER_HOST` | Viewer bind host | `127.0.0.1` |
 | `VIEWER_PORT` | Viewer port or `auto` | `0` unless configured |
+| `VIEWER_ACCESS_MODE` | Viewer IP filter mode | config-driven |
 | `SSH_MCP_MODE` | `safe` or `full` | `safe` |
 | `SSH_MCP_LOCAL` | Launch a local shell instead of SSH | `false` |
 | `SSH_MCP_DEBUG` | Enable debug browser actions | `false` |
@@ -476,6 +485,7 @@ Use these variables according to your installation path:
 | `SSH_MCP_INSTANCE` | Multi-agent / multi-client isolation | `agent-a` | Use different values when two agents should not share runtime state. |
 | `VIEWER_HOST` | Custom viewer bind | `127.0.0.1`, `0.0.0.0` | Use `0.0.0.0` inside containers; keep `127.0.0.1` on normal host installs unless you need remote access. |
 | `VIEWER_PORT` | Viewer enabled | `auto`, `0`, `8793` | `auto` picks a free port, `0` disables the viewer, fixed ports are best for Docker. |
+| `VIEWER_ACCESS_MODE` | Viewer access control mode | `allow_all`, `allowlist`, `denylist` | Usually edited in the viewer home page. Keep `allow_all` only when you stay on localhost. |
 | `AUTO_OPEN_TERMINAL` | Auto-open viewer tab | `true`, `false` | Usually `false` in containers. |
 | `SSH_MCP_MODE` | Runtime safety mode | `safe`, `full` | `safe` is the recommended default. |
 | `SSH_MCP_LOCAL` | Local demo mode | `true`, `false` | Starts a local shell instead of SSH. |

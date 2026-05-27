@@ -79,6 +79,7 @@ describe('viewer UI contracts', () => {
       footerLabel: 'Session ID',
       footerValue: 'demo-session',
       meta: 'remote-user@DEVICE_A_HOST:22',
+      operationMode: 'safe',
       subtitle: 'Shared SSH Terminal',
       title: 'DEVICE_A_LABEL',
     });
@@ -87,7 +88,7 @@ describe('viewer UI contracts', () => {
     expect(html).toContain("function getInputActor()");
     expect(html).toContain("if (lockMode === 'common')");
     expect(html).toContain("sendJson({ type: 'lock', lock: 'none' });");
-    expect(html).toContain('<option value="auto">auto</option>');
+    expect(html).toContain('<option value="auto" selected>auto</option>');
     expect(html).toContain("sendJson({ type: 'draft_state', active: active });");
     expect(html).toContain('function updateLockPolicy(policy)');
     expect(html).toContain("if (s.lockPolicy) { updateLockPolicy(s.lockPolicy); }");
@@ -122,6 +123,7 @@ describe('viewer UI contracts', () => {
       footerLabel: 'Session ID',
       footerValue: 'demo-session',
       meta: 'remote-user@DEVICE_A_HOST:22',
+      operationMode: 'safe',
       subtitle: 'Shared SSH Terminal',
       title: 'DEVICE_A_LABEL',
     });

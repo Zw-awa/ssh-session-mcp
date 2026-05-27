@@ -10,6 +10,7 @@ import {
   sweepSessions,
   closeAllSessions,
   loadViewerProcessState,
+  loadViewerAccessPolicy,
   removeServerInfoState,
   logServerEvent,
   DEFAULT_IDLE_SWEEP_MS,
@@ -42,6 +43,7 @@ registerTools();
 
 async function main() {
   await loadViewerProcessState();
+  await loadViewerAccessPolicy();
   await startViewerServer();
 
   const transport = new StdioServerTransport();
@@ -63,6 +65,7 @@ async function main() {
         host: 'localhost',
         idleTimeoutMs: DEFAULT_TIMEOUT,
         metadata,
+        operationMode: 'safe',
         port: 0,
         policyRules: buildConfiguredSessionPolicyRules(),
         rows: DEFAULT_ROWS,

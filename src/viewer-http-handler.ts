@@ -16,7 +16,9 @@ import {
   buildConfiguredSessionPolicyRules,
   DEFAULT_COLS, DEFAULT_ROWS, DEFAULT_TERM,
   DEFAULT_TIMEOUT, DEFAULT_CLOSED_RETENTION_MS,
-  type SessionWriteRecord, McpError, ErrorCode, buildUserLockMessage,
+  type SessionWriteRecord, type ViewerAccessPolicy, McpError, ErrorCode, buildUserLockMessage,
+  viewerAccessPolicy, setViewerAccessPolicy, saveViewerAccessPolicy,
+  validateCommand, detectTerminalMode, logServerEvent,
 } from './server-state.js';
 import {
   renderViewerHomePage,
@@ -137,12 +139,21 @@ function buildSessionsPayload() {
     activeSessionRef: refreshActiveSession()?.metadata.sessionRef || null,
     viewerBaseUrl: getViewerBaseUrl(),
     viewerPort: actualViewerPort || undefined,
+    viewerAccessPolicy,
     sessions: [...sessions.values()]
       .map(session => ({
         ...session.summary(),
         viewerUrl: buildViewerSessionUrl(session),
       }))
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)),
+  };
+}
+
+function buildViewerAccessPolicyPayload() {
+  return {
+    viewerBaseUrl: getViewerBaseUrl(),
+    viewerPort: actualViewerPort || undefined,
+    policy: viewerAccessPolicy,
   };
 }
 
@@ -212,7 +223,7 @@ async function handleAttachInputRequest(
       throw new McpError(ErrorCode.InvalidRequest, 'Input locked by AI agent. Switch the terminal back to common or user mode before typing here.');
     }
 
-    const records: SessionWriteRecord[] = [];
+      const records: SessionWriteRecord[] = [];
 
     if (Array.isArray(body.records)) {
       for (const value of body.records) {
@@ -234,6 +245,9 @@ async function handleAttachInputRequest(
       });
     }
 
+    if (typeof (session as typeof session & { noteUserDraftDelta?: (data: string) => void }).noteUserDraftDelta === 'function') {
+      session.noteUserDraftDelta(rawData);
+    }
     session.writeRaw(rawData, records);
     logSessionEvent(session.sessionId, 'session.input', {
       actor: records[0]?.actor || 'user',
@@ -245,6 +259,112 @@ async function handleAttachInputRequest(
       recordedEvents: records.length,
       nextOutputOffset: session.currentBufferEnd(),
       nextEventSeq: session.currentEventEnd(),
+    });
+  } catch (error) {
+    writers.writeError(400, error);
+  }
+}
+
+async function handleViewerAccessPolicyRequest(request: IncomingMessage, writers: ViewerResponseWriters) {
+  if ((request.method || 'GET').toUpperCase() === 'GET') {
+    writers.writeJson(200, buildViewerAccessPolicyPayload());
+    return;
+  }
+
+  try {
+    const body = await readJsonRequestBody(request);
+    const mode = body.mode === 'allowlist' || body.mode === 'denylist' ? body.mode : 'allow_all';
+    const ipAllowlist = Array.isArray(body.ipAllowlist) ? body.ipAllowlist.map(value => String(value)) : [];
+    const ipDenylist = Array.isArray(body.ipDenylist) ? body.ipDenylist.map(value => String(value)) : [];
+    const allowedOrigins = Array.isArray(body.allowedOrigins) ? body.allowedOrigins.map(value => String(value)) : [];
+    const nextPolicy: ViewerAccessPolicy = {
+      mode,
+      ipAllowlist,
+      ipDenylist,
+      allowedOrigins,
+      updatedAt: new Date().toISOString(),
+    };
+    setViewerAccessPolicy(nextPolicy);
+    await saveViewerAccessPolicy();
+    writers.writeJson(200, buildViewerAccessPolicyPayload());
+  } catch (error) {
+    writers.writeError(400, error);
+  }
+}
+
+async function handleSessionPolicyRequest(sessionRef: string, request: IncomingMessage, writers: ViewerResponseWriters) {
+  try {
+    const session = resolveSession(sessionRef);
+    if ((request.method || 'GET').toUpperCase() === 'GET') {
+      writers.writeJson(200, {
+        session: session.summary(),
+        inheritedRules: session.getDefaultPolicyRules(),
+        activeRules: session.getPolicyRules(),
+        sessionOverrideRules: session.getSessionOverrideRules(),
+      });
+      return;
+    }
+
+    const body = await readJsonRequestBody(request);
+    if (!Array.isArray(body.rules)) {
+      throw new McpError(ErrorCode.InvalidRequest, 'rules must be an array');
+    }
+
+    session.resetPolicyRules(session.getDefaultPolicyRules());
+    for (const [index, value] of body.rules.entries()) {
+      if (!value || typeof value !== 'object') {
+        continue;
+      }
+      const candidate = value as Record<string, unknown>;
+      const id = sanitizeActor(typeof candidate.id === 'string' ? candidate.id : undefined, '');
+      if (!id) {
+        continue;
+      }
+      session.upsertPolicyRule({
+        id,
+        enabled: candidate.enabled !== false,
+        pattern: typeof candidate.pattern === 'string' ? candidate.pattern : '',
+        flags: typeof candidate.flags === 'string' ? candidate.flags : '',
+        priority: typeof candidate.priority === 'number' ? candidate.priority : index,
+        mode: candidate.mode === 'full' || candidate.mode === 'both' ? candidate.mode : 'safe',
+        category: candidate.category === 'blocked' || candidate.category === 'interactive' || candidate.category === 'streaming' || candidate.category === 'long_running'
+          ? candidate.category
+          : 'dangerous',
+        action: candidate.action === 'warning' || candidate.action === 'log' ? candidate.action : 'error',
+        message: typeof candidate.message === 'string' ? candidate.message : '',
+        suggestion: typeof candidate.suggestion === 'string' ? candidate.suggestion : undefined,
+        source: 'session',
+      } as any);
+    }
+
+    writers.writeJson(200, {
+      session: session.summary(),
+      inheritedRules: session.getDefaultPolicyRules(),
+      activeRules: session.getPolicyRules(),
+      sessionOverrideRules: session.getSessionOverrideRules(),
+    });
+  } catch (error) {
+    writers.writeError(400, error);
+  }
+}
+
+async function handleSessionModeRequest(sessionRef: string, request: IncomingMessage, writers: ViewerResponseWriters) {
+  try {
+    const session = resolveSession(sessionRef);
+    if ((request.method || 'GET').toUpperCase() === 'GET') {
+      writers.writeJson(200, {
+        session: session.summary(),
+        operationMode: session.operationMode,
+      });
+      return;
+    }
+
+    const body = await readJsonRequestBody(request);
+    const nextMode = body.mode === 'full' ? 'full' : 'safe';
+    session.setOperationMode(nextMode);
+    writers.writeJson(200, {
+      session: session.summary(),
+      operationMode: session.operationMode,
     });
   } catch (error) {
     writers.writeError(400, error);
@@ -316,6 +436,28 @@ async function handleSessionAgentInputRequest(sessionRef: string, writers: Viewe
     const cmd = typeof body.command === 'string' ? body.command.trim() : '';
     if (!cmd) { writers.writeError(400, new McpError(ErrorCode.InvalidRequest, 'command required')); return; }
     if (s.effectiveInputLock() === 'user') { writers.writeError(403, new McpError(ErrorCode.InvalidRequest, buildUserLockMessage(s, 'send commands'))); return; }
+    const validation = validateCommand(cmd, s.operationMode, s.getPolicyRules());
+    if (!validation.allowed) {
+      logSessionEvent(s.sessionId, 'command.blocked', {
+        actor: 'debug-agent',
+        category: validation.category,
+        action: validation.action,
+        ruleId: validation.ruleId,
+        ruleSource: validation.source,
+        operationMode: s.operationMode,
+      });
+      writers.writeError(403, new McpError(ErrorCode.InvalidRequest, validation.message || 'command blocked by policy'));
+      return;
+    }
+    const terminalMode = detectTerminalMode(s.buffer.slice(-2000));
+    if (terminalMode === 'password_prompt') {
+      writers.writeError(403, new McpError(ErrorCode.InvalidRequest, 'terminal is at a password prompt'));
+      return;
+    }
+    if (s.operationMode === 'safe' && (terminalMode === 'editor' || terminalMode === 'pager')) {
+      writers.writeError(403, new McpError(ErrorCode.InvalidRequest, `terminal is in ${terminalMode} mode`));
+      return;
+    }
     s.setAgentInputActive(true);
     s.write(cmd + '\n', 'agent');
     s.setAgentInputActive(false);
@@ -377,6 +519,9 @@ export async function handleViewerHttpRequest(request: IncomingMessage, response
     case 'sessions-api':
       writers.writeJson(200, buildSessionsPayload());
       return;
+    case 'viewer-access-policy-api':
+      await handleViewerAccessPolicyRequest(request, writers);
+      return;
     case 'attach-read':
       await handleAttachReadRequest(request, route.kind, route.ref, url, writers);
       return;
@@ -415,6 +560,12 @@ export async function handleViewerHttpRequest(request: IncomingMessage, response
       return;
     case 'session-history':
       handleSessionHistoryRequest(route.sessionRef, url, writers);
+      return;
+    case 'session-policy-api':
+      await handleSessionPolicyRequest(route.sessionRef, request, writers);
+      return;
+    case 'session-mode-api':
+      await handleSessionModeRequest(route.sessionRef, request, writers);
       return;
     case 'session-agent-input':
       await handleSessionAgentInputRequest(route.sessionRef, writers, request);

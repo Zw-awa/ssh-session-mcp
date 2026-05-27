@@ -127,6 +127,7 @@ export {
   type PolicyRuleMode,
   validateCommand,
   assertValidPolicyRegex,
+  normalizePolicyRuleAction,
   detectTerminalMode,
   isKnownSlowCommand,
 } from './validation.js';
@@ -168,6 +169,16 @@ export interface ViewerBindingState {
   user: string;
   sessionId: string;
   scope: ViewerSingletonScope;
+  updatedAt: string;
+}
+
+export type ViewerAccessMode = 'allow_all' | 'allowlist' | 'denylist';
+
+export interface ViewerAccessPolicy {
+  mode: ViewerAccessMode;
+  ipAllowlist: string[];
+  ipDenylist: string[];
+  allowedOrigins: string[];
   updatedAt: string;
 }
 
@@ -337,6 +348,7 @@ export let OPERATION_MODE: OperationMode = (
 export function setOperationMode(mode: OperationMode) { OPERATION_MODE = mode; }
 export const USE_SENTINEL_MARKER = (argvConfig.useMarker || process.env.SSH_MCP_USE_MARKER || 'true') !== 'false';
 export const VIEWER_STATE_FILE = RUNTIME_PATHS.viewerStateFile;
+export const VIEWER_ACCESS_FILE = RUNTIME_PATHS.viewerAccessFile;
 export const VIEWER_CLI_ENTRY_PATH = fileURLToPath(new URL('./viewer-cli.js', import.meta.url));
 
 // ── Mutable state ────────────────────────────────────────────────────────────
@@ -349,12 +361,20 @@ export let viewerWss: WebSocketServer | undefined;
 export let viewerStateLoaded = false;
 export let activeSessionId: string | undefined;
 export let actualViewerPort = 0;
+export let viewerAccessPolicy: ViewerAccessPolicy = {
+  mode: (CONFIG_DEFAULTS?.viewerAccessMode || 'allow_all') as ViewerAccessMode,
+  ipAllowlist: [...(CONFIG_DEFAULTS?.viewerIpAllowlist || [])],
+  ipDenylist: [...(CONFIG_DEFAULTS?.viewerIpDenylist || [])],
+  allowedOrigins: [...(CONFIG_DEFAULTS?.viewerAllowedOrigins || [])],
+  updatedAt: new Date().toISOString(),
+};
 export const logger = new SessionLogger(LOG_CONFIG);
 
 export function setViewerServer(s: HttpServer | undefined) { viewerServer = s; }
 export function setViewerWss(w: WebSocketServer | undefined) { viewerWss = w; }
 export function setViewerStateLoaded(v: boolean) { viewerStateLoaded = v; }
 export function setActualViewerPort(p: number) { actualViewerPort = p; }
+export function setViewerAccessPolicy(policy: ViewerAccessPolicy) { viewerAccessPolicy = policy; }
 
 // ── Config validation ────────────────────────────────────────────────────────
 
@@ -459,6 +479,54 @@ export function buildUserLockEvidence(session: SSHSession) {
   ];
 }
 
+function normalizeIpCandidate(value: string | undefined) {
+  if (!value) {
+    return undefined;
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+
+  if (trimmed.startsWith('::ffff:')) {
+    return trimmed.slice(7);
+  }
+
+  return trimmed;
+}
+
+export function viewerRequestAllowed(remoteAddress: string | undefined) {
+  const normalized = normalizeIpCandidate(remoteAddress);
+  const mode = viewerAccessPolicy.mode;
+  const inAllowlist = normalized ? viewerAccessPolicy.ipAllowlist.includes(normalized) : false;
+  const inDenylist = normalized ? viewerAccessPolicy.ipDenylist.includes(normalized) : false;
+
+  if (mode === 'allowlist') {
+    return inAllowlist;
+  }
+
+  if (mode === 'denylist') {
+    return !inDenylist;
+  }
+
+  return true;
+}
+
+export function viewerOriginAllowed(origin: string | undefined) {
+  const allowedOrigins = viewerAccessPolicy.allowedOrigins;
+  if (allowedOrigins.length === 0) {
+    return true;
+  }
+
+  const normalizedOrigin = sanitizeOptionalText(origin);
+  if (!normalizedOrigin) {
+    return false;
+  }
+
+  return allowedOrigins.includes(normalizedOrigin);
+}
+
 export function pickMostRecentOpenSession() {
   return [...sessions.values()]
     .filter(session => !session.closed)
@@ -542,10 +610,45 @@ export function buildConfiguredSessionPolicyRules(): CustomPolicyRule[] {
     envPath: process.env.SSH_MCP_CONFIG,
   });
 
-  return (latestProfiles.config?.policyRules || []).map(rule => ({
+  return (latestProfiles.config?.policyRules || []).map((rule, index) => ({
     ...rule,
+    priority: Number.isInteger(rule.priority) ? rule.priority : index,
     source: 'default' as const,
   }));
+}
+
+function normalizeViewerAccessList(values: string[] | undefined) {
+  return [...new Set((values || []).map(value => value.trim()).filter(value => value.length > 0))];
+}
+
+function normalizeViewerAccessPolicy(value: Partial<ViewerAccessPolicy> | undefined): ViewerAccessPolicy {
+  return {
+    mode: value?.mode === 'allowlist' || value?.mode === 'denylist' ? value.mode : 'allow_all',
+    ipAllowlist: normalizeViewerAccessList(value?.ipAllowlist),
+    ipDenylist: normalizeViewerAccessList(value?.ipDenylist),
+    allowedOrigins: normalizeViewerAccessList(value?.allowedOrigins),
+    updatedAt: value?.updatedAt || new Date().toISOString(),
+  };
+}
+
+export async function saveViewerAccessPolicy() {
+  await fs.mkdir(RUNTIME_PATHS.instanceDir, { recursive: true });
+  await fs.writeFile(VIEWER_ACCESS_FILE, JSON.stringify(viewerAccessPolicy, null, 2), 'utf8');
+}
+
+export async function loadViewerAccessPolicy() {
+  try {
+    const raw = await fs.readFile(VIEWER_ACCESS_FILE, 'utf8');
+    const parsed = JSON.parse(raw) as Partial<ViewerAccessPolicy>;
+    viewerAccessPolicy = normalizeViewerAccessPolicy(parsed);
+  } catch {
+    viewerAccessPolicy = normalizeViewerAccessPolicy({
+      mode: (CONFIG_DEFAULTS?.viewerAccessMode || 'allow_all') as ViewerAccessMode,
+      ipAllowlist: CONFIG_DEFAULTS?.viewerIpAllowlist || [],
+      ipDenylist: CONFIG_DEFAULTS?.viewerIpDenylist || [],
+      allowedOrigins: CONFIG_DEFAULTS?.viewerAllowedOrigins || [],
+    });
+  }
 }
 
 export function resolveProfileOrThrow(deviceId: string) {
@@ -1257,6 +1360,7 @@ export async function openSSHSession(options: {
   sessionName?: string;
   term: string;
   user: string;
+  operationMode?: OperationMode;
 }) {
   // ── Local debug mode: spawn a local shell instead of connecting via SSH ──
   if (LOCAL_MODE) {
@@ -1279,6 +1383,7 @@ export async function openSSHSession(options: {
       connection as unknown as SSHConnection,
       stream as unknown as any,
     );
+    session.setOperationMode(options.operationMode || OPERATION_MODE);
     session.setInheritedPolicyRules(options.policyRules || []);
     return session;
   }
@@ -1333,6 +1438,7 @@ export async function openSSHSession(options: {
         connection,
         stream,
       );
+      session.setOperationMode(options.operationMode || OPERATION_MODE);
       session.setInheritedPolicyRules(options.policyRules || []);
       resolve(session);
     });

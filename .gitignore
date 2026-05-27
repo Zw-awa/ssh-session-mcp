@@ -120,12 +120,6 @@ dist
 .yarn/install-state.gz
 .pnp.*
 
-# IDE files
-.vscode/
-.idea/
-*.swp
-*.swo
-
 # OS generated files
 .DS_Store
 .DS_Store?
@@ -161,11 +155,6 @@ test-output/
 local.config.json
 dev.config.json
 
-# Local design drafts
-docs/private/
-docs/drafts/
-docs/**/*.local.md
-
 .env.*
 !.env.example
 
@@ -187,10 +176,6 @@ local.*
 package-lock.json.*
 yarn.lock.*
 
-logs/
-.claude/
-.serial_mcp/
-
 # Release documentation (auto-generated)
 releases/
 Promotion/
@@ -206,3 +191,4 @@ docs/*
 !docs/examples/
 !docs/examples/**
 releases/
+.npmignore

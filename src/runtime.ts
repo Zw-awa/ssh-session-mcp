@@ -8,6 +8,7 @@ export interface RuntimePaths {
   instanceDir: string;
   logDir: string;
   serverInfoFile: string;
+  viewerAccessFile: string;
   viewerStateFile: string;
 }
 
@@ -73,6 +74,7 @@ export function resolveRuntimePaths(instanceId: string): RuntimePaths {
     instanceDir,
     logDir: join(instanceDir, 'logs'),
     serverInfoFile: join(instanceDir, 'server-info.json'),
+    viewerAccessFile: join(instanceDir, 'viewer-access.json'),
     viewerStateFile: join(instanceDir, '.viewer-processes.json'),
   };
 }

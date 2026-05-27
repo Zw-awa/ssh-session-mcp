@@ -4,14 +4,13 @@ import type { ControlKey } from './shared.js';
 import {
   viewerWss,
   viewerClientSessions,
+  sessions,
   resolveAttachTarget,
   sanitizeActor,
   sanitizePositiveInt,
   logSessionEvent,
   logServerEvent,
   broadcastLock,
-  OPERATION_MODE,
-  setOperationMode,
   type OperationMode,
   type SessionWriteRecord,
   SSHSession,
@@ -101,7 +100,12 @@ function broadcastModeChange(sessionId: string) {
     return;
   }
 
-  const modeMsg = JSON.stringify({ type: 'mode', mode: OPERATION_MODE });
+  let session: SSHSession;
+  session = sessions.get(sessionId) as SSHSession;
+  if (!session) {
+    return;
+  }
+  const modeMsg = JSON.stringify({ type: 'mode', mode: session.operationMode });
   for (const client of viewerWss.clients) {
     if (client.readyState !== WebSocket.OPEN) {
       continue;
@@ -117,7 +121,7 @@ function broadcastModeChange(sessionId: string) {
     }
   }
 
-  logServerEvent('operation_mode.changed', { mode: OPERATION_MODE, sessionId });
+  logServerEvent('operation_mode.changed', { mode: session.operationMode, sessionId });
 }
 
 function sendLockRejected(ws: WebSocket, lock: 'none' | 'agent' | 'user', message: string) {
@@ -175,7 +179,11 @@ function handleViewerSocketMessage(ws: WebSocket, session: SSHSession, viewerId:
     if (msg.type === 'mode' && typeof msg.mode === 'string') {
       const validModes = ['safe', 'full'];
       if (validModes.includes(msg.mode)) {
-        setOperationMode(msg.mode as OperationMode);
+        if (typeof (session as SSHSession & { setOperationMode?: (mode: OperationMode) => void }).setOperationMode === 'function') {
+          session.setOperationMode(msg.mode as OperationMode);
+        } else {
+          (session as SSHSession & { operationMode?: OperationMode }).operationMode = msg.mode as OperationMode;
+        }
         broadcastModeChange(session.sessionId);
       }
       return;
@@ -189,6 +197,9 @@ function handleViewerSocketMessage(ws: WebSocket, session: SSHSession, viewerId:
       }
 
       const records = collectInputRecords(msg.records);
+      if (typeof (session as SSHSession & { noteUserDraftDelta?: (data: string) => void }).noteUserDraftDelta === 'function') {
+        session.noteUserDraftDelta(msg.data);
+      }
       session.writeRaw(msg.data, records);
       logSessionEvent(session.sessionId, 'session.input', {
         actor: records[0]?.actor || 'user',

@@ -33,7 +33,7 @@ function printUsage() {
   ssh-session-mcp config defaults unset <key> [--scope=workspace|global] [--config=path]
   ssh-session-mcp config policy list [--scope=workspace|global|merged] [--config=path]
   ssh-session-mcp config policy get <id> [--scope=workspace|global|merged] [--config=path]
-  ssh-session-mcp config policy set <id> --pattern=<regex> --category=<category> --action=<block|warn> --message=<text> [--mode=safe|full|both] [--flags=gi] [--suggestion=...] [--enabled=true|false] [--scope=workspace|global] [--config=path]
+  ssh-session-mcp config policy set <id> --pattern=<regex> --category=<category> --action=<error|warning|log> --message=<text> [--mode=safe|full|both] [--flags=gi] [--priority=1000] [--suggestion=...] [--enabled=true|false] [--scope=workspace|global] [--config=path]
   ssh-session-mcp config policy remove <id> [--scope=workspace|global] [--config=path]
 `);
 }
@@ -190,6 +190,16 @@ function parseRuntimeDefaultValue(key: string, raw: string): RuntimeDefaults[key
     case 'logDir':
     case 'viewerHost':
       return raw;
+    case 'viewerAccessMode':
+      if (raw === 'allow_all' || raw === 'allowlist' || raw === 'denylist') return raw;
+      break;
+    case 'viewerAllowedOrigins':
+    case 'viewerIpAllowlist':
+    case 'viewerIpDenylist':
+      return raw
+        .split(',')
+        .map(part => part.trim())
+        .filter(part => part.length > 0);
     case 'logMode':
       if (raw === 'off' || raw === 'meta') return raw;
       break;
@@ -244,7 +254,9 @@ function parsePolicyRuleCategory(raw: string | undefined) {
 }
 
 function parsePolicyRuleAction(raw: string | undefined) {
-  if (raw === 'block' || raw === 'warn') {
+  if (raw === 'block') return 'error';
+  if (raw === 'warn') return 'warning';
+  if (raw === 'error' || raw === 'warning' || raw === 'log') {
     return raw;
   }
   fail(`Invalid policy action: ${raw}`);
@@ -278,6 +290,7 @@ function buildPolicyRuleFromFlags(existing: PolicyRuleConfig | undefined, id: st
       : existing?.enabled ?? true,
     pattern,
     flags: args.getFlag('flags') ?? existing?.flags ?? '',
+    priority: parseOptionalNonNegativeInt(args.getFlag('priority'), 'priority') ?? existing?.priority ?? 1000,
     mode: parsePolicyRuleMode(args.getFlag('mode')) ?? existing?.mode ?? 'safe',
     category: parsePolicyRuleCategory(category),
     action: parsePolicyRuleAction(action),

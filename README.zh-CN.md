@@ -364,6 +364,23 @@ ssh-quick-connect -> ssh-run -> 看输出 -> 需要时查 ssh-command-status -> 
 
 当终端当前不允许 agent 输入时，`ssh-run`、`ssh-session-send` 和 `ssh-session-control` 会返回 blocked，而不会强行把输入打进 PTY。
 
+## 运行模式
+
+| 模式 | 行为 |
+|------|------|
+| `safe` | 每个会话默认独立生效。自动阻止明显危险、交互式或不会结束的命令。 |
+| `full` | 只对当前会话生效。放宽大部分保护，但仍保留少量硬阻断。 |
+
+现在 `safe` / `full` 是会话级的。你在某个 browser terminal 里切到 `full`，不会影响其他会话。
+
+自定义规则现在支持：
+
+- `error`：阻止命令
+- `warning`：允许执行，但附带警告
+- `log`：允许执行，只做标注
+
+优先级顺序是 `error > warning > log`，同级里排在前面的规则优先命中。
+
 ## MCP 工具
 
 ### 日常最常用的工具
@@ -425,8 +442,8 @@ ssh-session-mcp-ctl cleanup
 
 ```bash
 ssh-session-mcp-config policy list --scope=merged
-ssh-session-mcp-config policy set block-kubectl-delete --pattern="\\bkubectl\\s+delete\\b" --category=dangerous --action=block --message="safe 模式下禁止 kubectl delete"
-ssh-session-mcp-config policy remove block-kubectl-delete
+ssh-session-mcp-config policy set error-kubectl-delete --pattern="\\bkubectl\\s+delete\\b" --category=dangerous --action=error --priority=0 --message="safe 模式下禁止 kubectl delete"
+ssh-session-mcp-config policy remove error-kubectl-delete
 ```
 
 仓库内等价命令也保留着：
@@ -454,6 +471,7 @@ npm run cleanup
 | `SSH_MCP_CONFIG` | 显式配置文件路径 | 自动发现 |
 | `VIEWER_HOST` | Viewer 绑定 host | `127.0.0.1` |
 | `VIEWER_PORT` | Viewer 端口或 `auto` | 未配置时为 `0` |
+| `VIEWER_ACCESS_MODE` | Viewer IP 访问控制模式 | 配置文件或 UI |
 | `SSH_MCP_MODE` | `safe` 或 `full` | `safe` |
 | `SSH_MCP_LOCAL` | 用本地 shell 替代 SSH | `false` |
 | `SSH_MCP_DEBUG` | 开启浏览器 debug 动作 | `false` |
@@ -475,6 +493,7 @@ npm run cleanup
 | `SSH_MCP_INSTANCE` | 多 agent / 多客户端隔离时 | `agent-a` | 当两个 agent 不应该共享运行时状态时，必须用不同值。 |
 | `VIEWER_HOST` | 自定义 viewer 绑定地址时 | `127.0.0.1`, `0.0.0.0` | 容器里通常用 `0.0.0.0`；普通宿主机默认保持 `127.0.0.1`。 |
 | `VIEWER_PORT` | 需要 viewer 时 | `auto`, `0`, `8793` | `auto` 自动找空闲端口，`0` 关闭 viewer，固定端口更适合 Docker。 |
+| `VIEWER_ACCESS_MODE` | Viewer 访问控制模式 | `allow_all`, `allowlist`, `denylist` | 一般建议在 viewer 首页直接改；若暴露到远端，至少使用 allowlist 或 denylist。 |
 | `AUTO_OPEN_TERMINAL` | 自动打开 viewer 页面时 | `true`, `false` | 容器里通常建议 `false`。 |
 | `SSH_MCP_MODE` | 运行时安全模式 | `safe`, `full` | 默认推荐 `safe`。 |
 | `SSH_MCP_LOCAL` | 本地演示模式 | `true`, `false` | 启动本地 shell，而不是 SSH。 |

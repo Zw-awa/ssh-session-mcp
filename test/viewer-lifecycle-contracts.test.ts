@@ -66,7 +66,7 @@ describe('viewer lifecycle contracts', () => {
     const html = renderViewerHomePage();
 
     expect(html).toContain('fetch("/api/sessions")');
-    expect(html).toContain('function sr()');
+    expect(html).toContain('scheduleRefresh()');
     expect(html).toContain("window.addEventListener(\"pagehide\"");
   });
 
@@ -97,6 +97,7 @@ describe('viewer lifecycle contracts', () => {
       footerLabel: 'Session ID',
       footerValue: 'demo-session',
       meta: 'remote-user@DEVICE_A_HOST:22',
+      operationMode: 'safe',
       subtitle: 'Shared SSH Terminal',
       title: 'DEVICE_A_LABEL',
     });

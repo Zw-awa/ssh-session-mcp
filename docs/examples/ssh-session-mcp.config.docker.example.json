@@ -2,6 +2,12 @@
   "defaults": {
     "viewerHost": "0.0.0.0",
     "viewerPort": 8793,
+    "viewerAccessMode": "allowlist",
+    "viewerIpAllowlist": [
+      "127.0.0.1"
+    ],
+    "viewerIpDenylist": [],
+    "viewerAllowedOrigins": [],
     "viewerMode": "browser",
     "viewerSingletonScope": "connection",
     "autoOpenTerminal": false,
@@ -9,6 +15,18 @@
     "logMode": "meta"
   },
   "defaultDevice": "DEVICE_A_ID",
+  "policyRules": [
+    {
+      "id": "warning-tail-follow",
+      "pattern": "\\btail\\s+.*-[a-zA-Z]*f",
+      "priority": 10,
+      "mode": "both",
+      "category": "streaming",
+      "action": "warning",
+      "message": "tail -f will keep the session busy",
+      "suggestion": "Prefer tail -n for a bounded result."
+    }
+  ],
   "devices": [
     {
       "id": "DEVICE_A_ID",

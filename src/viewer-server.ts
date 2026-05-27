@@ -11,6 +11,8 @@ import {
   DEFAULT_VIEWER_HOST,
   VIEWER_PORT_SETTING,
   saveServerInfoState,
+  viewerOriginAllowed,
+  viewerRequestAllowed,
 } from './server-state.js';
 import { handleViewerHttpRequest } from './viewer-http-handler.js';
 import { matchViewerWsRoute } from './viewer-routes.js';
@@ -22,6 +24,11 @@ export async function startViewerServer() {
   }
 
   const httpServer = createServer((request, response) => {
+    if (!viewerRequestAllowed(request.socket.remoteAddress) || !viewerOriginAllowed(typeof request.headers.origin === 'string' ? request.headers.origin : undefined)) {
+      response.writeHead(403, { 'content-type': 'application/json; charset=utf-8' });
+      response.end(JSON.stringify({ error: 'Viewer access denied by policy.' }, null, 2));
+      return;
+    }
     void handleViewerHttpRequest(request, response).catch(error => {
       const message = error instanceof Error ? error.message : String(error);
       if (!response.headersSent) {
@@ -58,6 +65,11 @@ export async function startViewerServer() {
   setViewerWss(wss);
 
   httpServer.on('upgrade', (request, socket, head) => {
+    if (!viewerRequestAllowed(request.socket.remoteAddress) || !viewerOriginAllowed(typeof request.headers.origin === 'string' ? request.headers.origin : undefined)) {
+      socket.destroy();
+      return;
+    }
+
     const url = new URL(request.url || '/', 'http://127.0.0.1');
     const route = matchViewerWsRoute(url.pathname);
 

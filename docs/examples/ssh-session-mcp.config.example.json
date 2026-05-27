@@ -2,6 +2,10 @@
   "defaults": {
     "viewerHost": "127.0.0.1",
     "viewerPort": "auto",
+    "viewerAccessMode": "allow_all",
+    "viewerIpAllowlist": [],
+    "viewerIpDenylist": [],
+    "viewerAllowedOrigins": [],
     "viewerMode": "browser",
     "viewerSingletonScope": "connection",
     "autoOpenTerminal": false,
@@ -9,6 +13,18 @@
     "logMode": "meta"
   },
   "defaultDevice": "DEVICE_A_ID",
+  "policyRules": [
+    {
+      "id": "error-kubectl-delete",
+      "pattern": "\\bkubectl\\s+delete\\b",
+      "priority": 0,
+      "mode": "safe",
+      "category": "dangerous",
+      "action": "error",
+      "message": "kubectl delete is blocked in safe mode",
+      "suggestion": "Run the command manually in the viewer if you really intend to delete resources."
+    }
+  ],
   "devices": [
     {
       "id": "DEVICE_A_ID",

@@ -21,7 +21,7 @@ import {
   type HistorySnapshot,
   type HistoryStats,
 } from './history.js';
-import type { CustomPolicyRule } from './validation.js';
+import type { CustomPolicyRule, OperationMode } from './validation.js';
 
 export interface SSHConfig extends ConnectConfig {
   host: string;
@@ -80,6 +80,7 @@ export interface SessionSummary {
   eventStartSeq: number;
   eventEndSeq: number;
   customPolicyRuleCount: number;
+  operationMode: OperationMode;
   lockPolicy: 'common' | 'agent' | 'user' | 'auto';
   inputLock: 'none' | 'agent' | 'user';
   userDraftActive: boolean;
@@ -237,7 +238,8 @@ export class SSHSession {
   public rawBuffer = '';
   public rawBufferStart = 0;
   public closed = false;
-  public lockPolicy: 'common' | 'agent' | 'user' | 'auto' = 'common';
+  public operationMode: OperationMode = 'safe';
+  public lockPolicy: 'common' | 'agent' | 'user' | 'auto' = 'auto';
   public inputLock: 'none' | 'agent' | 'user' = 'none';
   public agentInputActive = false;
   public userDraftActive = false;
@@ -257,6 +259,7 @@ export class SSHSession {
   private readonly activeUserDraftViewers = new Set<string>();
   private defaultPolicyRules: CustomPolicyRule[] = [];
   private policyRules: CustomPolicyRule[] = [];
+  private userDraftBuffer = '';
 
   constructor(
     public readonly sessionId: string,
@@ -625,6 +628,7 @@ export class SSHSession {
       eventStartSeq: this.eventSeqStart,
       eventEndSeq: this.currentEventEnd(),
       customPolicyRuleCount: this.policyRules.length,
+      operationMode: this.operationMode,
       lockPolicy: this.lockPolicy,
       inputLock: this.effectiveInputLock(),
       userDraftActive: this.userDraftActive,
@@ -647,7 +651,7 @@ export class SSHSession {
   }
 
   setInheritedPolicyRules(rules: CustomPolicyRule[]) {
-    this.defaultPolicyRules = rules.map(rule => ({ ...rule, source: 'default' as const }));
+    this.defaultPolicyRules = this.normalizePolicyRules(rules.map(rule => ({ ...rule, source: 'default' as const })));
     this.policyRules = this.defaultPolicyRules.map(rule => ({ ...rule }));
   }
 
@@ -658,8 +662,7 @@ export class SSHSession {
     };
     const next = this.policyRules.filter(existing => existing.id !== nextRule.id);
     next.push(nextRule);
-    next.sort((a, b) => a.id.localeCompare(b.id));
-    this.policyRules = next;
+    this.policyRules = this.normalizePolicyRules(next);
   }
 
   private defaultPolicyRuleById(id: string) {
@@ -680,7 +683,7 @@ export class SSHSession {
     const inherited = this.defaultPolicyRuleById(id);
     if (inherited) {
       this.policyRules.push({ ...inherited });
-      this.policyRules.sort((a, b) => a.id.localeCompare(b.id));
+      this.policyRules = this.normalizePolicyRules(this.policyRules);
       return { removed: true, reason: 'restored_default' as const };
     }
 
@@ -696,9 +699,26 @@ export class SSHSession {
     this.policyRules = this.defaultPolicyRules.map(rule => ({ ...rule }));
   }
 
+  private normalizePolicyRules(rules: CustomPolicyRule[]) {
+    return [...rules]
+      .map(rule => ({
+        ...rule,
+        priority: Number.isInteger(rule.priority) && rule.priority >= 0 ? rule.priority : 1000,
+      }))
+      .sort((a, b) => {
+        if (a.priority !== b.priority) {
+          return a.priority - b.priority;
+        }
+        return a.id.localeCompare(b.id);
+      });
+  }
+
+  setOperationMode(mode: OperationMode) {
+    this.operationMode = mode;
+  }
+
   setLockPolicy(policy: 'common' | 'agent' | 'user' | 'auto') {
     this.lockPolicy = policy;
-    this.clearUserDraft();
     this.inputLock = this.computePolicyInputLock();
   }
 
@@ -724,9 +744,39 @@ export class SSHSession {
 
   clearUserDraft() {
     this.activeUserDraftViewers.clear();
+    this.userDraftBuffer = '';
     this.userDraftActive = false;
     this.userDraftUpdatedAt = undefined;
     this.inputLock = this.computePolicyInputLock();
+  }
+
+  noteUserDraftDelta(data: string) {
+    const normalized = data.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+    let nextDraft = this.userDraftBuffer;
+
+    for (const ch of normalized) {
+      if (ch === '\n') {
+        nextDraft = '';
+        continue;
+      }
+      if (ch === '\u0003') {
+        nextDraft = '';
+        continue;
+      }
+      if (ch === '\u0004') {
+        continue;
+      }
+      if (ch === '\u007f' || ch === '\b') {
+        nextDraft = nextDraft.slice(0, -1);
+        continue;
+      }
+      if (ch >= ' ') {
+        nextDraft += ch;
+      }
+    }
+
+    this.userDraftBuffer = nextDraft;
+    this.setUserDraftActive(nextDraft.length > 0 || this.activeUserDraftViewers.size > 0);
   }
 
   private computePolicyInputLock(): 'none' | 'agent' | 'user' {
