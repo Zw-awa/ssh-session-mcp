@@ -26,6 +26,13 @@
           "isSecret": false
         },
         {
+          "name": "SSH_MCP_STATE_DIR",
+          "description": "Optional runtime state root directory used for viewer state, server info, and per-instance logs.",
+          "format": "string",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
           "name": "SSH_MCP_INSTANCE",
           "description": "Optional runtime instance id used to isolate state across multiple MCP clients or agents.",
           "format": "string",
@@ -103,8 +110,36 @@
           "isSecret": true
         },
         {
+          "name": "SSH_PASSWORD_FILE",
+          "description": "Optional path to a file whose contents are used as the legacy SSH password. Useful for Docker or Kubernetes secrets.",
+          "format": "string",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
           "name": "SSH_KEY",
           "description": "Optional path to a local SSH private key file for legacy single-target mode.",
+          "format": "string",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
+          "name": "SSH_KEY_FILE",
+          "description": "Optional path to a file whose contents are used as the legacy SSH private key. Useful for Docker or Kubernetes secrets.",
+          "format": "string",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
+          "name": "SSH_MCP_LOG_MODE",
+          "description": "Runtime metadata logging mode. Use stderr in containers to avoid persisting files while keeping stdio MCP transport intact.",
+          "format": "string",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
+          "name": "SSH_MCP_LOG_DIR",
+          "description": "Optional directory used for JSONL metadata logs when SSH_MCP_LOG_MODE=meta.",
           "format": "string",
           "isRequired": false,
           "isSecret": false

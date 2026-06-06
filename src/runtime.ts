@@ -1,4 +1,5 @@
 import { homedir } from 'node:os';
+import { readFileSync } from 'node:fs';
 import { dirname, join, resolve as resolvePath } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -52,6 +53,15 @@ function unixStateRoot() {
   return process.env.XDG_STATE_HOME || join(homedir(), '.local', 'state');
 }
 
+function normalizeOptionalPath(raw: string | undefined) {
+  const trimmed = raw?.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+
+  return resolvePath(trimmed);
+}
+
 export function getUserConfigDir() {
   return process.platform === 'win32'
     ? join(windowsConfigRoot(), 'ssh-session-mcp')
@@ -64,9 +74,13 @@ export function getUserStateDir() {
     : join(unixStateRoot(), 'ssh-session-mcp');
 }
 
-export function resolveRuntimePaths(instanceId: string): RuntimePaths {
+export function resolveStateRootDir(override: string | undefined) {
+  return normalizeOptionalPath(override) || getUserStateDir();
+}
+
+export function resolveRuntimePaths(instanceId: string, stateRootOverride?: string): RuntimePaths {
   const safeInstanceId = resolveInstanceId(instanceId);
-  const rootDir = getUserStateDir();
+  const rootDir = resolveStateRootDir(stateRootOverride);
   const instanceDir = join(rootDir, 'instances', safeInstanceId);
   return {
     instanceId: safeInstanceId,
@@ -88,6 +102,29 @@ export function resolveDefaultConfigPath(cwd: string) {
 
 export function resolveRepoRootFromModule(metaUrl: string) {
   return resolvePath(dirname(fileURLToPath(metaUrl)), '..');
+}
+
+export function readOptionalSecretFile(pathRaw: string | undefined, envName: string) {
+  const resolvedPath = normalizeOptionalPath(pathRaw);
+  if (!resolvedPath) {
+    return undefined;
+  }
+
+  try {
+    return readFileSync(resolvedPath, 'utf8').replace(/[\r\n]+$/, '');
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Failed to read ${envName} from ${resolvedPath}: ${message}`);
+  }
+}
+
+export function resolveEnvValueOrFile(envName: string) {
+  const directValue = process.env[envName]?.trim();
+  if (directValue) {
+    return directValue;
+  }
+
+  return readOptionalSecretFile(process.env[`${envName}_FILE`], `${envName}_FILE`);
 }
 
 export function resolveViewerPortSetting(raw: string | undefined): ViewerPortSetting {

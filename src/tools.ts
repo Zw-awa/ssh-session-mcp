@@ -68,6 +68,14 @@ import {
   startBackgroundMonitor,
   sweepSessions,
   setActiveSession,
+  rememberSession,
+  forgetSession,
+  rememberRunningCommand,
+  forgetRunningCommand,
+  findClusterCommandRecord,
+  distributedModeEnabled,
+  buildOwnerRedirectUrl,
+  NODE_ID,
   refreshActiveSession,
   sessionDisplayName,
   sessionReadRef,
@@ -323,7 +331,7 @@ server.tool(
       user: resolvedUser,
     });
 
-    sessions.set(session.sessionId, session);
+    rememberSession(session);
     setActiveSession(session);
     logSessionEvent(session.sessionId, 'session.opened', {
       authSource: profile ? summarizeAuth(profile) : (sanitizeOptionalText(password) ? 'password' : sanitizeOptionalText(key) ? 'keyPath' : DEFAULT_PASSWORD ? 'password' : DEFAULT_KEY ? 'keyPath' : 'none'),
@@ -1199,7 +1207,7 @@ server.tool(
     logSessionEvent(target.sessionId, 'session.closed', { reason: 'closed by client' });
     logServerEvent('session.closed', { reason: 'closed by client', sessionId: target.sessionId });
     target.close();
-    sessions.delete(target.sessionId);
+    forgetSession(target.sessionId);
     if (activeSessionId === target.sessionId) {
       setActiveSession(undefined);
       refreshActiveSession();
@@ -1303,7 +1311,7 @@ server.tool(
         user: profile.user,
       });
 
-      sessions.set(sessionId, session);
+      rememberSession(session);
       setActiveSession(session);
       logSessionEvent(session.sessionId, 'session.opened', {
         authSource: summarizeAuth(profile),
@@ -1433,7 +1441,7 @@ server.tool(
       user: resolvedUser,
     });
 
-    sessions.set(sessionId, session);
+    rememberSession(session);
     setActiveSession(session);
     logSessionEvent(session.sessionId, 'session.opened', {
       host: resolvedHost,
@@ -1720,7 +1728,7 @@ server.tool(
         sentinelMarker: useMarker ? sentinelMarker : undefined,
         sentinelSuffix,
       };
-      runningCommands.set(commandId, entry);
+      rememberRunningCommand(entry);
         logSessionEvent(target.sessionId, 'command.promoted_async', {
           actor: 'agent',
           commandId,
@@ -2038,7 +2046,33 @@ server.tool(
     maxChars: z.number().int().positive().optional().describe('Max chars to read from output (default 16000)'),
   },
   async ({ commandId, maxChars }) => {
-    const entry = runningCommands.get(commandId);
+    let entry = runningCommands.get(commandId);
+    if (!entry && distributedModeEnabled()) {
+      const remote = await findClusterCommandRecord(commandId);
+      if (remote && remote.ownerNodeId !== NODE_ID) {
+        return createJsonToolResponse(applyToolContract({
+          error: 'REMOTE_OWNER',
+          ownerNodeId: remote.ownerNodeId,
+          routableBaseUrl: remote.routableBaseUrl,
+          redirectUrl: buildOwnerRedirectUrl(remote.routableBaseUrl, `/api/command-status/${encodeURIComponent(commandId)}`),
+          message: `Command ${commandId} is tracked by node ${remote.ownerNodeId}.`,
+        }, {
+          resultStatus: 'blocked',
+          summary: `Async command ${commandId} is owned by another node.`,
+          failureCategory: 'runtime-state-abnormal',
+          nextAction: remote.routableBaseUrl
+            ? 'Route the status request to the owner node.'
+            : 'Query the owner node or wait for cluster state to refresh.',
+          evidence: [
+            `commandId=${commandId}`,
+            `ownerNodeId=${remote.ownerNodeId}`,
+          ],
+        }));
+      }
+      if (remote) {
+        entry = remote;
+      }
+    }
     if (!entry) {
       return createJsonToolResponse(applyToolContract({
         error: 'UNKNOWN_COMMAND',
@@ -2058,7 +2092,7 @@ server.tool(
       const outputState = resolveCompletedCommandOutput(entry, resolvedMaxChars);
       const output = outputState.output;
       const sessionRef = sessions.get(entry.sessionId)?.metadata.sessionRef || entry.sessionId;
-      runningCommands.delete(commandId);
+      forgetRunningCommand(commandId);
       return createJsonToolResponse(applyToolContract({
         commandId,
         command: entry.command,
@@ -2111,7 +2145,7 @@ server.tool(
           status: entry.status,
         ...summarizeCommandMeta(entry.command),
       });
-      runningCommands.delete(commandId);
+      forgetRunningCommand(commandId);
       return createJsonToolResponse(applyToolContract({
         commandId,
         command: entry.command,

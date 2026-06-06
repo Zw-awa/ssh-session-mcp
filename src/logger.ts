@@ -2,7 +2,7 @@ import { promises as fs } from 'node:fs';
 import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-export type LogMode = 'off' | 'meta';
+export type LogMode = 'off' | 'meta' | 'stderr';
 
 export interface LoggerConfig {
   dir: string;
@@ -49,7 +49,7 @@ function normalizeValue(value: unknown): unknown {
 }
 
 export function resolveLoggerConfig(modeRaw: string | undefined, dirRaw: string | undefined, defaultDir = DEFAULT_LOG_DIR): LoggerConfig {
-  const mode = modeRaw === 'meta' ? 'meta' : 'off';
+  const mode = modeRaw === 'meta' || modeRaw === 'stderr' ? modeRaw : 'off';
   return {
     mode,
     dir: dirRaw && dirRaw.trim().length > 0 ? dirRaw.trim() : defaultDir,
@@ -78,6 +78,15 @@ export class SessionLogger {
 
   private append(filePath: string, record: LogRecord) {
     if (this.config.mode === 'off') {
+      return Promise.resolve();
+    }
+
+    if (this.config.mode === 'stderr') {
+      try {
+        process.stderr.write(`${JSON.stringify(record)}\n`);
+      } catch {
+        // Logging must never break MCP behavior.
+      }
       return Promise.resolve();
     }
 

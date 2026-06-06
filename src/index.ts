@@ -22,7 +22,10 @@ import {
   tuning,
   buildSessionMetadata,
   buildConfiguredSessionPolicyRules,
+  heartbeatDistributedNode,
+  NODE_HEARTBEAT_INTERVAL_MS,
   openSSHSession,
+  rememberSession,
   DEFAULT_COLS,
   DEFAULT_ROWS,
   DEFAULT_TERM,
@@ -45,6 +48,7 @@ async function main() {
   await loadViewerProcessState();
   await loadViewerAccessPolicy();
   await startViewerServer();
+  await heartbeatDistributedNode();
 
   const transport = new StdioServerTransport();
   await server.connect(transport);
@@ -74,7 +78,7 @@ async function main() {
         term: DEFAULT_TERM,
         user: process.env.USER || process.env.USERNAME || 'local',
       });
-      sessions.set(sessionId, session);
+      rememberSession(session);
       setActiveSession(session);
 
       // Warm up the local shell so the terminal shows output immediately.
@@ -115,6 +119,13 @@ async function main() {
   }, DEFAULT_IDLE_SWEEP_MS);
   sweepTimer.unref?.();
 
+  const heartbeatTimer = setInterval(() => {
+    void heartbeatDistributedNode().catch(() => {
+      // ignore heartbeat failures; readiness will report them
+    });
+  }, NODE_HEARTBEAT_INTERVAL_MS);
+  heartbeatTimer.unref?.();
+
   let shuttingDown = false;
   const cleanup = (reason: string) => {
     if (shuttingDown) {
@@ -124,6 +135,7 @@ async function main() {
 
     void (async () => {
       clearInterval(sweepTimer);
+      clearInterval(heartbeatTimer);
       if (viewerWss) {
         for (const client of viewerWss.clients) {
           try { client.close(1001, 'server shutdown'); } catch { /* ignore */ }
@@ -142,6 +154,7 @@ async function main() {
   process.on('SIGTERM', () => cleanup('SIGTERM'));
   process.on('exit', () => {
     clearInterval(sweepTimer);
+    clearInterval(heartbeatTimer);
     if (viewerWss) {
       for (const client of viewerWss.clients) {
         try { client.close(1001, 'process exit'); } catch { /* ignore */ }

@@ -19,6 +19,7 @@ const REQUIRED_FILES = [
   'docs/platform-compatibility.md',
   'docs/examples/ssh-session-mcp.config.example.json',
   'docs/examples/ssh-session-mcp.config.docker.example.json',
+  'docs/examples/ssh-session-mcp.k8s.single-instance.yaml',
   'src/index.ts',
 ] as const;
 
@@ -116,7 +117,7 @@ export function validateRepository(rootDir: string) {
 
   if (existsSync(envExamplePath)) {
     const text = readText(envExamplePath);
-    for (const token of ['SSH_MCP_INSTANCE', 'SSH_MCP_CONFIG', 'VIEWER_PORT=auto']) {
+    for (const token of ['SSH_MCP_INSTANCE', 'SSH_MCP_CONFIG', 'SSH_MCP_STATE_DIR', 'SSH_PASSWORD_FILE', 'SSH_KEY_FILE', 'VIEWER_PORT=auto']) {
       if (!text.includes(token)) {
         failures.push(`.env.example is missing required token: ${token}`);
       }

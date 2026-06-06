@@ -4,6 +4,8 @@ import { join } from 'node:path';
 
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
+const MODULE_LOAD_TIMEOUT_MS = 60000;
+
 let server: typeof import('../src/server-state.js').server;
 let registerTools: typeof import('../src/tools.js').registerTools;
 let sessions: typeof import('../src/server-state.js').sessions;
@@ -45,7 +47,7 @@ beforeAll(async () => {
   const toolsModule = await import('../src/tools.js');
   registerTools = toolsModule.registerTools;
   registerTools();
-});
+}, MODULE_LOAD_TIMEOUT_MS);
 
 afterEach(() => {
   sessions.clear();

@@ -16,6 +16,9 @@ function writeValidRepositoryFixture(root: string) {
   writeText(root, '.env.example', [
     'SSH_MCP_INSTANCE=agent-a',
     'SSH_MCP_CONFIG=./ssh-session-mcp.config.json',
+    '# SSH_MCP_STATE_DIR=.ssh-session-mcp-state',
+    '# SSH_PASSWORD_FILE=/run/secrets/ssh_password',
+    '# SSH_KEY_FILE=/run/secrets/ssh_private_key',
     'VIEWER_PORT=auto',
   ].join('\n'));
 
@@ -110,6 +113,8 @@ function writeValidRepositoryFixture(root: string) {
       ],
     }),
   );
+
+  writeText(root, 'docs/examples/ssh-session-mcp.k8s.single-instance.yaml', 'apiVersion: v1\nkind: ConfigMap\n');
 }
 
 describe('repo validation helpers', () => {

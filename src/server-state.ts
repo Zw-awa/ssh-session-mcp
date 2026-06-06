@@ -1,7 +1,7 @@
 import { promises as fs, existsSync, readFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { createServer, type Server as HttpServer } from 'node:http';
+import { createServer, type IncomingHttpHeaders, type Server as HttpServer } from 'node:http';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, resolve as pathResolve } from 'node:path';
 
@@ -53,9 +53,28 @@ import {
   type RuntimeDefaults,
 } from './profiles.js';
 import {
+  createDistributedStateStore,
+  hasViewerRole,
+  parseViewerRoles,
+  type AuthMode,
+  type ClusterBindingRecord,
+  type ClusterCommandRecord,
+  type ClusterNodeRecord,
+  type ClusterSessionRecord,
+  type DistributedRuntimeConfig,
+  type DistributedStateStore,
+  type RuntimeMode,
+  type SessionAvailability,
+  type StoreKind,
+  type ViewerIdentity,
+  type ViewerRole,
+} from './distributed.js';
+import {
   resolveInstanceId,
   resolveRuntimePaths,
   resolveViewerPortSetting,
+  resolveEnvValueOrFile,
+  readOptionalSecretFile,
   type ViewerPortSetting,
 } from './runtime.js';
 
@@ -105,6 +124,23 @@ export { buildDiagnosticsOverview, buildSessionDiagnosticReport } from './diagno
 export { resolveLoggerConfig, SessionLogger, summarizeCommandMeta } from './logger.js';
 export { buildReadMoreHint, buildReadProgress, buildSnapshotReadMore } from './paging.js';
 export {
+  createDistributedStateStore,
+  hasViewerRole,
+  parseViewerRoles,
+  type AuthMode,
+  type ClusterBindingRecord,
+  type ClusterCommandRecord,
+  type ClusterNodeRecord,
+  type ClusterSessionRecord,
+  type DistributedRuntimeConfig,
+  type DistributedStateStore,
+  type RuntimeMode,
+  type SessionAvailability,
+  type StoreKind,
+  type ViewerIdentity,
+  type ViewerRole,
+} from './distributed.js';
+export {
   loadProfiles,
   resolveDefaultDeviceId,
   resolveDeviceProfile,
@@ -116,6 +152,8 @@ export {
 export {
   resolveInstanceId,
   resolveRuntimePaths,
+  resolveEnvValueOrFile,
+  readOptionalSecretFile,
   resolveViewerPortSetting,
   type ViewerPortSetting,
 } from './runtime.js';
@@ -282,8 +320,9 @@ const argvConfig = isCliEnabled ? parseArgv() : {} as Record<string, string>;
 export const DEFAULT_HOST = argvConfig.host || process.env.SSH_HOST;
 export const DEFAULT_PORT = argvConfig.port ? parseInt(argvConfig.port, 10) : (process.env.SSH_PORT ? parseInt(process.env.SSH_PORT, 10) : 22);
 export const DEFAULT_USER = argvConfig.user || process.env.SSH_USER;
-export const DEFAULT_PASSWORD = argvConfig.password || process.env.SSH_PASSWORD;
+export const DEFAULT_PASSWORD = argvConfig.password || resolveEnvValueOrFile('SSH_PASSWORD');
 export const DEFAULT_KEY = argvConfig.key || process.env.SSH_KEY;
+export const DEFAULT_KEY_FILE_CONTENT = argvConfig.key ? undefined : readOptionalSecretFile(process.env.SSH_KEY_FILE, 'SSH_KEY_FILE');
 export const DEFAULT_TIMEOUT = argvConfig.timeout ? parseInt(argvConfig.timeout, 10) : 30 * 60 * 1000;
 export const DEFAULT_COLS = argvConfig.cols ? parseInt(argvConfig.cols, 10) : 120;
 export const DEFAULT_ROWS = argvConfig.rows ? parseInt(argvConfig.rows, 10) : 40;
@@ -302,13 +341,14 @@ export const DEFAULT_DASHBOARD_LEFT_CHARS = argvConfig.defaultDashboardLeftChars
 export const DEFAULT_DASHBOARD_RIGHT_EVENTS = argvConfig.defaultDashboardRightEvents ? parseInt(argvConfig.defaultDashboardRightEvents, 10) : 40;
 export const MAX_HISTORY_LINES = argvConfig.maxHistoryLines ? parseInt(argvConfig.maxHistoryLines, 10) : 4000;
 export const INSTANCE_ID = resolveInstanceId(argvConfig.instance || process.env.SSH_MCP_INSTANCE);
-export const RUNTIME_PATHS = resolveRuntimePaths(INSTANCE_ID);
 export const PROFILES: LoadedProfiles = loadProfiles({
   argvPath: argvConfig.config,
   cwd: process.cwd(),
   envPath: process.env.SSH_MCP_CONFIG,
 });
 export const CONFIG_DEFAULTS: RuntimeDefaults | undefined = PROFILES.config?.defaults;
+export const STATE_ROOT_DIR = argvConfig.stateDir || process.env.SSH_MCP_STATE_DIR || CONFIG_DEFAULTS?.stateDir;
+export const RUNTIME_PATHS = resolveRuntimePaths(INSTANCE_ID, STATE_ROOT_DIR);
 export const DEFAULT_VIEWER_HOST = argvConfig.viewerHost || process.env.VIEWER_HOST || CONFIG_DEFAULTS?.viewerHost || '127.0.0.1';
 export const VIEWER_PORT_SETTING: ViewerPortSetting = resolveViewerPortSetting(
   argvConfig.viewerPort
@@ -339,6 +379,36 @@ export const VIEWER_LAUNCH_MODE: ViewerLaunchMode = (
   || CONFIG_DEFAULTS?.viewerMode
   || 'browser'
 ) as ViewerLaunchMode;
+export const RUNTIME_MODE: RuntimeMode = (
+  argvConfig.runtimeMode
+  || process.env.SSH_MCP_RUNTIME_MODE
+  || CONFIG_DEFAULTS?.runtimeMode
+  || 'single-node'
+) === 'distributed' ? 'distributed' : 'single-node';
+export const STORE_KIND: StoreKind = (
+  argvConfig.store
+  || process.env.SSH_MCP_STORE
+  || CONFIG_DEFAULTS?.store
+  || (RUNTIME_MODE === 'distributed' ? 'redis' : 'memory')
+) === 'redis' ? 'redis' : 'memory';
+export const REDIS_URL = argvConfig.redisUrl || process.env.SSH_MCP_REDIS_URL || CONFIG_DEFAULTS?.redisUrl;
+export const NODE_ID = resolveInstanceId(argvConfig.nodeId || process.env.SSH_MCP_NODE_ID || INSTANCE_ID);
+export const PUBLIC_BASE_URL = sanitizeOptionalText(argvConfig.publicBaseUrl || process.env.SSH_MCP_PUBLIC_BASE_URL || CONFIG_DEFAULTS?.publicBaseUrl);
+export const AUTH_MODE: AuthMode = (
+  argvConfig.authMode
+  || process.env.SSH_MCP_AUTH_MODE
+  || CONFIG_DEFAULTS?.authMode
+  || 'off'
+) === 'proxy' ? 'proxy' : 'off';
+export const TRUST_PROXY = argvConfig.trustProxy === 'true'
+  || argvConfig.trustProxy === '1'
+  || process.env.SSH_MCP_TRUST_PROXY === 'true'
+  || process.env.SSH_MCP_TRUST_PROXY === '1'
+  || CONFIG_DEFAULTS?.trustProxy === true;
+export const AUTH_USER_HEADER = (argvConfig.authUserHeader || process.env.SSH_MCP_AUTH_USER_HEADER || CONFIG_DEFAULTS?.authUserHeader || 'x-ssh-session-mcp-user').toLowerCase();
+export const AUTH_ROLE_HEADER = (argvConfig.authRoleHeader || process.env.SSH_MCP_AUTH_ROLE_HEADER || CONFIG_DEFAULTS?.authRoleHeader || 'x-ssh-session-mcp-role').toLowerCase();
+export const NODE_HEARTBEAT_INTERVAL_MS = 5000;
+export const NODE_HEARTBEAT_TTL_SECONDS = 15;
 export let OPERATION_MODE: OperationMode = (
   argvConfig.mode
   || process.env.SSH_MCP_MODE
@@ -350,17 +420,33 @@ export const USE_SENTINEL_MARKER = (argvConfig.useMarker || process.env.SSH_MCP_
 export const VIEWER_STATE_FILE = RUNTIME_PATHS.viewerStateFile;
 export const VIEWER_ACCESS_FILE = RUNTIME_PATHS.viewerAccessFile;
 export const VIEWER_CLI_ENTRY_PATH = fileURLToPath(new URL('./viewer-cli.js', import.meta.url));
+export const DISTRIBUTED_RUNTIME_CONFIG: DistributedRuntimeConfig = {
+  mode: RUNTIME_MODE,
+  store: STORE_KIND,
+  redisUrl: REDIS_URL,
+  nodeId: NODE_ID,
+  publicBaseUrl: PUBLIC_BASE_URL,
+  authMode: AUTH_MODE,
+  trustProxy: TRUST_PROXY,
+  authUserHeader: AUTH_USER_HEADER,
+  authRoleHeader: AUTH_ROLE_HEADER,
+};
+export const distributedStateStore: DistributedStateStore | undefined = createDistributedStateStore(DISTRIBUTED_RUNTIME_CONFIG);
 
 // ── Mutable state ────────────────────────────────────────────────────────────
 
 export const viewerProcesses = new Map<string, ViewerProcessState>();
 export const viewerBindings = new Map<string, ViewerBindingState>();
+export const clusterSessions = new Map<string, ClusterSessionRecord>();
+export const clusterBindings = new Map<string, ClusterBindingRecord>();
+export const clusterCommands = new Map<string, ClusterCommandRecord>();
 export const viewerClientSessions = new WeakMap<WebSocket, string>();
 export let viewerServer: HttpServer | undefined;
 export let viewerWss: WebSocketServer | undefined;
 export let viewerStateLoaded = false;
 export let activeSessionId: string | undefined;
 export let actualViewerPort = 0;
+export let nodeLastHeartbeatAt: string | undefined;
 export let viewerAccessPolicy: ViewerAccessPolicy = {
   mode: (CONFIG_DEFAULTS?.viewerAccessMode || 'allow_all') as ViewerAccessMode,
   ipAllowlist: [...(CONFIG_DEFAULTS?.viewerIpAllowlist || [])],
@@ -374,7 +460,187 @@ export function setViewerServer(s: HttpServer | undefined) { viewerServer = s; }
 export function setViewerWss(w: WebSocketServer | undefined) { viewerWss = w; }
 export function setViewerStateLoaded(v: boolean) { viewerStateLoaded = v; }
 export function setActualViewerPort(p: number) { actualViewerPort = p; }
+export function setNodeLastHeartbeatAt(value: string | undefined) { nodeLastHeartbeatAt = value; }
 export function setViewerAccessPolicy(policy: ViewerAccessPolicy) { viewerAccessPolicy = policy; }
+
+export function rememberClusterSession(record: ClusterSessionRecord) {
+  clusterSessions.set(record.summary.sessionId, record);
+}
+
+export function rememberClusterBinding(record: ClusterBindingRecord) {
+  clusterBindings.set(record.bindingKey, record);
+}
+
+export function rememberClusterCommand(record: ClusterCommandRecord) {
+  clusterCommands.set(record.commandId, record);
+}
+
+export function forgetClusterSession(sessionId: string) {
+  clusterSessions.delete(sessionId);
+}
+
+export function forgetClusterBinding(bindingKey: string) {
+  clusterBindings.delete(bindingKey);
+}
+
+export function forgetClusterCommand(commandId: string) {
+  clusterCommands.delete(commandId);
+}
+
+export function rememberSession(session: SSHSession) {
+  sessions.set(session.sessionId, session);
+  const record = buildClusterSessionRecord(session);
+  rememberClusterSession(record);
+  void syncDistributedSession(session);
+}
+
+export function forgetSession(sessionId: string) {
+  sessions.delete(sessionId);
+  forgetClusterSession(sessionId);
+  void removeDistributedSession(sessionId);
+
+  for (const [bindingKey, binding] of viewerBindings.entries()) {
+    if (binding.sessionId !== sessionId) {
+      continue;
+    }
+    viewerBindings.delete(bindingKey);
+    forgetClusterBinding(bindingKey);
+    void removeDistributedBinding(bindingKey);
+  }
+}
+
+export function rememberRunningCommand(entry: RunningCommand) {
+  runningCommands.set(entry.commandId, entry);
+  const record = buildClusterCommandRecord(entry);
+  rememberClusterCommand(record);
+  void syncDistributedCommand(entry);
+}
+
+export function refreshRunningCommand(entry: RunningCommand) {
+  rememberClusterCommand(buildClusterCommandRecord(entry));
+  void syncDistributedCommand(entry);
+}
+
+export function forgetRunningCommand(commandId: string) {
+  runningCommands.delete(commandId);
+  forgetClusterCommand(commandId);
+  void removeDistributedCommand(commandId);
+}
+
+export async function refreshDistributedCaches() {
+  if (!distributedStateStore) {
+    return;
+  }
+
+  const [sessionRecords, bindingRecords, commandRecords] = await Promise.all([
+    distributedStateStore.listSessions(),
+    distributedStateStore.listBindings(),
+    distributedStateStore.listCommands(),
+  ]);
+
+  clusterSessions.clear();
+  clusterBindings.clear();
+  clusterCommands.clear();
+
+  for (const record of sessionRecords) {
+    rememberClusterSession(record);
+  }
+  for (const record of bindingRecords) {
+    rememberClusterBinding(record);
+  }
+  for (const record of commandRecords) {
+    rememberClusterCommand(record);
+  }
+}
+
+function readHeaderValue(headers: IncomingHttpHeaders, name: string) {
+  const raw = headers[name];
+  if (Array.isArray(raw)) {
+    return raw[raw.length - 1];
+  }
+  return raw;
+}
+
+export function extractViewerIdentity(headers: IncomingHttpHeaders): ViewerIdentity | undefined {
+  if (AUTH_MODE !== 'proxy') {
+    return undefined;
+  }
+
+  if (!TRUST_PROXY) {
+    return undefined;
+  }
+
+  const user = sanitizeOptionalText(readHeaderValue(headers, AUTH_USER_HEADER));
+  if (!user) {
+    return undefined;
+  }
+
+  const roles = parseViewerRoles(readHeaderValue(headers, AUTH_ROLE_HEADER));
+  return {
+    user,
+    roles: roles.length > 0 ? roles : ['viewer_read'],
+  };
+}
+
+export function isOwnedByCurrentNode(ownerNodeId: string | undefined) {
+  return !ownerNodeId || ownerNodeId === NODE_ID;
+}
+
+export function buildOwnerRedirectUrl(baseUrl: string | undefined, pathWithQuery: string) {
+  if (!baseUrl) {
+    return undefined;
+  }
+
+  return new URL(pathWithQuery, baseUrl).toString();
+}
+
+export interface RemoteOwnerTarget {
+  ownerNodeId: string;
+  routableBaseUrl?: string;
+  redirectUrl?: string;
+  availability: SessionAvailability;
+  sessionId?: string;
+  bindingKey?: string;
+}
+
+export async function resolveRemoteOwnerForSessionRef(sessionRef: string, pathWithQuery: string): Promise<RemoteOwnerTarget | undefined> {
+  if (!distributedModeEnabled()) {
+    return undefined;
+  }
+
+  const record = await findClusterSessionRecord(sessionRef);
+  if (!record || isOwnedByCurrentNode(record.ownerNodeId)) {
+    return undefined;
+  }
+
+  return {
+    ownerNodeId: record.ownerNodeId,
+    routableBaseUrl: record.routableBaseUrl,
+    redirectUrl: buildOwnerRedirectUrl(record.routableBaseUrl, pathWithQuery),
+    availability: record.availability,
+    sessionId: record.summary.sessionId,
+  };
+}
+
+export async function resolveRemoteOwnerForBinding(bindingKey: string, pathWithQuery: string): Promise<RemoteOwnerTarget | undefined> {
+  if (!distributedModeEnabled()) {
+    return undefined;
+  }
+
+  const record = await findClusterBindingRecord(bindingKey);
+  if (!record || isOwnedByCurrentNode(record.ownerNodeId)) {
+    return undefined;
+  }
+
+  return {
+    ownerNodeId: record.ownerNodeId,
+    routableBaseUrl: record.routableBaseUrl,
+    redirectUrl: buildOwnerRedirectUrl(record.routableBaseUrl, pathWithQuery),
+    availability: 'remote',
+    bindingKey: record.bindingKey,
+    sessionId: record.sessionId,
+  };
+}
 
 // ── Config validation ────────────────────────────────────────────────────────
 
@@ -388,6 +654,9 @@ export function validateConfig(config: Record<string, string | null>) {
     'defaultDashboardWidth', 'defaultDashboardHeight',
     'defaultDashboardLeftChars', 'defaultDashboardRightEvents',
     'maxHistoryLines',
+    'stateDir',
+    'runtimeMode', 'store', 'redisUrl', 'nodeId', 'publicBaseUrl',
+    'authMode', 'trustProxy', 'authUserHeader', 'authRoleHeader',
     'viewerPort', 'viewerHost', 'viewerRefreshMs', 'viewerLaunchMode',
     'autoOpenTerminal',
     'mode', 'useMarker',
@@ -596,7 +865,262 @@ export function buildSessionMetadata(options: {
     connectionName,
     sessionRef,
     profileSource: options.profileSource,
+    ownerNodeId: NODE_ID,
+    routableBaseUrl: PUBLIC_BASE_URL || undefined,
+    distributedMode: RUNTIME_MODE,
+    sessionAvailability: 'local',
   };
+}
+
+export function getRoutableViewerBaseUrl() {
+  return PUBLIC_BASE_URL || getViewerBaseUrl();
+}
+
+export function distributedModeEnabled() {
+  return RUNTIME_MODE === 'distributed';
+}
+
+export function buildClusterNodeRecord(): ClusterNodeRecord {
+  return {
+    nodeId: NODE_ID,
+    instanceId: INSTANCE_ID,
+    pid: process.pid,
+    startedAt: new Date(Date.now() - process.uptime() * 1000).toISOString(),
+    lastSeenAt: new Date().toISOString(),
+    publicBaseUrl: PUBLIC_BASE_URL || undefined,
+    viewerBaseUrl: getViewerBaseUrl(),
+    runtimeMode: RUNTIME_MODE,
+  };
+}
+
+export async function heartbeatDistributedNode() {
+  if (!distributedStateStore) {
+    return false;
+  }
+
+  const record = buildClusterNodeRecord();
+  await distributedStateStore.registerNode(record, NODE_HEARTBEAT_TTL_SECONDS);
+  for (const session of sessions.values()) {
+    await distributedStateStore.saveSession(buildClusterSessionRecord(session));
+    rememberClusterSession(buildClusterSessionRecord(session));
+  }
+  for (const binding of viewerBindings.values()) {
+    await distributedStateStore.saveBinding(buildClusterBindingRecord(binding));
+    rememberClusterBinding(buildClusterBindingRecord(binding));
+  }
+  for (const entry of runningCommands.values()) {
+    await distributedStateStore.saveCommand(buildClusterCommandRecord(entry));
+    rememberClusterCommand(buildClusterCommandRecord(entry));
+  }
+  await refreshDistributedCaches();
+  setNodeLastHeartbeatAt(record.lastSeenAt);
+  return true;
+}
+
+export async function removeDistributedNode() {
+  if (!distributedStateStore) {
+    return;
+  }
+
+  await distributedStateStore.removeNode(NODE_ID);
+  setNodeLastHeartbeatAt(undefined);
+}
+
+export function buildClusterSessionRecord(session: SSHSession | ReturnType<SSHSession['summary']>, availability: SessionAvailability = 'local'): ClusterSessionRecord {
+  const summary = session instanceof SSHSession ? session.summary() : session;
+  return {
+    summary: {
+      ...summary,
+      ownerNodeId: summary.ownerNodeId || NODE_ID,
+      routableBaseUrl: summary.routableBaseUrl || getRoutableViewerBaseUrl(),
+      distributedMode: RUNTIME_MODE,
+      sessionAvailability: availability,
+    },
+    ownerNodeId: summary.ownerNodeId || NODE_ID,
+    routableBaseUrl: summary.routableBaseUrl || getRoutableViewerBaseUrl(),
+    availability,
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+export function buildClusterBindingRecord(binding: ViewerBindingState): ClusterBindingRecord {
+  return {
+    ...binding,
+    ownerNodeId: NODE_ID,
+    routableBaseUrl: getRoutableViewerBaseUrl(),
+  };
+}
+
+export function buildClusterCommandRecord(entry: RunningCommand): ClusterCommandRecord {
+  return {
+    ...entry,
+    ownerNodeId: NODE_ID,
+    routableBaseUrl: getRoutableViewerBaseUrl(),
+  };
+}
+
+export async function syncDistributedSession(session: SSHSession | ReturnType<SSHSession['summary']>) {
+  if (!distributedStateStore) {
+    return;
+  }
+
+  await distributedStateStore.saveSession(buildClusterSessionRecord(session));
+}
+
+export async function removeDistributedSession(sessionId: string) {
+  if (!distributedStateStore) {
+    return;
+  }
+
+  await distributedStateStore.deleteSession(sessionId);
+}
+
+export async function syncDistributedBinding(binding: ViewerBindingState) {
+  if (!distributedStateStore) {
+    return;
+  }
+
+  await distributedStateStore.saveBinding(buildClusterBindingRecord(binding));
+}
+
+export async function removeDistributedBinding(bindingKey: string) {
+  if (!distributedStateStore) {
+    return;
+  }
+
+  await distributedStateStore.deleteBinding(bindingKey);
+}
+
+export async function syncDistributedCommand(entry: RunningCommand) {
+  if (!distributedStateStore) {
+    return;
+  }
+
+  await distributedStateStore.saveCommand(buildClusterCommandRecord(entry));
+}
+
+export async function removeDistributedCommand(commandId: string) {
+  if (!distributedStateStore) {
+    return;
+  }
+
+  await distributedStateStore.deleteCommand(commandId);
+}
+
+export async function findClusterSessionRecord(sessionRef: string) {
+  if (!distributedStateStore) {
+    return undefined;
+  }
+
+  const exact = await distributedStateStore.getSession(sessionRef);
+  if (exact) {
+    return exact;
+  }
+
+  const records = await distributedStateStore.listSessions();
+  return records.find(record =>
+    record.summary.sessionId === sessionRef
+    || record.summary.sessionRef === sessionRef
+    || record.summary.sessionName === sessionRef,
+  );
+}
+
+export async function findClusterBindingRecord(bindingKey: string) {
+  if (!distributedStateStore) {
+    return undefined;
+  }
+
+  return distributedStateStore.getBinding(bindingKey);
+}
+
+export async function findClusterCommandRecord(commandId: string) {
+  if (!distributedStateStore) {
+    return undefined;
+  }
+
+  return distributedStateStore.getCommand(commandId);
+}
+
+export async function resolveClusterNodeLiveness(ownerNodeId: string | undefined) {
+  if (!distributedStateStore || !ownerNodeId) {
+    return true;
+  }
+
+  const node = await distributedStateStore.getNode(ownerNodeId);
+  return Boolean(node);
+}
+
+export function findCachedClusterSessionRecord(sessionRef: string) {
+  const direct = clusterSessions.get(sessionRef);
+  if (direct) {
+    return direct;
+  }
+
+  for (const record of clusterSessions.values()) {
+    if (
+      record.summary.sessionId === sessionRef
+      || record.summary.sessionRef === sessionRef
+      || record.summary.sessionName === sessionRef
+    ) {
+      return record;
+    }
+  }
+
+  return undefined;
+}
+
+function remoteOwnerMessage(record: ClusterSessionRecord) {
+  const routeHint = record.routableBaseUrl
+    ? ` Route requests to ${record.routableBaseUrl}.`
+    : '';
+  return `Session "${record.summary.sessionRef || record.summary.sessionId}" is owned by node ${record.ownerNodeId}.${routeHint}`;
+}
+
+export function findCachedRemoteOwnerForSessionRef(sessionRef: string, pathWithQuery: string): RemoteOwnerTarget | undefined {
+  if (!distributedModeEnabled()) {
+    return undefined;
+  }
+
+  const record = findCachedClusterSessionRecord(sessionRef);
+  if (!record || isOwnedByCurrentNode(record.ownerNodeId)) {
+    return undefined;
+  }
+
+  return {
+    ownerNodeId: record.ownerNodeId,
+    routableBaseUrl: record.routableBaseUrl,
+    redirectUrl: buildOwnerRedirectUrl(record.routableBaseUrl, pathWithQuery),
+    availability: record.availability,
+    sessionId: record.summary.sessionId,
+  };
+}
+
+export function findCachedRemoteOwnerForBindingKey(bindingKey: string, pathWithQuery: string): RemoteOwnerTarget | undefined {
+  if (!distributedModeEnabled()) {
+    return undefined;
+  }
+
+  const record = clusterBindings.get(bindingKey);
+  if (!record || isOwnedByCurrentNode(record.ownerNodeId)) {
+    return undefined;
+  }
+
+  return {
+    ownerNodeId: record.ownerNodeId,
+    routableBaseUrl: record.routableBaseUrl,
+    redirectUrl: buildOwnerRedirectUrl(record.routableBaseUrl, pathWithQuery),
+    availability: 'remote',
+    bindingKey: record.bindingKey,
+    sessionId: record.sessionId,
+  };
+}
+
+export async function distributedStoreHealthy() {
+  if (!distributedStateStore) {
+    return true;
+  }
+
+  return distributedStateStore.ping();
 }
 
 export function resolveConfiguredDefaultDeviceId() {
@@ -632,11 +1156,21 @@ function normalizeViewerAccessPolicy(value: Partial<ViewerAccessPolicy> | undefi
 }
 
 export async function saveViewerAccessPolicy() {
+  if (distributedStateStore) {
+    await distributedStateStore.saveViewerAccessPolicy(viewerAccessPolicy);
+  }
   await fs.mkdir(RUNTIME_PATHS.instanceDir, { recursive: true });
   await fs.writeFile(VIEWER_ACCESS_FILE, JSON.stringify(viewerAccessPolicy, null, 2), 'utf8');
 }
 
 export async function loadViewerAccessPolicy() {
+  if (distributedStateStore) {
+    const distributedPolicy = await distributedStateStore.loadViewerAccessPolicy();
+    if (distributedPolicy) {
+      viewerAccessPolicy = normalizeViewerAccessPolicy(distributedPolicy);
+      return;
+    }
+  }
   try {
     const raw = await fs.readFile(VIEWER_ACCESS_FILE, 'utf8');
     const parsed = JSON.parse(raw) as Partial<ViewerAccessPolicy>;
@@ -744,7 +1278,7 @@ export function getViewerBaseUrl() {
 }
 
 export function buildViewerBindingUrl(bindingKey: string) {
-  const baseUrl = getViewerBaseUrl();
+  const baseUrl = getRoutableViewerBaseUrl();
   if (!baseUrl) {
     return undefined;
   }
@@ -755,7 +1289,7 @@ export function buildViewerBindingUrl(bindingKey: string) {
 }
 
 export function buildViewerSessionUrl(session: SSHSession) {
-  const baseUrl = getViewerBaseUrl();
+  const baseUrl = session.metadata.routableBaseUrl || getRoutableViewerBaseUrl();
   if (!baseUrl) {
     return undefined;
   }
@@ -825,11 +1359,17 @@ export async function saveViewerProcessState() {
 }
 
 export async function saveServerInfoState() {
+  if (distributedStateStore) {
+    await heartbeatDistributedNode();
+  }
   await fs.mkdir(RUNTIME_PATHS.instanceDir, { recursive: true });
   await fs.writeFile(RUNTIME_PATHS.serverInfoFile, JSON.stringify({
     instanceId: INSTANCE_ID,
+    nodeId: NODE_ID,
     pid: process.pid,
     startedAt: new Date().toISOString(),
+    runtimeMode: RUNTIME_MODE,
+    publicBaseUrl: PUBLIC_BASE_URL || undefined,
     viewerHost: DEFAULT_VIEWER_HOST,
     viewerPort: actualViewerPort,
     viewerBaseUrl: getViewerBaseUrl(),
@@ -838,6 +1378,9 @@ export async function saveServerInfoState() {
 }
 
 export async function removeServerInfoState() {
+  if (distributedStateStore) {
+    await removeDistributedNode();
+  }
   try {
     await fs.unlink(RUNTIME_PATHS.serverInfoFile);
   } catch {
@@ -901,6 +1444,8 @@ export function upsertViewerBinding(session: SSHSession, scope: ViewerSingletonS
   };
 
   viewerBindings.set(bindingKey, binding);
+  rememberClusterBinding(buildClusterBindingRecord(binding));
+  void syncDistributedBinding(binding);
   return binding;
 }
 
@@ -1095,7 +1640,8 @@ export function startBackgroundMonitor(entry: RunningCommand, session: SSHSessio
       } else {
           stored.status = 'interrupted';
           stored.completedAt = Date.now();
-          runningCommands.delete(entry.commandId);
+          refreshRunningCommand(stored);
+          forgetRunningCommand(entry.commandId);
           logSessionEvent(stored.sessionId, 'command.interrupted', {
             actor: 'agent',
             commandId: stored.commandId,
@@ -1125,6 +1671,7 @@ export function startBackgroundMonitor(entry: RunningCommand, session: SSHSessio
     stored.completedAt = Date.now();
     stored.completionReason = result.reason;
     stored.exitCode = result.exitCode;
+    refreshRunningCommand(stored);
     logSessionEvent(stored.sessionId, 'command.completed', {
       actor: 'agent',
       commandId: stored.commandId,
@@ -1144,6 +1691,7 @@ export function startBackgroundMonitor(entry: RunningCommand, session: SSHSessio
     if (stored && stored.status === 'running') {
       stored.status = 'interrupted';
       stored.completedAt = Date.now();
+      refreshRunningCommand(stored);
       logSessionEvent(stored.sessionId, 'command.interrupted', {
         actor: 'agent',
         commandId: stored.commandId,
@@ -1174,7 +1722,7 @@ export function sweepSessions(nowMs = Date.now()) {
     if (session.shouldPrune(nowMs)) {
       logSessionEvent(sessionId, 'session.pruned', {});
       logServerEvent('session.pruned', { sessionId });
-      sessions.delete(sessionId);
+      forgetSession(sessionId);
       if (activeSessionId === sessionId) {
         setActiveSession(undefined);
       }
@@ -1184,7 +1732,7 @@ export function sweepSessions(nowMs = Date.now()) {
   // Clean up stale running commands
   for (const [cmdId, entry] of runningCommands.entries()) {
     if (!sessions.has(entry.sessionId)) {
-      runningCommands.delete(cmdId);
+      forgetRunningCommand(cmdId);
       continue;
     }
     // Clean completed entries after 5 minutes (reduced from 10)
@@ -1194,13 +1742,14 @@ export function sweepSessions(nowMs = Date.now()) {
           commandId: entry.commandId,
           status: entry.status,
         });
-      runningCommands.delete(cmdId);
+      forgetRunningCommand(cmdId);
       continue;
     }
     // Clean stuck running entries after 10 minutes (safety net)
       if (entry.status === 'running' && nowMs - entry.startTime > 10 * 60 * 1000) {
         entry.status = 'interrupted';
         entry.completedAt = nowMs;
+        refreshRunningCommand(entry);
         logSessionEvent(entry.sessionId, 'command.interrupted', {
           actor: 'agent',
           commandId: entry.commandId,
@@ -1211,7 +1760,7 @@ export function sweepSessions(nowMs = Date.now()) {
           status: entry.status,
           ...summarizeCommandMeta(entry.command),
         });
-      runningCommands.delete(cmdId);
+      forgetRunningCommand(cmdId);
     }
   }
 }
@@ -1263,12 +1812,21 @@ export function resolveSession(sessionRef?: string): SSHSession {
     throw new McpError(ErrorCode.InvalidParams, `Multiple retained sessions match "${explicitRef}". Use the sessionId instead.`);
   }
 
+  const remoteRecord = findCachedClusterSessionRecord(explicitRef);
+  if (remoteRecord && !isOwnedByCurrentNode(remoteRecord.ownerNodeId)) {
+    throw new McpError(ErrorCode.InvalidParams, remoteOwnerMessage(remoteRecord));
+  }
+
   throw new McpError(ErrorCode.InvalidParams, `Unknown session: ${explicitRef}`);
 }
 
 export function resolveSessionForBinding(bindingKey: string) {
   const binding = viewerBindings.get(bindingKey);
   if (!binding) {
+    const remote = findCachedRemoteOwnerForBindingKey(bindingKey, `/binding/${encodeURIComponent(bindingKey)}`);
+    if (remote) {
+      throw new McpError(ErrorCode.InvalidParams, `Viewer binding "${bindingKey}" is owned by node ${remote.ownerNodeId}.`);
+    }
     throw new McpError(ErrorCode.InvalidParams, `Unknown viewer binding: ${bindingKey}`);
   }
 
@@ -1320,8 +1878,11 @@ export function resolvePassword(options: {
   }
 
   const passwordEnv = options.profile?.auth?.passwordEnv;
-  if (passwordEnv && process.env[passwordEnv]) {
-    return process.env[passwordEnv];
+  if (passwordEnv) {
+    const configuredPassword = sanitizeOptionalText(resolveEnvValueOrFile(passwordEnv));
+    if (configuredPassword) {
+      return configuredPassword;
+    }
   }
 
   return DEFAULT_PASSWORD;
@@ -1341,7 +1902,12 @@ async function resolvePrivateKey(options: {
     return readPrivateKey(profileKeyPath);
   }
 
-  return readPrivateKey(DEFAULT_KEY);
+  const defaultKey = await readPrivateKey(DEFAULT_KEY);
+  if (defaultKey) {
+    return defaultKey;
+  }
+
+  return DEFAULT_KEY_FILE_CONTENT;
 }
 
 export async function openSSHSession(options: {
@@ -1920,7 +2486,12 @@ export function closeAllSessions(reason: string) {
       // ignore
     }
   }
-  sessions.clear();
+  for (const sessionId of [...sessions.keys()]) {
+    forgetSession(sessionId);
+  }
+  for (const commandId of [...runningCommands.keys()]) {
+    forgetRunningCommand(commandId);
+  }
   setActiveSession(undefined);
   logServerEvent('server.close_all_sessions', { reason });
 }

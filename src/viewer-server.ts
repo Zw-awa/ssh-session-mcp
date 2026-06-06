@@ -2,6 +2,10 @@ import { createServer, type Server as HttpServer } from 'node:http';
 import { WebSocketServer } from 'ws';
 
 import {
+  AUTH_MODE,
+  extractViewerIdentity,
+  findCachedRemoteOwnerForBindingKey,
+  findCachedRemoteOwnerForSessionRef,
   viewerServer,
   actualViewerPort,
   setViewerServer,
@@ -70,6 +74,11 @@ export async function startViewerServer() {
       return;
     }
 
+    if (AUTH_MODE === 'proxy' && !extractViewerIdentity(request.headers)) {
+      socket.destroy();
+      return;
+    }
+
     const url = new URL(request.url || '/', 'http://127.0.0.1');
     const route = matchViewerWsRoute(url.pathname);
 
@@ -80,6 +89,13 @@ export async function startViewerServer() {
 
     const rawOffsetParam = url.searchParams.get('rawOffset');
     const rawOffset = rawOffsetParam !== null ? parseInt(rawOffsetParam, 10) : undefined;
+    const remoteOwner = route.kind === 'binding'
+      ? findCachedRemoteOwnerForBindingKey(route.ref, `${url.pathname}${url.search}`)
+      : findCachedRemoteOwnerForSessionRef(route.ref, `${url.pathname}${url.search}`);
+    if (remoteOwner) {
+      socket.destroy();
+      return;
+    }
 
     wss.handleUpgrade(request, socket, head, (ws) => {
       handleWsAttach(ws, route.kind, route.ref, Number.isFinite(rawOffset) ? rawOffset : undefined);

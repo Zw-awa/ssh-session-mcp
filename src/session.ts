@@ -21,6 +21,7 @@ import {
   type HistorySnapshot,
   type HistoryStats,
 } from './history.js';
+import type { RuntimeMode, SessionAvailability } from './distributed.js';
 import type { CustomPolicyRule, OperationMode } from './validation.js';
 
 export interface SSHConfig extends ConnectConfig {
@@ -50,6 +51,10 @@ export interface SessionMetadata {
   connectionName?: string;
   sessionRef: string;
   profileSource: SessionProfileSource;
+  ownerNodeId?: string;
+  routableBaseUrl?: string;
+  distributedMode?: RuntimeMode;
+  sessionAvailability?: SessionAvailability;
 }
 
 export interface SessionSummary {
@@ -60,6 +65,10 @@ export interface SessionSummary {
   deviceId?: string;
   connectionName?: string;
   profileSource: SessionProfileSource;
+  ownerNodeId?: string;
+  routableBaseUrl?: string;
+  distributedMode?: RuntimeMode;
+  sessionAvailability?: SessionAvailability;
   host: string;
   port: number;
   user: string;
@@ -608,6 +617,10 @@ export class SSHSession {
       deviceId: this.metadata.deviceId,
       connectionName: this.metadata.connectionName,
       profileSource: this.metadata.profileSource,
+      ownerNodeId: this.metadata.ownerNodeId,
+      routableBaseUrl: this.metadata.routableBaseUrl,
+      distributedMode: this.metadata.distributedMode,
+      sessionAvailability: this.metadata.sessionAvailability || 'local',
       host: this.host,
       port: this.port,
       user: this.user,

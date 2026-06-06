@@ -15,6 +15,9 @@ describe('viewer routes', () => {
   });
 
   it('matches HTTP API and page routes with decoded refs', () => {
+    expect(matchViewerHttpRoute('GET', '/livez')).toEqual({ type: 'live' });
+    expect(matchViewerHttpRoute('GET', '/readyz')).toEqual({ type: 'ready' });
+    expect(matchViewerHttpRoute('GET', '/metrics')).toEqual({ type: 'metrics' });
     expect(matchViewerHttpRoute('GET', '/health')).toEqual({ type: 'health' });
     expect(matchViewerHttpRoute('GET', '/api/sessions')).toEqual({ type: 'sessions-api' });
     expect(matchViewerHttpRoute('GET', '/api/attach/session/demo%20session')).toEqual({

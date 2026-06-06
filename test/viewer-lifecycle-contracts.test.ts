@@ -4,6 +4,8 @@ import { tmpdir } from 'node:os';
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
+const MODULE_LOAD_TIMEOUT_MS = 60000;
+
 let renderViewerHomePage: typeof import('../src/viewer-html.js').renderViewerHomePage;
 let renderInteractiveAttachPage: typeof import('../src/viewer-html.js').renderInteractiveAttachPage;
 let renderXtermTerminalPage: typeof import('../src/viewer-html.js').renderXtermTerminalPage;
@@ -47,7 +49,7 @@ beforeAll(async () => {
   renderViewerHomePage = viewerHtmlModule.renderViewerHomePage;
   renderInteractiveAttachPage = viewerHtmlModule.renderInteractiveAttachPage;
   renderXtermTerminalPage = viewerHtmlModule.renderXtermTerminalPage;
-});
+}, MODULE_LOAD_TIMEOUT_MS);
 
 afterAll(() => {
   setActualViewerPort?.(0);

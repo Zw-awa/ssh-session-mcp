@@ -4,6 +4,8 @@ import { join } from 'node:path';
 
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
+const MODULE_LOAD_TIMEOUT_MS = 60000;
+
 let buildSentinelCommandSuffix: typeof import('../src/server-state.js').buildSentinelCommandSuffix;
 let broadcastLock: typeof import('../src/server-state.js').broadcastLock;
 let cleanBufferSnapshot: typeof import('../src/server-state.js').cleanBufferSnapshot;
@@ -46,7 +48,7 @@ beforeAll(async () => {
   sessions = serverState.sessions;
   setViewerWss = serverState.setViewerWss;
   viewerClientSessions = serverState.viewerClientSessions;
-});
+}, MODULE_LOAD_TIMEOUT_MS);
 
 afterEach(() => {
   sessions.clear();

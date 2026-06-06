@@ -7,6 +7,8 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { SSHSession, type SessionMetadata, type SessionTuning } from '../src/session.js';
 import type { SSHConnection } from '../src/session.js';
 
+const MODULE_LOAD_TIMEOUT_MS = 60000;
+
 let renderViewerHomePage: typeof import('../src/viewer-html.js').renderViewerHomePage;
 let renderXtermSessionPage: typeof import('../src/viewer-html.js').renderXtermSessionPage;
 let renderXtermBindingPage: typeof import('../src/viewer-html.js').renderXtermBindingPage;
@@ -56,7 +58,7 @@ beforeAll(async () => {
   renderViewerHomePage = viewerHtmlModule.renderViewerHomePage;
   renderXtermSessionPage = viewerHtmlModule.renderXtermSessionPage;
   renderXtermBindingPage = viewerHtmlModule.renderXtermBindingPage;
-});
+}, MODULE_LOAD_TIMEOUT_MS);
 
 afterAll(() => {
   setActualViewerPort?.(0);

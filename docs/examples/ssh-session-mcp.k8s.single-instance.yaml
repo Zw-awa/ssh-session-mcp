@@ -1,0 +1,130 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ssh-session-mcp-config
+data:
+  ssh-session-mcp.config.json: |
+    {
+      "defaults": {
+        "stateDir": "/workspace/state",
+        "viewerHost": "0.0.0.0",
+        "viewerPort": 8793,
+        "viewerMode": "browser",
+        "viewerSingletonScope": "connection",
+        "autoOpenTerminal": false,
+        "mode": "safe",
+        "logMode": "stderr"
+      },
+      "defaultDevice": "DEVICE_A_ID",
+      "devices": [
+        {
+          "id": "DEVICE_A_ID",
+          "label": "Example Kubernetes Target",
+          "host": "DEVICE_A_HOST",
+          "port": 22,
+          "user": "DEVICE_A_USER",
+          "auth": {
+            "passwordEnv": "DEVICE_A_PASSWORD"
+          }
+        }
+      ]
+    }
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: ssh-session-mcp-secrets
+type: Opaque
+stringData:
+  DEVICE_A_PASSWORD: change-me
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ssh-session-mcp
+spec:
+  selector:
+    app: ssh-session-mcp
+  ports:
+    - name: viewer
+      port: 8793
+      targetPort: 8793
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: ssh-session-mcp
+spec:
+  serviceName: ssh-session-mcp
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ssh-session-mcp
+  template:
+    metadata:
+      labels:
+        app: ssh-session-mcp
+    spec:
+      containers:
+        - name: ssh-session-mcp
+          image: docker.io/zwawa/ssh-session-mcp:latest
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: SSH_MCP_CONFIG
+              value: /workspace/ssh-session-mcp.config.json
+            - name: SSH_MCP_STATE_DIR
+              value: /workspace/state
+            - name: SSH_MCP_LOG_MODE
+              value: stderr
+            - name: VIEWER_PORT
+              value: "8793"
+            - name: VIEWER_HOST
+              value: 0.0.0.0
+          envFrom:
+            - secretRef:
+                name: ssh-session-mcp-secrets
+          ports:
+            - containerPort: 8793
+              name: viewer
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: viewer
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /livez
+              port: viewer
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: config
+              mountPath: /workspace/ssh-session-mcp.config.json
+              subPath: ssh-session-mcp.config.json
+              readOnly: true
+            - name: state
+              mountPath: /workspace/state
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: config
+          configMap:
+            name: ssh-session-mcp-config
+        - name: tmp
+          emptyDir: {}
+  volumeClaimTemplates:
+    - metadata:
+        name: state
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 1Gi

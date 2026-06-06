@@ -47,5 +47,31 @@ jobs:
         with:
           context: .
           file: ./Dockerfile
+          tags: ssh-session-mcp:ci
           push: false
-          load: false
+          load: true
+
+      - name: Smoke test container health endpoint
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run -d --name ssh-session-mcp-ci \
+            -e SSH_MCP_LOCAL=1 \
+            -e VIEWER_PORT=8793 \
+            -e VIEWER_HOST=0.0.0.0 \
+            -p 8793:8793 \
+            ssh-session-mcp:ci
+
+          trap 'docker logs ssh-session-mcp-ci || true; docker rm -f ssh-session-mcp-ci || true' EXIT
+
+          for attempt in $(seq 1 20); do
+            if curl --fail --silent http://127.0.0.1:8793/readyz >/tmp/ssh-mcp-readyz.json; then
+              break
+            fi
+            sleep 1
+          done
+
+          curl --fail --silent http://127.0.0.1:8793/livez >/tmp/ssh-mcp-livez.json
+          curl --fail --silent http://127.0.0.1:8793/metrics >/tmp/ssh-mcp-metrics.txt
+          grep -q '"ok": true' /tmp/ssh-mcp-readyz.json
+          grep -q 'ssh_session_mcp_up 1' /tmp/ssh-mcp-metrics.txt

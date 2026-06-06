@@ -13,6 +13,14 @@ if [ -z "${AUTO_OPEN_TERMINAL:-}" ]; then
   export AUTO_OPEN_TERMINAL=false
 fi
 
+if [ -z "${SSH_MCP_STATE_DIR:-}" ]; then
+  export SSH_MCP_STATE_DIR=/workspace/state
+fi
+
+if [ -z "${SSH_MCP_LOG_MODE:-}" ]; then
+  export SSH_MCP_LOG_MODE=stderr
+fi
+
 case "${1:-}" in
   "")
     set -- node /opt/ssh-session-mcp/build/index.js

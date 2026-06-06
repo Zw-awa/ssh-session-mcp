@@ -188,8 +188,24 @@ function parseRuntimeDefaultValue(key: string, raw: string): RuntimeDefaults[key
     case 'autoOpenTerminal':
       return parseBoolean(raw, key);
     case 'logDir':
+    case 'redisUrl':
+    case 'publicBaseUrl':
+    case 'authUserHeader':
+    case 'authRoleHeader':
+    case 'stateDir':
     case 'viewerHost':
       return raw;
+    case 'runtimeMode':
+      if (raw === 'single-node' || raw === 'distributed') return raw;
+      break;
+    case 'store':
+      if (raw === 'memory' || raw === 'redis') return raw;
+      break;
+    case 'authMode':
+      if (raw === 'off' || raw === 'proxy') return raw;
+      break;
+    case 'trustProxy':
+      return parseBoolean(raw, key);
     case 'viewerAccessMode':
       if (raw === 'allow_all' || raw === 'allowlist' || raw === 'denylist') return raw;
       break;
@@ -201,7 +217,7 @@ function parseRuntimeDefaultValue(key: string, raw: string): RuntimeDefaults[key
         .map(part => part.trim())
         .filter(part => part.length > 0);
     case 'logMode':
-      if (raw === 'off' || raw === 'meta') return raw;
+      if (raw === 'off' || raw === 'meta' || raw === 'stderr') return raw;
       break;
     case 'mode':
       if (raw === 'safe' || raw === 'full') return raw;

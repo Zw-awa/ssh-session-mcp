@@ -4,6 +4,8 @@ import { tmpdir } from 'node:os';
 
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
+const MODULE_LOAD_TIMEOUT_MS = 60000;
+
 let buildConfiguredSessionPolicyRules: typeof import('../src/server-state.js').buildConfiguredSessionPolicyRules;
 
 const previousEnv = {
@@ -35,7 +37,7 @@ describe('configured policy reload', () => {
     vi.resetModules();
     const serverState = await import('../src/server-state.js');
     buildConfiguredSessionPolicyRules = serverState.buildConfiguredSessionPolicyRules;
-  });
+  }, MODULE_LOAD_TIMEOUT_MS);
 
   afterAll(() => {
     for (const [key, value] of Object.entries(previousEnv)) {

@@ -1,3 +1,4 @@
+import { constants as fsConstants, promises as fs } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { randomUUID } from 'node:crypto';
 
@@ -10,17 +11,25 @@ import {
   sanitizeActor, sanitizePositiveInt, logSessionEvent,
   DEFAULT_DASHBOARD_WIDTH, DEFAULT_DASHBOARD_HEIGHT,
   DEFAULT_DASHBOARD_LEFT_CHARS, DEFAULT_DASHBOARD_RIGHT_EVENTS,
-  INSTANCE_ID, PROFILES, DEBUG_MODE, LOCAL_MODE,
+  INSTANCE_ID, NODE_ID, PROFILES, DEBUG_MODE, LOCAL_MODE,
   sweepSessions, refreshActiveSession, buildSessionDiagnostics,
   openSSHSession, buildSessionMetadata, setActiveSession,
   buildConfiguredSessionPolicyRules,
+  AUTH_MODE, clusterSessions, distributedModeEnabled, distributedStoreHealthy,
+  extractViewerIdentity, forgetSession, getRoutableViewerBaseUrl,
+  hasViewerRole, nodeLastHeartbeatAt, refreshDistributedCaches, rememberSession,
+  resolveRemoteOwnerForBinding, resolveRemoteOwnerForSessionRef,
+  type RemoteOwnerTarget, type ViewerIdentity, type ViewerRole,
+  VIEWER_PORT_SETTING, RUNTIME_PATHS, LOG_CONFIG,
   DEFAULT_COLS, DEFAULT_ROWS, DEFAULT_TERM,
   DEFAULT_TIMEOUT, DEFAULT_CLOSED_RETENTION_MS,
   type SessionWriteRecord, type ViewerAccessPolicy, McpError, ErrorCode, buildUserLockMessage,
   viewerAccessPolicy, setViewerAccessPolicy, saveViewerAccessPolicy,
+  runningCommands, viewerBindings, viewerProcesses, viewerWss,
   validateCommand, detectTerminalMode, logServerEvent,
 } from './server-state.js';
 import {
+  renderViewerErrorPage,
   renderViewerHomePage,
   renderViewerBindingPage,
   renderViewerSessionPage,
@@ -36,7 +45,7 @@ interface ViewerResponseWriters {
   writeError(statusCode: number, error: unknown): void;
   writeHtml(statusCode: number, html: string): void;
   writeJson(statusCode: number, payload: unknown): void;
-  writeText(statusCode: number, text: string): void;
+  writeText(statusCode: number, text: string, contentType?: string): void;
 }
 
 function createViewerResponseWriters(response: ServerResponse): ViewerResponseWriters {
@@ -49,8 +58,8 @@ function createViewerResponseWriters(response: ServerResponse): ViewerResponseWr
       response.writeHead(statusCode, { 'content-type': 'text/html; charset=utf-8' });
       response.end(html);
     },
-    writeText(statusCode, text) {
-      response.writeHead(statusCode, { 'content-type': 'text/plain; charset=utf-8' });
+    writeText(statusCode, text, contentType = 'text/plain; charset=utf-8') {
+      response.writeHead(statusCode, { 'content-type': contentType });
       response.end(text);
     },
     writeError(statusCode, error) {
@@ -59,6 +68,138 @@ function createViewerResponseWriters(response: ServerResponse): ViewerResponseWr
       response.end(JSON.stringify({ error: message }, null, 2));
     },
   };
+}
+
+function buildRequestPathWithQuery(url: URL) {
+  return `${url.pathname}${url.search}`;
+}
+
+function buildRemoteOwnerPayload(target: RemoteOwnerTarget) {
+  return {
+    error: 'REMOTE_OWNER',
+    ownerNodeId: target.ownerNodeId,
+    routableBaseUrl: target.routableBaseUrl,
+    redirectUrl: target.redirectUrl,
+    availability: target.availability,
+    sessionId: target.sessionId,
+    bindingKey: target.bindingKey,
+  };
+}
+
+function writeRemoteOwnerError(
+  routeType: string,
+  target: RemoteOwnerTarget,
+  writers: ViewerResponseWriters,
+  preferHtml = false,
+) {
+  if (preferHtml) {
+    const baseUrl = target.redirectUrl || target.routableBaseUrl || getRoutableViewerBaseUrl() || '/';
+    writers.writeHtml(409, renderViewerErrorPage({
+      baseUrl,
+      title: 'Remote Session Owner',
+      detail: target.redirectUrl
+        ? `This session is owned by node ${target.ownerNodeId}. Open ${target.redirectUrl} instead.`
+        : `This session is owned by node ${target.ownerNodeId}. The owner node is not reachable from this replica.`,
+      footerLabel: 'Owner Node',
+      footerValue: target.ownerNodeId,
+    }));
+    return;
+  }
+
+  writers.writeError(409, new McpError(
+    ErrorCode.InvalidRequest,
+    JSON.stringify({
+      routeType,
+      ...buildRemoteOwnerPayload(target),
+    }),
+  ));
+}
+
+function parseWriterError(error: unknown) {
+  const raw = error instanceof Error ? error.message : String(error);
+  try {
+    return JSON.parse(raw) as Record<string, unknown>;
+  } catch {
+    return { error: raw };
+  }
+}
+
+function writeViewerError(
+  statusCode: number,
+  error: unknown,
+  writers: ViewerResponseWriters,
+) {
+  writers.writeJson(statusCode, parseWriterError(error));
+}
+
+function requiredViewerRoleForRoute(route: ReturnType<typeof matchViewerHttpRoute>, method: string | undefined): ViewerRole | undefined {
+  switch (route.type) {
+    case 'live':
+    case 'ready':
+    case 'metrics':
+    case 'health':
+      return undefined;
+    case 'viewer-access-policy-api':
+      return method?.toUpperCase() === 'GET' ? 'viewer_read' : 'session_admin';
+    case 'attach-input':
+    case 'attach-resize':
+    case 'session-control':
+      return 'viewer_write';
+    case 'session-mode-api':
+    case 'session-policy-api':
+    case 'session-close':
+    case 'session-set-active':
+    case 'session-agent-input':
+    case 'sessions-create':
+      return 'session_admin';
+    default:
+      return 'viewer_read';
+  }
+}
+
+function ensureViewerIdentityAuthorized(identity: ViewerIdentity | undefined, requiredRole: ViewerRole | undefined) {
+  if (AUTH_MODE !== 'proxy' || !requiredRole) {
+    return;
+  }
+
+  if (!identity) {
+    throw new McpError(ErrorCode.InvalidRequest, 'Missing trusted viewer identity headers.');
+  }
+
+  if (!hasViewerRole(identity, requiredRole)) {
+    throw new McpError(ErrorCode.InvalidRequest, `Viewer identity lacks required role: ${requiredRole}`);
+  }
+}
+
+async function resolveRemoteOwnerForRoute(route: ReturnType<typeof matchViewerHttpRoute>, url: URL): Promise<RemoteOwnerTarget | undefined> {
+  const pathWithQuery = buildRequestPathWithQuery(url);
+
+  switch (route.type) {
+    case 'attach-read':
+    case 'attach-input':
+    case 'attach-resize':
+      return route.kind === 'binding'
+        ? resolveRemoteOwnerForBinding(route.ref, pathWithQuery)
+        : resolveRemoteOwnerForSessionRef(route.ref, pathWithQuery);
+    case 'session-api':
+    case 'session-close':
+    case 'session-diagnostics':
+    case 'session-history':
+    case 'session-policy-api':
+    case 'session-mode-api':
+    case 'session-agent-input':
+    case 'session-control':
+    case 'session-set-active':
+    case 'terminal-session-page':
+    case 'legacy-session-page':
+      return resolveRemoteOwnerForSessionRef(route.sessionRef, pathWithQuery);
+    case 'viewer-binding-api':
+    case 'terminal-binding-page':
+    case 'legacy-binding-page':
+      return resolveRemoteOwnerForBinding(route.bindingKey, pathWithQuery);
+    default:
+      return undefined;
+  }
 }
 
 function isSessionWriteRecordCandidate(value: unknown): value is {
@@ -121,19 +262,140 @@ function createRequestAbortScope(request: IncomingMessage) {
   };
 }
 
+function buildLivePayload() {
+  return {
+    ok: true,
+    instanceId: INSTANCE_ID,
+    pid: process.pid,
+    uptimeSeconds: Math.round(process.uptime()),
+  };
+}
+
+async function buildReadinessPayload() {
+  const checks = {
+    stateDirWritable: false,
+    viewerReady: !VIEWER_PORT_SETTING.enabled,
+    distributedStoreReachable: true,
+    nodeHeartbeatFresh: true,
+  };
+
+  try {
+    await fs.mkdir(RUNTIME_PATHS.instanceDir, { recursive: true });
+    await fs.access(RUNTIME_PATHS.instanceDir, fsConstants.W_OK);
+    checks.stateDirWritable = true;
+  } catch {
+    checks.stateDirWritable = false;
+  }
+
+  if (VIEWER_PORT_SETTING.enabled) {
+    checks.viewerReady = actualViewerPort > 0;
+  }
+
+  if (distributedModeEnabled()) {
+    checks.distributedStoreReachable = await distributedStoreHealthy();
+    checks.nodeHeartbeatFresh = Boolean(nodeLastHeartbeatAt);
+  }
+
+  const ok = checks.stateDirWritable
+    && checks.viewerReady
+    && checks.distributedStoreReachable
+    && checks.nodeHeartbeatFresh;
+
+  return {
+    ok,
+    instanceId: INSTANCE_ID,
+    configPath: PROFILES.path,
+    stateDir: RUNTIME_PATHS.instanceDir,
+    logDir: LOG_CONFIG.dir,
+    viewerEnabled: VIEWER_PORT_SETTING.enabled,
+    distributedMode: distributedModeEnabled(),
+    viewerPort: actualViewerPort || undefined,
+    checks,
+  };
+}
+
+function buildMetricsPayload() {
+  const startedAtSeconds = Math.floor((Date.now() - process.uptime() * 1000) / 1000);
+  const viewerClients = viewerWss?.clients.size || 0;
+  const viewerEnabled = VIEWER_PORT_SETTING.enabled ? 1 : 0;
+  const viewerReady = !VIEWER_PORT_SETTING.enabled || actualViewerPort > 0 ? 1 : 0;
+  const ownerSessions = [...sessions.values()].filter(session => session.metadata.ownerNodeId === undefined || session.metadata.ownerNodeId === NODE_ID).length;
+  const orphanedClusterSessions = [...clusterSessions.values()].filter(record => record.availability === 'unavailable').length;
+
+  return [
+    '# HELP ssh_session_mcp_up Whether the ssh-session-mcp process is running.',
+    '# TYPE ssh_session_mcp_up gauge',
+    'ssh_session_mcp_up 1',
+    '# HELP ssh_session_mcp_process_start_time_seconds Unix time when the current process started.',
+    '# TYPE ssh_session_mcp_process_start_time_seconds gauge',
+    `ssh_session_mcp_process_start_time_seconds ${startedAtSeconds}`,
+    '# HELP ssh_session_mcp_sessions Number of tracked sessions.',
+    '# TYPE ssh_session_mcp_sessions gauge',
+    `ssh_session_mcp_sessions ${sessions.size}`,
+    '# HELP ssh_session_mcp_running_commands Number of tracked running commands.',
+    '# TYPE ssh_session_mcp_running_commands gauge',
+    `ssh_session_mcp_running_commands ${[...runningCommands.values()].filter(entry => entry.status === 'running').length}`,
+    '# HELP ssh_session_mcp_viewer_bindings Number of active viewer bindings.',
+    '# TYPE ssh_session_mcp_viewer_bindings gauge',
+    `ssh_session_mcp_viewer_bindings ${viewerBindings.size}`,
+    '# HELP ssh_session_mcp_viewer_processes Number of tracked viewer processes.',
+    '# TYPE ssh_session_mcp_viewer_processes gauge',
+    `ssh_session_mcp_viewer_processes ${viewerProcesses.size}`,
+    '# HELP ssh_session_mcp_viewer_clients Number of connected websocket viewer clients.',
+    '# TYPE ssh_session_mcp_viewer_clients gauge',
+    `ssh_session_mcp_viewer_clients ${viewerClients}`,
+    '# HELP ssh_session_mcp_viewer_enabled Whether the viewer HTTP server is configured.',
+    '# TYPE ssh_session_mcp_viewer_enabled gauge',
+    `ssh_session_mcp_viewer_enabled ${viewerEnabled}`,
+    '# HELP ssh_session_mcp_viewer_ready Whether the viewer HTTP server is currently listening.',
+    '# TYPE ssh_session_mcp_viewer_ready gauge',
+    `ssh_session_mcp_viewer_ready ${viewerReady}`,
+    '# HELP ssh_session_mcp_owner_sessions Number of sessions currently owned by this node.',
+    '# TYPE ssh_session_mcp_owner_sessions gauge',
+    `ssh_session_mcp_owner_sessions ${ownerSessions}`,
+    '# HELP ssh_session_mcp_orphaned_cluster_sessions Number of distributed session records marked unavailable.',
+    '# TYPE ssh_session_mcp_orphaned_cluster_sessions gauge',
+    `ssh_session_mcp_orphaned_cluster_sessions ${orphanedClusterSessions}`,
+    '',
+  ].join('\n');
+}
+
 function buildHealthPayload() {
   return {
     ok: true,
     instanceId: INSTANCE_ID,
     configPath: PROFILES.path,
+    stateDir: RUNTIME_PATHS.instanceDir,
+    logDir: LOG_CONFIG.dir,
+    logMode: LOG_CONFIG.mode,
+    distributedMode: distributedModeEnabled(),
     viewerBaseUrl: getViewerBaseUrl(),
     viewerPort: actualViewerPort || undefined,
     sessions: sessions.size,
   };
 }
 
-function buildSessionsPayload() {
+async function buildSessionsPayload() {
   sweepSessions();
+  if (distributedModeEnabled()) {
+    await refreshDistributedCaches();
+    return {
+      instanceId: INSTANCE_ID,
+      activeSessionRef: refreshActiveSession()?.metadata.sessionRef || null,
+      viewerBaseUrl: getViewerBaseUrl(),
+      viewerPort: actualViewerPort || undefined,
+      viewerAccessPolicy,
+      sessions: [...clusterSessions.values()]
+        .map(record => ({
+          ...record.summary,
+          viewerUrl: record.routableBaseUrl
+            ? `${record.routableBaseUrl}/session/${encodeURIComponent(record.summary.sessionId)}`
+            : undefined,
+        }))
+        .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)),
+    };
+  }
+
   return {
     instanceId: INSTANCE_ID,
     activeSessionRef: refreshActiveSession()?.metadata.sessionRef || null,
@@ -407,7 +669,7 @@ function handleSessionApiRequest(sessionRef: string, url: URL, writers: ViewerRe
 function handleSessionCloseRequest(sessionRef: string, writers: ViewerResponseWriters) {
   try {
     const s = resolveSession(sessionRef);
-    s.close(); sessions.delete(s.sessionId); sweepSessions();
+    s.close(); forgetSession(s.sessionId); sweepSessions();
     writers.writeJson(200, { ok: true, closed: s.metadata.sessionRef || s.sessionId });
   } catch (error) { writers.writeError(404, error); }
 }
@@ -494,7 +756,7 @@ async function handleSessionsCreateRequest(writers: ViewerResponseWriters) {
       policyRules: buildConfiguredSessionPolicyRules(),
       rows: DEFAULT_ROWS, sessionId: sid, sessionName: nm, term: DEFAULT_TERM,
       user: process.env.USER || process.env.USERNAME || 'local' });
-    sessions.set(sid, s); setActiveSession(s);
+    rememberSession(s); setActiveSession(s);
     writers.writeJson(201, { ok: true, session: s.summary(), viewerUrl: buildViewerSessionUrl(s) });
   } catch (error) { writers.writeError(500, error); }
 }
@@ -511,13 +773,59 @@ export async function handleViewerHttpRequest(request: IncomingMessage, response
   const url = new URL(request.url || '/', 'http://127.0.0.1');
   const route = matchViewerHttpRoute(request.method, url.pathname);
   const writers = createViewerResponseWriters(response);
+  const identity = extractViewerIdentity(request.headers);
+
+  try {
+    ensureViewerIdentityAuthorized(identity, requiredViewerRoleForRoute(route, request.method));
+  } catch (error) {
+    writeViewerError(403, error, writers);
+    return;
+  }
+
+  const remoteOwner = distributedModeEnabled()
+    ? await resolveRemoteOwnerForRoute(route, url)
+    : undefined;
+  if (remoteOwner) {
+    switch (route.type) {
+      case 'terminal-session-page':
+      case 'terminal-binding-page':
+      case 'legacy-session-page':
+      case 'legacy-binding-page':
+        writeRemoteOwnerError(route.type, remoteOwner, writers, true);
+        return;
+      case 'not-found':
+      case 'home-page':
+      case 'live':
+      case 'ready':
+      case 'metrics':
+      case 'health':
+      case 'sessions-api':
+      case 'viewer-access-policy-api':
+      case 'sessions-create':
+        break;
+      default:
+        writers.writeJson(409, buildRemoteOwnerPayload(remoteOwner));
+        return;
+    }
+  }
 
   switch (route.type) {
+    case 'live':
+      writers.writeJson(200, buildLivePayload());
+      return;
+    case 'ready': {
+      const payload = await buildReadinessPayload();
+      writers.writeJson(payload.ok ? 200 : 503, payload);
+      return;
+    }
+    case 'metrics':
+      writers.writeText(200, buildMetricsPayload(), 'text/plain; version=0.0.4; charset=utf-8');
+      return;
     case 'health':
       writers.writeJson(200, buildHealthPayload());
       return;
     case 'sessions-api':
-      writers.writeJson(200, buildSessionsPayload());
+      writers.writeJson(200, await buildSessionsPayload());
       return;
     case 'viewer-access-policy-api':
       await handleViewerAccessPolicyRequest(request, writers);

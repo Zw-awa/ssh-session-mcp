@@ -459,8 +459,11 @@ Key environment variables:
 | `SSH_USER` | Legacy single-target SSH user | required in legacy mode |
 | `SSH_PASSWORD` | Password auth | empty |
 | `SSH_KEY` | Local private key path | empty |
+| `SSH_PASSWORD_FILE` | File containing the SSH password | empty |
+| `SSH_KEY_FILE` | File containing the SSH private key | empty |
 | `SSH_MCP_INSTANCE` | Runtime isolation key | `proc-<pid>` or helper-selected |
 | `SSH_MCP_CONFIG` | Explicit config file path | auto-discovery |
+| `SSH_MCP_STATE_DIR` | Runtime state root directory | platform default |
 | `VIEWER_HOST` | Viewer bind host | `127.0.0.1` |
 | `VIEWER_PORT` | Viewer port or `auto` | `0` unless configured |
 | `VIEWER_ACCESS_MODE` | Viewer IP filter mode | config-driven |
@@ -468,7 +471,8 @@ Key environment variables:
 | `SSH_MCP_LOCAL` | Launch a local shell instead of SSH | `false` |
 | `SSH_MCP_DEBUG` | Enable debug browser actions | `false` |
 | `AUTO_OPEN_TERMINAL` | Auto-open browser terminal | `false` |
-| `SSH_MCP_LOG_MODE` | `off` or `meta` JSONL logging | `off` |
+| `SSH_MCP_LOG_MODE` | `off`, `meta`, or `stderr` logging | `off` |
+| `SSH_MCP_LOG_DIR` | Metadata log directory | platform default |
 
 ### Macro / Environment Variable Reference
 
@@ -480,9 +484,12 @@ Use these variables according to your installation path:
 | `SSH_PORT` | Legacy single-target SSH mode | `22` | Optional in legacy mode; defaults to `22`. |
 | `SSH_USER` | Legacy single-target SSH mode | `YOUR_DEVICE_USER` | Required unless you use device profiles. |
 | `SSH_PASSWORD` | Password-based auth | exported env var | Prefer env export over putting the password directly in the command line. |
+| `SSH_PASSWORD_FILE` | Password-based auth via secret file | `/run/secrets/ssh_password` | The file contents are used as the password. This is the preferred pattern for Docker and Kubernetes secrets. |
 | `SSH_KEY` | Key-based auth in legacy mode | `/absolute/path/to/private/key` | The path must exist on the host running the MCP server. |
+| `SSH_KEY_FILE` | Key-based auth via secret file | `/run/secrets/ssh_private_key` | The file contents are used as the private key. This works well with mounted container secrets. |
 | `SSH_MCP_CONFIG` | Profile-based mode or config outside cwd | `/path/to/ssh-session-mcp.config.json` | Use this when config auto-discovery is not enough. |
 | `SSH_MCP_INSTANCE` | Multi-agent / multi-client isolation | `agent-a` | Use different values when two agents should not share runtime state. |
+| `SSH_MCP_STATE_DIR` | Runtime state root override | `/workspace/state` | Controls where per-instance server info, viewer state, and default logs are stored. Mount it persistently in containers. |
 | `VIEWER_HOST` | Custom viewer bind | `127.0.0.1`, `0.0.0.0` | Use `0.0.0.0` inside containers; keep `127.0.0.1` on normal host installs unless you need remote access. |
 | `VIEWER_PORT` | Viewer enabled | `auto`, `0`, `8793` | `auto` picks a free port, `0` disables the viewer, fixed ports are best for Docker. |
 | `VIEWER_ACCESS_MODE` | Viewer access control mode | `allow_all`, `allowlist`, `denylist` | Usually edited in the viewer home page. Keep `allow_all` only when you stay on localhost. |
@@ -490,7 +497,8 @@ Use these variables according to your installation path:
 | `SSH_MCP_MODE` | Runtime safety mode | `safe`, `full` | `safe` is the recommended default. |
 | `SSH_MCP_LOCAL` | Local demo mode | `true`, `false` | Starts a local shell instead of SSH. |
 | `SSH_MCP_DEBUG` | Browser debug controls | `true`, `false` | Intended for demos and troubleshooting. |
-| `SSH_MCP_LOG_MODE` | Runtime metadata logging | `off`, `meta` | `meta` writes JSONL metadata logs without storing raw secrets. |
+| `SSH_MCP_LOG_MODE` | Runtime metadata logging | `off`, `meta`, `stderr` | `meta` writes JSONL metadata logs without storing raw secrets. `stderr` is the preferred container mode because it preserves stdio MCP transport while exposing structured logs to the container runtime. |
+| `SSH_MCP_LOG_DIR` | Override metadata log directory | `/workspace/state/instances/<instance>/logs` | Mainly useful with `SSH_MCP_LOG_MODE=meta`; ignored for `stderr`. |
 | `SSH_KEY_DIR` | Docker Compose profile-based example | `/path/to/host/keys` | Optional in `docker-compose.yml`; when unset it falls back to `./keys`. |
 | `SSH_SESSION_MCP_IMAGE` | Docker Compose image override | `docker.io/zwawa/ssh-session-mcp:latest` | Override this if you mirror the image or test another tag. |
 
@@ -503,6 +511,16 @@ Choose one of these minimum configuration sets:
 - Legacy SSH with key: `SSH_HOST`, `SSH_USER`, `SSH_KEY`
 - Profile-based mode: `ssh-session-mcp.config.json`, plus any `passwordEnv` variables referenced by that config
 - Docker Compose profile mode: `ssh-session-mcp.config.json`, optional `SSH_KEY_DIR`, optional `SSH_SESSION_MCP_IMAGE`
+
+### Container Runtime Notes
+
+- Container defaults now set `SSH_MCP_LOG_MODE=stderr` so logs go to the container runtime without corrupting stdio MCP transport.
+- Mount `SSH_MCP_STATE_DIR` persistently when you want viewer policy, server info, and state files to survive container restarts.
+- Health endpoints:
+  - `/livez` for process liveness
+  - `/readyz` for readiness checks
+  - `/metrics` for Prometheus text metrics
+- Example single-instance Kubernetes baseline: [docs/examples/ssh-session-mcp.k8s.single-instance.yaml](docs/examples/ssh-session-mcp.k8s.single-instance.yaml)
 
 Example config file: [docs/examples/ssh-session-mcp.config.example.json](docs/examples/ssh-session-mcp.config.example.json)
 

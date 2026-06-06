@@ -467,8 +467,11 @@ npm run cleanup
 | `SSH_USER` | 旧式单目标 SSH user | legacy 模式必填 |
 | `SSH_PASSWORD` | 密码认证 | 空 |
 | `SSH_KEY` | 本地私钥路径 | 空 |
+| `SSH_PASSWORD_FILE` | 包含 SSH 密码的文件 | 空 |
+| `SSH_KEY_FILE` | 包含 SSH 私钥内容的文件 | 空 |
 | `SSH_MCP_INSTANCE` | 运行时隔离 key | `proc-<pid>` 或 helper 选择值 |
 | `SSH_MCP_CONFIG` | 显式配置文件路径 | 自动发现 |
+| `SSH_MCP_STATE_DIR` | 运行时状态根目录 | 平台默认目录 |
 | `VIEWER_HOST` | Viewer 绑定 host | `127.0.0.1` |
 | `VIEWER_PORT` | Viewer 端口或 `auto` | 未配置时为 `0` |
 | `VIEWER_ACCESS_MODE` | Viewer IP 访问控制模式 | 配置文件或 UI |
@@ -476,7 +479,8 @@ npm run cleanup
 | `SSH_MCP_LOCAL` | 用本地 shell 替代 SSH | `false` |
 | `SSH_MCP_DEBUG` | 开启浏览器 debug 动作 | `false` |
 | `AUTO_OPEN_TERMINAL` | 自动打开浏览器终端 | `false` |
-| `SSH_MCP_LOG_MODE` | `off` 或 `meta` JSONL 日志 | `off` |
+| `SSH_MCP_LOG_MODE` | `off`、`meta` 或 `stderr` 日志 | `off` |
+| `SSH_MCP_LOG_DIR` | 元数据日志目录 | 平台默认目录 |
 
 ### 宏定义 / 环境变量对照表
 
@@ -488,9 +492,12 @@ npm run cleanup
 | `SSH_PORT` | 旧式单目标 SSH 模式 | `22` | legacy 模式可省略，默认 `22`。 |
 | `SSH_USER` | 旧式单目标 SSH 模式 | `YOUR_DEVICE_USER` | 除非你使用 device profile，否则必填。 |
 | `SSH_PASSWORD` | 使用密码认证时 | 已导出的环境变量 | 优先用环境变量，不要把密码直接写进命令行。 |
+| `SSH_PASSWORD_FILE` | 使用 secret 文件提供密码时 | `/run/secrets/ssh_password` | 文件内容会被当成密码，适合 Docker / Kubernetes secret。 |
 | `SSH_KEY` | legacy 模式下使用私钥认证时 | `/absolute/path/to/private/key` | 路径必须存在于运行 MCP server 的宿主机上。 |
+| `SSH_KEY_FILE` | 使用 secret 文件提供私钥时 | `/run/secrets/ssh_private_key` | 文件内容会被当成私钥，适合容器挂载 secret。 |
 | `SSH_MCP_CONFIG` | profile 模式，或配置文件不在当前工作目录时 | `/path/to/ssh-session-mcp.config.json` | 当自动发现不够用时显式指定。 |
 | `SSH_MCP_INSTANCE` | 多 agent / 多客户端隔离时 | `agent-a` | 当两个 agent 不应该共享运行时状态时，必须用不同值。 |
+| `SSH_MCP_STATE_DIR` | 覆盖运行时状态根目录时 | `/workspace/state` | 控制 server info、viewer state、默认日志等的落盘目录。容器里建议挂持久卷。 |
 | `VIEWER_HOST` | 自定义 viewer 绑定地址时 | `127.0.0.1`, `0.0.0.0` | 容器里通常用 `0.0.0.0`；普通宿主机默认保持 `127.0.0.1`。 |
 | `VIEWER_PORT` | 需要 viewer 时 | `auto`, `0`, `8793` | `auto` 自动找空闲端口，`0` 关闭 viewer，固定端口更适合 Docker。 |
 | `VIEWER_ACCESS_MODE` | Viewer 访问控制模式 | `allow_all`, `allowlist`, `denylist` | 一般建议在 viewer 首页直接改；若暴露到远端，至少使用 allowlist 或 denylist。 |
@@ -498,7 +505,8 @@ npm run cleanup
 | `SSH_MCP_MODE` | 运行时安全模式 | `safe`, `full` | 默认推荐 `safe`。 |
 | `SSH_MCP_LOCAL` | 本地演示模式 | `true`, `false` | 启动本地 shell，而不是 SSH。 |
 | `SSH_MCP_DEBUG` | 浏览器 debug 控件 | `true`, `false` | 主要用于演示和排障。 |
-| `SSH_MCP_LOG_MODE` | 运行时元数据日志 | `off`, `meta` | `meta` 会写 JSONL 元数据日志，但不应保存明文 secret。 |
+| `SSH_MCP_LOG_MODE` | 运行时元数据日志 | `off`, `meta`, `stderr` | `meta` 会写 JSONL 元数据日志，但不应保存明文 secret。`stderr` 是容器推荐模式，因为它不会污染 stdio MCP 通道。 |
+| `SSH_MCP_LOG_DIR` | 覆盖元数据日志目录 | `/workspace/state/instances/<instance>/logs` | 主要搭配 `SSH_MCP_LOG_MODE=meta`；`stderr` 模式下不会使用该目录。 |
 | `SSH_KEY_DIR` | Docker Compose profile 示例 | `/path/to/host/keys` | `docker-compose.yml` 里可选；未设置时回退到 `./keys`。 |
 | `SSH_SESSION_MCP_IMAGE` | Docker Compose 镜像覆盖 | `docker.io/zwawa/ssh-session-mcp:latest` | 当你要切换 tag 或镜像源时用它覆盖。 |
 
@@ -511,6 +519,16 @@ npm run cleanup
 - legacy SSH + 私钥：`SSH_HOST`、`SSH_USER`、`SSH_KEY`
 - profile 模式：`ssh-session-mcp.config.json`，以及该配置里引用到的 `passwordEnv` 变量
 - Docker Compose profile 模式：`ssh-session-mcp.config.json`，可选 `SSH_KEY_DIR`，可选 `SSH_SESSION_MCP_IMAGE`
+
+### 容器运行时说明
+
+- 容器默认会把 `SSH_MCP_LOG_MODE` 设为 `stderr`，这样日志会交给容器运行时收集，同时不会破坏 stdio MCP 协议。
+- 如果希望 viewer policy、server info、state 文件在容器重启后保留，请给 `SSH_MCP_STATE_DIR` 挂持久卷。
+- 健康检查接口：
+  - `/livez` 进程存活
+  - `/readyz` 就绪检查
+  - `/metrics` Prometheus 文本指标
+- 单实例 Kubernetes 基线示例见 [docs/examples/ssh-session-mcp.k8s.single-instance.yaml](docs/examples/ssh-session-mcp.k8s.single-instance.yaml)
 
 配置示例：[docs/examples/ssh-session-mcp.config.example.json](docs/examples/ssh-session-mcp.config.example.json)
 

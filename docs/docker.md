@@ -26,6 +26,8 @@ The image entrypoint adjusts a few defaults for container use:
 - `VIEWER_PORT` defaults to `8793` when unset.
 - `VIEWER_HOST` defaults to `0.0.0.0` when unset or still set to loopback.
 - `AUTO_OPEN_TERMINAL` defaults to `false`.
+- `SSH_MCP_STATE_DIR` defaults to `/workspace/state`.
+- `SSH_MCP_LOG_MODE` defaults to `stderr`.
 
 These defaults exist so the browser viewer can be exposed through a fixed mapped port and because auto-opening a browser from inside a container is usually not useful.
 
@@ -38,14 +40,16 @@ docker run --rm -i \
   -p 8793:8793 \
   -e VIEWER_PORT=8793 \
   -e VIEWER_HOST=0.0.0.0 \
+  -e SSH_MCP_STATE_DIR=/workspace/state \
   -e SSH_HOST=YOUR_DEVICE_HOST \
   -e SSH_PORT=22 \
   -e SSH_USER=YOUR_DEVICE_USER \
-  -e SSH_PASSWORD \
+  -e SSH_PASSWORD_FILE=/run/secrets/ssh_password \
+  -v "/path/to/ssh_password:/run/secrets/ssh_password:ro" \
   docker.io/zwawa/ssh-session-mcp:latest
 ```
 
-Export `SSH_PASSWORD` in your shell first instead of embedding it directly in the command line.
+If you still prefer env-based auth, export `SSH_PASSWORD` in your shell first instead of embedding it directly in the command line.
 
 ### Profile-based config
 
@@ -54,9 +58,11 @@ docker run --rm -i \
   -p 8793:8793 \
   -e VIEWER_PORT=8793 \
   -e VIEWER_HOST=0.0.0.0 \
+  -e SSH_MCP_STATE_DIR=/workspace/state \
   -e SSH_MCP_CONFIG=/workspace/ssh-session-mcp.config.json \
   -v "$PWD/ssh-session-mcp.config.json:/workspace/ssh-session-mcp.config.json:ro" \
   -v "/path/to/host/keys:/workspace/keys:ro" \
+  -v "ssh-session-mcp-state:/workspace/state" \
   docker.io/zwawa/ssh-session-mcp:latest
 ```
 
@@ -76,6 +82,7 @@ This example mounts:
 
 - `./ssh-session-mcp.config.json` to `/workspace/ssh-session-mcp.config.json`
 - `${SSH_KEY_DIR:-./keys}` to `/workspace/keys` read-only
+- a named volume to `/workspace/state`
 
 ### Legacy `.env` mode
 
@@ -85,10 +92,20 @@ Use [docker-compose.env.yml](../docker-compose.env.yml):
 docker compose -f docker-compose.env.yml up -d
 ```
 
-This variant reads `SSH_HOST`, `SSH_PORT`, `SSH_USER`, `SSH_PASSWORD`, and optional `SSH_KEY` from the shell or `.env` file used by Docker Compose.
+This variant reads `SSH_HOST`, `SSH_PORT`, `SSH_USER`, and either `SSH_PASSWORD` / `SSH_PASSWORD_FILE`, plus optional `SSH_KEY` / `SSH_KEY_FILE`, from the shell or `.env` file used by Docker Compose.
 
 If you want key-based auth in this mode, `SSH_KEY` must point to a key path that exists inside the container. That means you need to mount the key file or key directory yourself. If you do not want to manage that path mapping, prefer the profile-based compose example instead.
 Any user with Docker access on the same host can inspect container environment variables, so avoid env-based password auth on shared machines when key-based auth is available.
+
+## Health And Metrics
+
+Container-friendly endpoints:
+
+- `/livez` for liveness probes
+- `/readyz` for readiness probes
+- `/metrics` for Prometheus-style text metrics
+
+The bundled Docker image `HEALTHCHECK` uses `/readyz`.
 
 ## Windows, PowerShell, And WSL Notes
 
@@ -111,6 +128,18 @@ Viewer access tips:
 
 - The container can bind `VIEWER_HOST=0.0.0.0`, but user-facing URLs still resolve to `127.0.0.1` on the host side.
 - If `8793` is already occupied, remap both the published port and `VIEWER_PORT`, for example `-p 8800:8800 -e VIEWER_PORT=8800`.
+
+## Kubernetes Baseline
+
+A single-instance Kubernetes baseline is provided at [docs/examples/ssh-session-mcp.k8s.single-instance.yaml](examples/ssh-session-mcp.k8s.single-instance.yaml).
+
+Recommended first-stage deployment model:
+
+- `replicas: 1`
+- persistent volume mounted at `/workspace/state`
+- `readOnlyRootFilesystem: true`
+- liveness probe on `/livez`
+- readiness probe on `/readyz`
 
 ## MCP Client Command Examples
 

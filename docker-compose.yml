@@ -11,7 +11,22 @@ services:
       VIEWER_PORT: "8793"
       VIEWER_HOST: "0.0.0.0"
       AUTO_OPEN_TERMINAL: "false"
+      SSH_MCP_STATE_DIR: /workspace/state
+      SSH_MCP_LOG_MODE: stderr
       SSH_MCP_CONFIG: /workspace/ssh-session-mcp.config.json
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8793/readyz').then((response)=>{if(!response.ok)process.exit(1);}).catch(()=>process.exit(1));"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
     volumes:
       - type: bind
         source: ./ssh-session-mcp.config.json
@@ -21,3 +36,9 @@ services:
         source: ${SSH_KEY_DIR:-./keys}
         target: /workspace/keys
         read_only: true
+      - type: volume
+        source: ssh-session-mcp-state
+        target: /workspace/state
+
+volumes:
+  ssh-session-mcp-state:

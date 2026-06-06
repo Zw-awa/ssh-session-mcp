@@ -1,5 +1,6 @@
 {
   "defaults": {
+    "stateDir": "/workspace/state",
     "viewerHost": "0.0.0.0",
     "viewerPort": 8793,
     "viewerAccessMode": "allowlist",
@@ -12,7 +13,7 @@
     "viewerSingletonScope": "connection",
     "autoOpenTerminal": false,
     "mode": "safe",
-    "logMode": "meta"
+    "logMode": "stderr"
   },
   "defaultDevice": "DEVICE_A_ID",
   "policyRules": [

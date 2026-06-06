@@ -11,6 +11,10 @@ describe('logger', () => {
     expect(resolveLoggerConfig(undefined, undefined).mode).toBe('off');
   });
 
+  it('supports stderr logging mode for container-friendly structured logs', () => {
+    expect(resolveLoggerConfig('stderr', undefined).mode).toBe('stderr');
+  });
+
   it('writes JSONL records in meta mode', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'ssh-mcp-logger-'));
     const logger = new SessionLogger({ dir, mode: 'meta' });

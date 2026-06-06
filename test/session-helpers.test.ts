@@ -22,6 +22,8 @@ import {
 } from '../src/session';
 import type { SessionMetadata, SessionTuning, SSHConnection } from '../src/session';
 
+const MODULE_LOAD_TIMEOUT_MS = 60000;
+
 let buildSentinelCommandSuffix: typeof import('../src/index').buildSentinelCommandSuffix;
 let appendSentinelToCommand: typeof import('../src/index').appendSentinelToCommand;
 let parseArgv: typeof import('../src/index').parseArgv;
@@ -58,7 +60,7 @@ beforeAll(async () => {
   buildSentinelCommandSuffix = indexModule.buildSentinelCommandSuffix;
   parseArgv = indexModule.parseArgv;
   stripSentinelFromOutput = indexModule.stripSentinelFromOutput;
-});
+}, MODULE_LOAD_TIMEOUT_MS);
 
 afterAll(() => {
   for (const [key, value] of Object.entries(previousEnv)) {

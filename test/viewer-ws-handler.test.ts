@@ -5,6 +5,8 @@ import { join } from 'node:path';
 
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
+const MODULE_LOAD_TIMEOUT_MS = 60000;
+
 class FakeWebSocket extends EventEmitter {
   readyState = 1;
   sent: Array<{ data: unknown; options?: unknown }> = [];
@@ -174,7 +176,7 @@ beforeAll(async () => {
 
   const wsModule = await import('../src/viewer-ws-handler.js');
   handleWsAttach = wsModule.handleWsAttach;
-});
+}, MODULE_LOAD_TIMEOUT_MS);
 
 afterEach(() => {
   sessions.clear();

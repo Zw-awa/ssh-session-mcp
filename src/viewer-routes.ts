@@ -2,6 +2,9 @@ export type ViewerAttachKind = 'session' | 'binding';
 export type ViewerAttachSuffix = '' | '/input' | '/resize';
 
 export type ViewerHttpRoute =
+  | { type: 'live' }
+  | { type: 'ready' }
+  | { type: 'metrics' }
   | { type: 'health' }
   | { type: 'sessions-api' }
   | { type: 'viewer-access-policy-api' }
@@ -64,6 +67,18 @@ export function tryMatchAttachRoute(pathname: string, kind: ViewerAttachKind, su
 
 export function matchViewerHttpRoute(method: string | undefined, pathname: string): ViewerHttpRoute {
   const normalizedMethod = method?.toUpperCase();
+
+  if (pathname === '/livez') {
+    return { type: 'live' };
+  }
+
+  if (pathname === '/readyz') {
+    return { type: 'ready' };
+  }
+
+  if (pathname === '/metrics') {
+    return { type: 'metrics' };
+  }
 
   if (pathname === '/health') {
     return { type: 'health' };

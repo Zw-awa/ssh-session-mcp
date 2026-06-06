@@ -5,6 +5,8 @@ import { join } from 'node:path';
 
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
+const MODULE_LOAD_TIMEOUT_MS = 60000;
+
 interface MockResponseState {
   body: string;
   headers: Record<string, string>;
@@ -186,6 +188,7 @@ let setViewerWss: typeof import('../src/server-state.js').setViewerWss;
 const previousEnv = {
   SSH_MCP_DISABLE_MAIN: process.env.SSH_MCP_DISABLE_MAIN,
   SSH_MCP_CONFIG: process.env.SSH_MCP_CONFIG,
+  SSH_MCP_STATE_DIR: process.env.SSH_MCP_STATE_DIR,
   VIEWER_PORT: process.env.VIEWER_PORT,
   VIEWER_HOST: process.env.VIEWER_HOST,
   DEVICE_A_PASSWORD: process.env.DEVICE_A_PASSWORD,
@@ -209,6 +212,7 @@ beforeAll(async () => {
 
   process.env.SSH_MCP_DISABLE_MAIN = '1';
   process.env.SSH_MCP_CONFIG = configPath;
+  process.env.SSH_MCP_STATE_DIR = join(dir, 'state');
   process.env.VIEWER_PORT = '8793';
   process.env.VIEWER_HOST = '127.0.0.1';
   process.env.DEVICE_A_PASSWORD = 'dummy-password';
@@ -222,7 +226,7 @@ beforeAll(async () => {
 
   const handlerModule = await import('../src/viewer-http-handler.js');
   handleViewerHttpRequest = handlerModule.handleViewerHttpRequest;
-});
+}, MODULE_LOAD_TIMEOUT_MS);
 
 afterEach(() => {
   sessions.clear();
@@ -244,6 +248,45 @@ afterAll(() => {
 });
 
 describe('viewer http handler', () => {
+  it('returns liveness metadata without depending on viewer state', async () => {
+    const { response, state } = createMockResponse();
+
+    await handleViewerHttpRequest(createMockRequest('/livez'), response);
+
+    expect(state.statusCode).toBe(200);
+    const payload = JSON.parse(state.body);
+    expect(payload).toMatchObject({
+      ok: true,
+      pid: expect.any(Number),
+      uptimeSeconds: expect.any(Number),
+    });
+    expect(payload.instanceId).toContain('proc-');
+  });
+
+  it('returns readiness metadata and metrics for container probes', async () => {
+    setActualViewerPort(8793);
+
+    const { response: readyResponse, state: readyState } = createMockResponse();
+    await handleViewerHttpRequest(createMockRequest('/readyz'), readyResponse);
+    expect(readyState.statusCode).toBe(200);
+    expect(JSON.parse(readyState.body)).toMatchObject({
+      ok: true,
+      viewerEnabled: true,
+      viewerPort: 8793,
+      checks: {
+        stateDirWritable: true,
+        viewerReady: true,
+      },
+    });
+
+    const { response: metricsResponse, state: metricsState } = createMockResponse();
+    await handleViewerHttpRequest(createMockRequest('/metrics'), metricsResponse);
+    expect(metricsState.statusCode).toBe(200);
+    expect(metricsState.headers['content-type']).toContain('text/plain');
+    expect(metricsState.body).toContain('ssh_session_mcp_up 1');
+    expect(metricsState.body).toContain('ssh_session_mcp_viewer_ready 1');
+  });
+
   it('returns health metadata with the active viewer base url', async () => {
     setActualViewerPort(8793);
     const { response, state } = createMockResponse();
