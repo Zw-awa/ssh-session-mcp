@@ -14,6 +14,7 @@ import {
   logServerEvent,
   broadcastLock,
   hasViewerRole,
+  incrementRuntimeMetric,
   type OperationMode,
   type RemoteOwnerTarget,
   type SessionWriteRecord,
@@ -179,6 +180,14 @@ function enforceViewerRole(
     return true;
   }
 
+  incrementRuntimeMetric('viewerRoleRejected');
+  logServerEvent('viewer_auth.rejected', {
+    reason: 'insufficient_role',
+    transport: 'websocket_message',
+    requiredRole,
+    user: identity.user,
+    roles: identity.roles,
+  });
   sendViewerForbidden(ws, requiredRole);
   return false;
 }

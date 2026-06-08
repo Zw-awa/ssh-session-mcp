@@ -1,0 +1,125 @@
+deploymentMode: singleNode
+
+image:
+  repository: docker.io/zwawa/ssh-session-mcp
+  tag: latest
+  pullPolicy: IfNotPresent
+
+replicaCount: 1
+
+serviceAccount:
+  create: true
+  name: ""
+
+podAnnotations: {}
+podLabels: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+  fsGroup: 1000
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+resources: {}
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+env:
+  viewerPort: "8793"
+  viewerHost: "0.0.0.0"
+  autoOpenTerminal: "false"
+  stateDir: /workspace/state
+  logMode: stderr
+  runtimeMode: single-node
+  store: memory
+  nodeId: ""
+  publicBaseUrl: ""
+  authMode: off
+  trustProxy: "false"
+  authUserHeader: x-ssh-session-mcp-user
+  authRoleHeader: x-ssh-session-mcp-role
+  localMode: "false"
+  debugMode: "false"
+
+extraEnv: []
+envFromSecrets: []
+
+config:
+  existingConfigMap: ""
+  mountPath: /workspace/ssh-session-mcp.config.json
+  inlineJson: ""
+
+stateVolume:
+  type: emptyDir
+  existingClaim: ""
+  sizeLimit: ""
+
+tmpfs:
+  enabled: true
+  sizeLimit: 64Mi
+
+service:
+  type: ClusterIP
+  port: 8793
+  annotations: {}
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: ssh-mcp.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+metrics:
+  enabled: true
+  serviceMonitor:
+    enabled: false
+    interval: 30s
+    scrapeTimeout: 10s
+    labels: {}
+
+readinessProbe:
+  initialDelaySeconds: 5
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 3
+
+livenessProbe:
+  initialDelaySeconds: 10
+  periodSeconds: 20
+  timeoutSeconds: 5
+  failureThreshold: 3
+
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 80
+
+podDisruptionBudget:
+  enabled: false
+  minAvailable: 1
+
+networkPolicy:
+  enabled: false
+  allowIngressNamespaces: []
+  allowEgressCidrs: []
+
+distributed:
+  redis:
+    url: ""
+    existingSecret: ""
+    secretKey: SSH_MCP_REDIS_URL

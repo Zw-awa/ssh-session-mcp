@@ -1,0 +1,11 @@
+{{- if and (not .Values.config.existingConfigMap) .Values.config.inlineJson }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "ssh-session-mcp.fullname" . }}-config
+  labels:
+    {{- include "ssh-session-mcp.labels" . | nindent 4 }}
+data:
+  ssh-session-mcp.config.json: |
+{{ .Values.config.inlineJson | indent 4 }}
+{{- end }}

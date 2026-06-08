@@ -1,0 +1,26 @@
+deploymentMode: distributedV0
+replicaCount: 2
+
+env:
+  publicBaseUrl: https://ssh-mcp.example.com
+  authMode: proxy
+  trustProxy: "true"
+  authUserHeader: x-forwarded-user
+  authRoleHeader: x-forwarded-role
+
+distributed:
+  redis:
+    existingSecret: ssh-session-mcp-distributed-secrets
+    secretKey: SSH_MCP_REDIS_URL
+
+ingress:
+  enabled: true
+  hosts:
+    - host: ssh-mcp.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1

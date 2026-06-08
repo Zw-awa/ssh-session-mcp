@@ -1,0 +1,15 @@
+deploymentMode: singleNode
+replicaCount: 1
+
+env:
+  runtimeMode: single-node
+  store: memory
+  authMode: off
+  trustProxy: "false"
+
+service:
+  type: ClusterIP
+  port: 8793
+
+ingress:
+  enabled: false

@@ -68,6 +68,7 @@ Key directories and files:
 | `docs/` | Supporting documentation such as contracts, failure taxonomy, platform notes, and Docker usage |
 | `docs/examples/` | Example config files for normal and Docker-oriented setups |
 | `scripts/` | Build, version sync, and local operator helper scripts |
+| `deploy/helm/` | Helm chart for Kubernetes deployment in single-node or distributed v0 mode |
 | `site/` | GitHub Pages landing page source |
 | `dist/` | Generated static site output from `npm run build:site` |
 | `build/` | Generated JavaScript output from `npm run build` |
@@ -579,6 +580,7 @@ Choose one of these minimum configuration sets:
   - `/metrics` for Prometheus text metrics
 - Example single-instance Kubernetes baseline: [docs/examples/ssh-session-mcp.k8s.single-instance.yaml](docs/examples/ssh-session-mcp.k8s.single-instance.yaml)
 - Example distributed Kubernetes baseline: [docs/examples/ssh-session-mcp.k8s.distributed.example.yaml](docs/examples/ssh-session-mcp.k8s.distributed.example.yaml)
+- Primary Kubernetes installation path: `deploy/helm/ssh-session-mcp`
 
 Example config file: [docs/examples/ssh-session-mcp.config.example.json](docs/examples/ssh-session-mcp.config.example.json)
 
@@ -588,6 +590,10 @@ Example config file: [docs/examples/ssh-session-mcp.config.example.json](docs/ex
 - `.env` is ignored by git and npm.
 - Viewer HTTP binds to localhost by default.
 - The MCP server treats terminal mode and input lock as first-class safety signals.
+- CI runs Trivy filesystem and container-image scans against high and critical vulnerabilities.
+- Release builds generate a CycloneDX SBOM for the published GHCR image digest and attach it to the GitHub release.
+- Release builds sign the published GHCR image digest with keyless Cosign.
+- GHCR digest is the primary verification path. Docker Hub remains a distribution path, not the main signature-verification target.
 
 See [SECURITY.md](SECURITY.md) for the full policy.
 
@@ -609,6 +615,8 @@ More detail: [docs/platform-compatibility.md](docs/platform-compatibility.md)
 - [docs/failure-taxonomy.md](docs/failure-taxonomy.md)
 - [docs/acceptance-scenarios.md](docs/acceptance-scenarios.md)
 - [docs/docker.md](docs/docker.md)
+- [docs/kubernetes.md](docs/kubernetes.md)
+- [docs/ingress-proxy-auth.md](docs/ingress-proxy-auth.md)
 - [CHANGELOG.md](CHANGELOG.md)
 
 ## Development

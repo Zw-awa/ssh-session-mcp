@@ -68,6 +68,7 @@
 | `docs/` | 契约、失败分类、平台说明、Docker 使用说明等补充文档 |
 | `docs/examples/` | 普通模式和 Docker 模式的配置示例 |
 | `scripts/` | 构建、版本同步和本地操作者 helper 脚本 |
+| `deploy/helm/` | Kubernetes 部署用 Helm Chart，支持 single-node 和 distributed v0 |
 | `site/` | GitHub Pages 落地页源码 |
 | `dist/` | `npm run build:site` 生成的静态站点输出 |
 | `build/` | `npm run build` 生成的 JavaScript 构建产物 |
@@ -587,6 +588,7 @@ proxy auth 最适合放在 distributed + trusted reverse proxy 的组合里。�
   - `/metrics` Prometheus 文本指标
 - 单实例 Kubernetes 基线示例见 [docs/examples/ssh-session-mcp.k8s.single-instance.yaml](docs/examples/ssh-session-mcp.k8s.single-instance.yaml)
 - distributed Kubernetes 基线示例见 [docs/examples/ssh-session-mcp.k8s.distributed.example.yaml](docs/examples/ssh-session-mcp.k8s.distributed.example.yaml)
+- Kubernetes 正式安装入口是 `deploy/helm/ssh-session-mcp`
 
 配置示例：[docs/examples/ssh-session-mcp.config.example.json](docs/examples/ssh-session-mcp.config.example.json)
 
@@ -596,6 +598,10 @@ proxy auth 最适合放在 distributed + trusted reverse proxy 的组合里。�
 - `.env` 不会被 git 和 npm 包带出去
 - Viewer 默认只绑定到本机 localhost
 - MCP server 把终端模式和输入锁当成一等安全信号
+- CI 会对源码文件系统和容器镜像运行 Trivy 高危/严重漏洞扫描
+- Release 会为发布到 GHCR 的镜像 digest 生成 CycloneDX SBOM，并作为 GitHub Release 附件发布
+- Release 会对发布到 GHCR 的镜像 digest 执行 Cosign 无密钥签名
+- GHCR digest 是官方验签主路径；Docker Hub 仍可分发，但不是主验签入口
 
 完整策略见 [SECURITY.md](SECURITY.md)。
 
@@ -617,6 +623,8 @@ proxy auth 最适合放在 distributed + trusted reverse proxy 的组合里。�
 - [docs/failure-taxonomy.md](docs/failure-taxonomy.md)
 - [docs/acceptance-scenarios.md](docs/acceptance-scenarios.md)
 - [docs/docker.md](docs/docker.md)
+- [docs/kubernetes.md](docs/kubernetes.md)
+- [docs/ingress-proxy-auth.md](docs/ingress-proxy-auth.md)
 - [CHANGELOG.md](CHANGELOG.md)
 
 ## 开发

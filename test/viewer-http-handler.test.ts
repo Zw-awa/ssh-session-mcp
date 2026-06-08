@@ -285,6 +285,9 @@ describe('viewer http handler', () => {
     expect(metricsState.headers['content-type']).toContain('text/plain');
     expect(metricsState.body).toContain('ssh_session_mcp_up 1');
     expect(metricsState.body).toContain('ssh_session_mcp_viewer_ready 1');
+    expect(metricsState.body).toContain('ssh_session_mcp_remote_owner_http_total');
+    expect(metricsState.body).toContain('ssh_session_mcp_viewer_auth_rejected_total');
+    expect(metricsState.body).toContain('ssh_session_mcp_node_heartbeat_failed_total');
   });
 
   it('returns health metadata with the active viewer base url', async () => {

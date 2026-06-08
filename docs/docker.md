@@ -183,6 +183,13 @@ Recommended distributed v0 model:
 - trusted reverse proxy that injects viewer identity headers
 - readiness probe on `/readyz` so Redis or heartbeat failures keep the pod out of service
 
+## Supply Chain Notes
+
+- CI runs Trivy filesystem and image scans for high and critical vulnerabilities.
+- Release builds generate a CycloneDX SBOM for the published GHCR image digest and attach it to the GitHub release assets.
+- Release builds sign the published GHCR image digest with keyless Cosign.
+- For verification, prefer `ghcr.io/...@sha256:...` over tag-only pulls.
+
 ## MCP Client Command Examples
 
 ### Claude Code

@@ -51,6 +51,8 @@ function writeValidRepositoryFixture(root: string) {
 
   writeText(root, 'docs/contracts.md', '# contracts\n');
   writeText(root, 'docs/docker.md', '# docker\n');
+  writeText(root, 'docs/kubernetes.md', '# kubernetes\n');
+  writeText(root, 'docs/ingress-proxy-auth.md', '# ingress proxy auth\n');
   writeText(root, 'docs/failure-taxonomy.md', '# failure taxonomy\n');
   writeText(root, 'docs/platform-compatibility.md', '# compatibility\n');
   writeText(root, 'docs/acceptance-scenarios.md', [
@@ -115,6 +117,12 @@ function writeValidRepositoryFixture(root: string) {
   );
 
   writeText(root, 'docs/examples/ssh-session-mcp.k8s.single-instance.yaml', 'apiVersion: v1\nkind: ConfigMap\n');
+  writeText(root, 'docs/examples/ssh-session-mcp.k8s.distributed.example.yaml', 'apiVersion: apps/v1\nkind: Deployment\n');
+  writeText(root, 'deploy/helm/ssh-session-mcp/Chart.yaml', 'apiVersion: v2\nname: ssh-session-mcp\nversion: 0.1.0\n');
+  writeText(root, 'deploy/helm/ssh-session-mcp/values.yaml', 'deploymentMode: singleNode\n');
+  writeText(root, 'deploy/helm/ssh-session-mcp/values-single-node.yaml', 'deploymentMode: singleNode\n');
+  writeText(root, 'deploy/helm/ssh-session-mcp/values-distributed-v0.yaml', 'deploymentMode: distributedV0\n');
+  writeText(root, 'scripts/validate-helm.mjs', 'console.log("ok");\n');
 }
 
 describe('repo validation helpers', () => {

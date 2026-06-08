@@ -1,0 +1,6 @@
+apiVersion: v2
+name: ssh-session-mcp
+description: Helm chart for deploying ssh-session-mcp in single-node or distributed v0 mode.
+type: application
+version: 0.1.0
+appVersion: "2.8.0"

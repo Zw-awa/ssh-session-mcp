@@ -120,6 +120,32 @@ npm audit fix
 - `@modelcontextprotocol/sdk`: MCP SDK，关注安全公告
 - `zod`: 输入验证库，确保所有输入都经过验证
 
+## 供应链安全
+
+### 容器镜像扫描
+
+- CI 会对仓库文件系统运行 Trivy 扫描
+- CI / Release 会对构建出的容器镜像运行 Trivy 高危与严重漏洞扫描
+
+### SBOM
+
+- Release 会为发布到 GHCR 的镜像 digest 生成 CycloneDX JSON 格式的 SBOM
+- SBOM 会作为 GitHub Release 附件发布
+
+### 镜像签名
+
+- Release 会对发布到 GHCR 的镜像 digest 执行 Cosign keyless 签名
+- 该签名依赖 GitHub Actions OIDC，不需要在仓库中保存签名私钥
+- GHCR digest 是官方验签主路径；Docker Hub 不作为主要验签入口
+
+验证示例：
+
+```bash
+cosign verify ghcr.io/<owner>/ssh-session-mcp@sha256:<digest> \
+  --certificate-identity-regexp "https://github.com/.+" \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+```
+
 ## 漏洞披露政策
 
 ### 负责任披露

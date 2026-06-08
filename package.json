@@ -25,6 +25,7 @@
     "prepare": "npm run build",
     "build": "tsc && shx chmod +x build/*.js",
     "build:site": "node scripts/build-site.mjs",
+    "validate:helm": "node scripts/validate-helm.mjs",
     "version:check": "node scripts/check-version-consistency.mjs",
     "version:sync": "node scripts/sync-version.mjs",
     "config": "node build/config-cli.js",

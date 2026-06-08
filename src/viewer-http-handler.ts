@@ -17,7 +17,7 @@ import {
   buildConfiguredSessionPolicyRules,
   AUTH_MODE, clusterSessions, distributedModeEnabled, distributedStoreHealthy,
   extractViewerIdentity, forgetSession, getRoutableViewerBaseUrl,
-  hasViewerRole, nodeLastHeartbeatAt, NODE_HEARTBEAT_TTL_SECONDS, refreshDistributedCaches, rememberSession,
+  hasViewerRole, incrementRuntimeMetric, nodeLastHeartbeatAt, NODE_HEARTBEAT_TTL_SECONDS, refreshDistributedCaches, rememberSession,
   resolveRemoteOwnerForBinding, resolveRemoteOwnerForSessionRef,
   type RemoteOwnerTarget, type ViewerIdentity, type ViewerRole,
   VIEWER_PORT_SETTING, RUNTIME_PATHS, LOG_CONFIG,
@@ -26,7 +26,7 @@ import {
   type SessionWriteRecord, type ViewerAccessPolicy, McpError, ErrorCode, buildUserLockMessage,
   viewerAccessPolicy, setViewerAccessPolicy, saveViewerAccessPolicy,
   runningCommands, viewerBindings, viewerProcesses, viewerWss,
-  validateCommand, detectTerminalMode, logServerEvent,
+  validateCommand, detectTerminalMode, logServerEvent, runtimeMetrics,
 } from './server-state.js';
 import {
   renderViewerErrorPage,
@@ -92,6 +92,14 @@ function writeRemoteOwnerError(
   writers: ViewerResponseWriters,
   preferHtml = false,
 ) {
+  incrementRuntimeMetric('remoteOwnerHttp');
+  logServerEvent('viewer_http.remote_owner', {
+    routeType,
+    ownerNodeId: target.ownerNodeId,
+    sessionId: target.sessionId,
+    bindingKey: target.bindingKey,
+    redirectUrl: target.redirectUrl,
+  });
   if (preferHtml) {
     const baseUrl = target.redirectUrl || target.routableBaseUrl || getRoutableViewerBaseUrl() || '/';
     writers.writeHtml(409, renderViewerErrorPage({
@@ -160,10 +168,23 @@ function ensureViewerIdentityAuthorized(identity: ViewerIdentity | undefined, re
   }
 
   if (!identity) {
+    incrementRuntimeMetric('viewerAuthRejected');
+    logServerEvent('viewer_auth.rejected', {
+      reason: 'missing_identity_headers',
+      requiredRole,
+      authMode: AUTH_MODE,
+    });
     throw new McpError(ErrorCode.InvalidRequest, 'Missing trusted viewer identity headers.');
   }
 
   if (!hasViewerRole(identity, requiredRole)) {
+    incrementRuntimeMetric('viewerRoleRejected');
+    logServerEvent('viewer_auth.rejected', {
+      reason: 'insufficient_role',
+      requiredRole,
+      user: identity.user,
+      roles: identity.roles,
+    });
     throw new McpError(ErrorCode.InvalidRequest, `Viewer identity lacks required role: ${requiredRole}`);
   }
 }
@@ -355,6 +376,24 @@ function buildMetricsPayload() {
     '# HELP ssh_session_mcp_orphaned_cluster_sessions Number of distributed session records marked unavailable.',
     '# TYPE ssh_session_mcp_orphaned_cluster_sessions gauge',
     `ssh_session_mcp_orphaned_cluster_sessions ${orphanedClusterSessions}`,
+    '# HELP ssh_session_mcp_remote_owner_http_total Number of HTTP requests rejected because the session owner is remote.',
+    '# TYPE ssh_session_mcp_remote_owner_http_total counter',
+    `ssh_session_mcp_remote_owner_http_total ${runtimeMetrics.remoteOwnerHttp}`,
+    '# HELP ssh_session_mcp_remote_owner_ws_total Number of websocket attach attempts rejected because the session owner is remote.',
+    '# TYPE ssh_session_mcp_remote_owner_ws_total counter',
+    `ssh_session_mcp_remote_owner_ws_total ${runtimeMetrics.remoteOwnerWs}`,
+    '# HELP ssh_session_mcp_viewer_auth_rejected_total Number of viewer requests rejected because identity headers were missing.',
+    '# TYPE ssh_session_mcp_viewer_auth_rejected_total counter',
+    `ssh_session_mcp_viewer_auth_rejected_total ${runtimeMetrics.viewerAuthRejected}`,
+    '# HELP ssh_session_mcp_viewer_role_rejected_total Number of viewer requests rejected because the viewer role was insufficient.',
+    '# TYPE ssh_session_mcp_viewer_role_rejected_total counter',
+    `ssh_session_mcp_viewer_role_rejected_total ${runtimeMetrics.viewerRoleRejected}`,
+    '# HELP ssh_session_mcp_distributed_store_unreachable_total Number of failed distributed store health checks.',
+    '# TYPE ssh_session_mcp_distributed_store_unreachable_total counter',
+    `ssh_session_mcp_distributed_store_unreachable_total ${runtimeMetrics.distributedStoreUnreachable}`,
+    '# HELP ssh_session_mcp_node_heartbeat_failed_total Number of failed distributed node heartbeat attempts.',
+    '# TYPE ssh_session_mcp_node_heartbeat_failed_total counter',
+    `ssh_session_mcp_node_heartbeat_failed_total ${runtimeMetrics.nodeHeartbeatFailed}`,
     '',
   ].join('\n');
 }

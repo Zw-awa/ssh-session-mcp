@@ -12,6 +12,7 @@ import {
   loadViewerProcessState,
   loadViewerAccessPolicy,
   removeServerInfoState,
+  incrementRuntimeMetric,
   logServerEvent,
   DEFAULT_IDLE_SWEEP_MS,
   LOCAL_MODE,
@@ -121,6 +122,8 @@ async function main() {
 
   const heartbeatTimer = setInterval(() => {
     void heartbeatDistributedNode().catch(() => {
+      incrementRuntimeMetric('nodeHeartbeatFailed');
+      logServerEvent('node_heartbeat.failed', {});
       // ignore heartbeat failures; readiness will report them
     });
   }, NODE_HEARTBEAT_INTERVAL_MS);

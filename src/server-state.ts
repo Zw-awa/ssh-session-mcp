@@ -469,6 +469,14 @@ export let viewerAccessPolicy: ViewerAccessPolicy = {
   updatedAt: new Date().toISOString(),
 };
 export const logger = new SessionLogger(LOG_CONFIG);
+export const runtimeMetrics = {
+  remoteOwnerHttp: 0,
+  remoteOwnerWs: 0,
+  viewerAuthRejected: 0,
+  viewerRoleRejected: 0,
+  distributedStoreUnreachable: 0,
+  nodeHeartbeatFailed: 0,
+};
 
 export function setViewerServer(s: HttpServer | undefined) { viewerServer = s; }
 export function setViewerWss(w: WebSocketServer | undefined) { viewerWss = w; }
@@ -476,6 +484,7 @@ export function setViewerStateLoaded(v: boolean) { viewerStateLoaded = v; }
 export function setActualViewerPort(p: number) { actualViewerPort = p; }
 export function setNodeLastHeartbeatAt(value: string | undefined) { nodeLastHeartbeatAt = value; }
 export function setViewerAccessPolicy(policy: ViewerAccessPolicy) { viewerAccessPolicy = policy; }
+export function incrementRuntimeMetric(name: keyof typeof runtimeMetrics) { runtimeMetrics[name] += 1; }
 
 export function rememberClusterSession(record: ClusterSessionRecord) {
   clusterSessions.set(record.summary.sessionId, record);
@@ -1134,7 +1143,15 @@ export async function distributedStoreHealthy() {
     return true;
   }
 
-  return distributedStateStore.ping();
+  const healthy = await distributedStateStore.ping();
+  if (!healthy) {
+    incrementRuntimeMetric('distributedStoreUnreachable');
+    logServerEvent('distributed_store.unreachable', {
+      runtimeMode: RUNTIME_MODE,
+      store: STORE_KIND,
+    });
+  }
+  return healthy;
 }
 
 export function resolveConfiguredDefaultDeviceId() {

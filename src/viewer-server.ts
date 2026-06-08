@@ -12,6 +12,7 @@ import {
   setViewerServer,
   setViewerWss,
   setActualViewerPort,
+  incrementRuntimeMetric,
   logServerEvent,
   DEFAULT_VIEWER_HOST,
   VIEWER_PORT_SETTING,
@@ -90,12 +91,22 @@ export async function startViewerServer() {
   httpServer.on('upgrade', (request, socket, head) => {
     void (async () => {
       if (!viewerRequestAllowed(request.socket.remoteAddress) || !viewerOriginAllowed(typeof request.headers.origin === 'string' ? request.headers.origin : undefined)) {
+        incrementRuntimeMetric('viewerAuthRejected');
+        logServerEvent('viewer_auth.rejected', {
+          reason: 'viewer_policy_denied',
+          transport: 'websocket_upgrade',
+        });
         rejectUpgrade(socket, 403, { error: 'Viewer access denied by policy.' });
         return;
       }
 
       const identity = extractViewerIdentity(request.headers);
       if (AUTH_MODE === 'proxy' && !identity) {
+        incrementRuntimeMetric('viewerAuthRejected');
+        logServerEvent('viewer_auth.rejected', {
+          reason: 'missing_identity_headers',
+          transport: 'websocket_upgrade',
+        });
         rejectUpgrade(socket, 403, { error: 'Missing trusted viewer identity headers.' });
         return;
       }
@@ -114,6 +125,7 @@ export async function startViewerServer() {
         ? await resolveRemoteOwnerForBinding(route.ref, `${url.pathname}${url.search}`)
         : await resolveRemoteOwnerForSessionRef(route.ref, `${url.pathname}${url.search}`);
       if (remoteOwner) {
+        incrementRuntimeMetric('remoteOwnerWs');
         logServerEvent('viewer_ws.remote_owner', {
           kind: route.kind,
           ref: route.ref,

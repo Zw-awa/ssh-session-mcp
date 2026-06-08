@@ -66,6 +66,18 @@ jobs:
       - name: Build static site
         run: npm run build:site
 
+      - name: Install Helm
+        shell: bash
+        run: |
+          set -euo pipefail
+          HELM_VERSION="v3.16.3"
+          curl -fsSL "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz" -o helm.tgz
+          tar -xzf helm.tgz
+          sudo mv linux-amd64/helm /usr/local/bin/helm
+
+      - name: Validate Helm chart renders and Kubernetes manifests
+        run: npm run validate:helm
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -133,6 +145,7 @@ jobs:
             type=raw,value=latest
 
       - name: Build and publish GHCR image
+        id: ghcr-build
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -141,6 +154,89 @@ jobs:
           push: true
           tags: ${{ steps.docker-meta-ghcr.outputs.tags }}
           labels: ${{ steps.docker-meta-ghcr.outputs.labels }}
+
+      - name: Run Trivy filesystem scan
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          format: table
+          ignore-unfixed: true
+          severity: CRITICAL,HIGH
+          exit-code: 1
+
+      - name: Run Trivy image scan against GHCR release image
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ghcr.io/${{ github.repository }}@${{ steps.ghcr-build.outputs.digest }}
+          format: table
+          ignore-unfixed: true
+          severity: CRITICAL,HIGH
+          exit-code: 1
+
+      - name: Install Syft
+        shell: bash
+        run: |
+          set -euo pipefail
+          SYFT_VERSION="v1.17.0"
+          curl -fsSL "https://github.com/anchore/syft/releases/download/${SYFT_VERSION}/syft_${SYFT_VERSION#v}_linux_amd64.tar.gz" -o syft.tgz
+          tar -xzf syft.tgz syft
+          sudo mv syft /usr/local/bin/syft
+
+      - name: Generate SBOM for published image
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release-assets
+          DIGEST="${{ steps.ghcr-build.outputs.digest }}"
+          SHORT_DIGEST="${DIGEST#sha256:}"
+          SHORT_DIGEST="${SHORT_DIGEST:0:12}"
+          syft "ghcr.io/${GITHUB_REPOSITORY}@${DIGEST}" -o cyclonedx-json > "release-assets/${GITHUB_REPOSITORY##*/}-${GITHUB_REF_NAME}-sbom-${SHORT_DIGEST}.cyclonedx.json"
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v3.8.1
+
+      - name: Sign GHCR image digest with keyless Cosign
+        shell: bash
+        env:
+          COSIGN_YES: "true"
+        run: |
+          set -euo pipefail
+          cosign sign "ghcr.io/${GITHUB_REPOSITORY}@${{ steps.ghcr-build.outputs.digest }}"
+
+      - name: Smoke test distributed mode with Redis
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker network create ssh-mcp-release-net
+          docker run -d --name ssh-mcp-redis --network ssh-mcp-release-net redis:7-alpine
+          docker run -d --name ssh-session-mcp-distributed --network ssh-mcp-release-net \
+            -e SSH_MCP_LOCAL=1 \
+            -e VIEWER_PORT=8794 \
+            -e VIEWER_HOST=0.0.0.0 \
+            -e SSH_MCP_RUNTIME_MODE=distributed \
+            -e SSH_MCP_STORE=redis \
+            -e SSH_MCP_REDIS_URL=redis://ssh-mcp-redis:6379/0 \
+            -e SSH_MCP_NODE_ID=release-node-a \
+            -e SSH_MCP_PUBLIC_BASE_URL=https://ssh-mcp.example.com \
+            -e SSH_MCP_AUTH_MODE=proxy \
+            -e SSH_MCP_TRUST_PROXY=true \
+            -p 8794:8794 \
+            ghcr.io/${{ github.repository }}:${{ github.ref_name }}
+
+          trap 'docker logs ssh-session-mcp-distributed || true; docker logs ssh-mcp-redis || true; docker rm -f ssh-session-mcp-distributed ssh-mcp-redis || true; docker network rm ssh-mcp-release-net || true' EXIT
+
+          for attempt in $(seq 1 25); do
+            if curl --fail --silent http://127.0.0.1:8794/readyz >/tmp/ssh-mcp-distributed-readyz.json; then
+              break
+            fi
+            sleep 1
+          done
+
+          curl --fail --silent http://127.0.0.1:8794/metrics >/tmp/ssh-mcp-distributed-metrics.txt
+          grep -q '"distributedMode": true' /tmp/ssh-mcp-distributed-readyz.json
+          grep -q '"distributedStoreReachable": true' /tmp/ssh-mcp-distributed-readyz.json
+          docker exec ssh-mcp-redis redis-cli --scan --pattern 'ssh-session-mcp:nodes:*' | grep -q 'ssh-session-mcp:nodes:release-node-a'
 
       - name: Publish to npm with Trusted Publishing
         run: npm publish --access public --provenance

@@ -39,6 +39,18 @@ jobs:
       - name: Build GitHub Pages site
         run: npm run build:site
 
+      - name: Install Helm
+        shell: bash
+        run: |
+          set -euo pipefail
+          HELM_VERSION="v3.16.3"
+          curl -fsSL "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz" -o helm.tgz
+          tar -xzf helm.tgz
+          sudo mv linux-amd64/helm /usr/local/bin/helm
+
+      - name: Validate Helm chart renders and Kubernetes manifests
+        run: npm run validate:helm
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -50,6 +62,25 @@ jobs:
           tags: ssh-session-mcp:ci
           push: false
           load: true
+
+      - name: Run Trivy filesystem scan
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          format: table
+          ignore-unfixed: true
+          severity: CRITICAL,HIGH
+          exit-code: 1
+
+      - name: Run Trivy image scan
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ssh-session-mcp:ci
+          format: table
+          ignore-unfixed: true
+          severity: CRITICAL,HIGH
+          exit-code: 1
 
       - name: Smoke test container health endpoint
         shell: bash
@@ -75,3 +106,38 @@ jobs:
           curl --fail --silent http://127.0.0.1:8793/metrics >/tmp/ssh-mcp-metrics.txt
           grep -q '"ok": true' /tmp/ssh-mcp-readyz.json
           grep -q 'ssh_session_mcp_up 1' /tmp/ssh-mcp-metrics.txt
+
+      - name: Smoke test distributed mode with Redis
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker network create ssh-mcp-ci-net
+          docker run -d --name ssh-mcp-redis --network ssh-mcp-ci-net redis:7-alpine
+          docker run -d --name ssh-session-mcp-distributed --network ssh-mcp-ci-net \
+            -e SSH_MCP_LOCAL=1 \
+            -e VIEWER_PORT=8794 \
+            -e VIEWER_HOST=0.0.0.0 \
+            -e SSH_MCP_RUNTIME_MODE=distributed \
+            -e SSH_MCP_STORE=redis \
+            -e SSH_MCP_REDIS_URL=redis://ssh-mcp-redis:6379/0 \
+            -e SSH_MCP_NODE_ID=ci-node-a \
+            -e SSH_MCP_PUBLIC_BASE_URL=https://ssh-mcp.example.com \
+            -e SSH_MCP_AUTH_MODE=proxy \
+            -e SSH_MCP_TRUST_PROXY=true \
+            -p 8794:8794 \
+            ssh-session-mcp:ci
+
+          trap 'docker logs ssh-session-mcp-distributed || true; docker logs ssh-mcp-redis || true; docker rm -f ssh-session-mcp-distributed ssh-mcp-redis || true; docker network rm ssh-mcp-ci-net || true' EXIT
+
+          for attempt in $(seq 1 25); do
+            if curl --fail --silent http://127.0.0.1:8794/readyz >/tmp/ssh-mcp-distributed-readyz.json; then
+              break
+            fi
+            sleep 1
+          done
+
+          curl --fail --silent http://127.0.0.1:8794/metrics >/tmp/ssh-mcp-distributed-metrics.txt
+          grep -q '"distributedMode": true' /tmp/ssh-mcp-distributed-readyz.json
+          grep -q '"distributedStoreReachable": true' /tmp/ssh-mcp-distributed-readyz.json
+          grep -q 'ssh_session_mcp_owner_sessions' /tmp/ssh-mcp-distributed-metrics.txt
+          docker exec ssh-mcp-redis redis-cli --scan --pattern 'ssh-session-mcp:nodes:*' | grep -q 'ssh-session-mcp:nodes:ci-node-a'

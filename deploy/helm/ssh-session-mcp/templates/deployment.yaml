@@ -1,0 +1,164 @@
+{{- if and (eq .Values.deploymentMode "distributedV0") (not .Values.distributed.redis.url) (not .Values.distributed.redis.existingSecret) }}
+{{- fail "distributedV0 mode requires distributed.redis.url or distributed.redis.existingSecret" }}
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "ssh-session-mcp.fullname" . }}
+  labels:
+    {{- include "ssh-session-mcp.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "ssh-session-mcp.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "ssh-session-mcp.selectorLabels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "ssh-session-mcp.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: ssh-session-mcp
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          env:
+            - name: VIEWER_PORT
+              value: {{ .Values.env.viewerPort | quote }}
+            - name: VIEWER_HOST
+              value: {{ .Values.env.viewerHost | quote }}
+            - name: AUTO_OPEN_TERMINAL
+              value: {{ .Values.env.autoOpenTerminal | quote }}
+            - name: SSH_MCP_STATE_DIR
+              value: {{ .Values.env.stateDir | quote }}
+            - name: SSH_MCP_LOG_MODE
+              value: {{ .Values.env.logMode | quote }}
+            - name: SSH_MCP_RUNTIME_MODE
+              value: {{ (eq .Values.deploymentMode "distributedV0" | ternary "distributed" .Values.env.runtimeMode) | quote }}
+            - name: SSH_MCP_STORE
+              value: {{ (eq .Values.deploymentMode "distributedV0" | ternary "redis" .Values.env.store) | quote }}
+            - name: SSH_MCP_NODE_ID
+              value: {{ if .Values.env.nodeId }}{{ .Values.env.nodeId | quote }}{{ else }}"{{ include "ssh-session-mcp.fullname" . }}-$(POD_NAME)"{{ end }}
+            - name: SSH_MCP_PUBLIC_BASE_URL
+              value: {{ .Values.env.publicBaseUrl | quote }}
+            - name: SSH_MCP_AUTH_MODE
+              value: {{ (eq .Values.deploymentMode "distributedV0" | ternary "proxy" .Values.env.authMode) | quote }}
+            - name: SSH_MCP_TRUST_PROXY
+              value: {{ (eq .Values.deploymentMode "distributedV0" | ternary "true" .Values.env.trustProxy) | quote }}
+            - name: SSH_MCP_AUTH_USER_HEADER
+              value: {{ .Values.env.authUserHeader | quote }}
+            - name: SSH_MCP_AUTH_ROLE_HEADER
+              value: {{ .Values.env.authRoleHeader | quote }}
+            - name: SSH_MCP_LOCAL
+              value: {{ .Values.env.localMode | quote }}
+            - name: SSH_MCP_DEBUG
+              value: {{ .Values.env.debugMode | quote }}
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            {{- if .Values.config.existingConfigMap | or .Values.config.inlineJson }}
+            - name: SSH_MCP_CONFIG
+              value: {{ .Values.config.mountPath | quote }}
+            {{- end }}
+            {{- if .Values.distributed.redis.url }}
+            - name: SSH_MCP_REDIS_URL
+              value: {{ .Values.distributed.redis.url | quote }}
+            {{- else if .Values.distributed.redis.existingSecret }}
+            - name: SSH_MCP_REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.distributed.redis.existingSecret }}
+                  key: {{ .Values.distributed.redis.secretKey }}
+            {{- end }}
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          {{- if .Values.envFromSecrets }}
+          envFrom:
+            {{- range .Values.envFromSecrets }}
+            - secretRef:
+                name: {{ . }}
+            {{- end }}
+          {{- end }}
+          ports:
+            - name: viewer
+              containerPort: {{ .Values.service.port }}
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: viewer
+            initialDelaySeconds: {{ .Values.readinessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.readinessProbe.periodSeconds }}
+            timeoutSeconds: {{ .Values.readinessProbe.timeoutSeconds }}
+            failureThreshold: {{ .Values.readinessProbe.failureThreshold }}
+          livenessProbe:
+            httpGet:
+              path: /livez
+              port: viewer
+            initialDelaySeconds: {{ .Values.livenessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.livenessProbe.periodSeconds }}
+            timeoutSeconds: {{ .Values.livenessProbe.timeoutSeconds }}
+            failureThreshold: {{ .Values.livenessProbe.failureThreshold }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: state
+              mountPath: {{ .Values.env.stateDir }}
+            {{- if .Values.tmpfs.enabled }}
+            - name: tmp
+              mountPath: /tmp
+            {{- end }}
+            {{- if .Values.config.existingConfigMap | or .Values.config.inlineJson }}
+            - name: config
+              mountPath: {{ .Values.config.mountPath }}
+              subPath: ssh-session-mcp.config.json
+              readOnly: true
+            {{- end }}
+      volumes:
+        - name: state
+          {{- if eq .Values.stateVolume.type "persistentVolumeClaim" }}
+          persistentVolumeClaim:
+            claimName: {{ .Values.stateVolume.existingClaim | default (include "ssh-session-mcp.stateVolumeName" .) }}
+          {{- else }}
+          emptyDir:
+            {{- if .Values.stateVolume.sizeLimit }}
+            sizeLimit: {{ .Values.stateVolume.sizeLimit }}
+            {{- end }}
+          {{- end }}
+        {{- if .Values.tmpfs.enabled }}
+        - name: tmp
+          emptyDir:
+            medium: Memory
+            {{- if .Values.tmpfs.sizeLimit }}
+            sizeLimit: {{ .Values.tmpfs.sizeLimit }}
+            {{- end }}
+        {{- end }}
+        {{- if .Values.config.existingConfigMap | or .Values.config.inlineJson }}
+        - name: config
+          configMap:
+            name: {{ .Values.config.existingConfigMap | default (printf "%s-config" (include "ssh-session-mcp.fullname" .)) }}
+        {{- end }}
