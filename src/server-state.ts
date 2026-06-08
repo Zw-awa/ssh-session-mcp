@@ -311,6 +311,21 @@ export function parseArgv() {
   return config;
 }
 
+function parseBooleanSetting(value: string | null | undefined): boolean | undefined {
+  if (value === null) {
+    return true;
+  }
+
+  if (typeof value !== 'string') {
+    return undefined;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  if (normalized === 'true' || normalized === '1') return true;
+  if (normalized === 'false' || normalized === '0') return false;
+  return undefined;
+}
+
 // ── Configuration constants ──────────────────────────────────────────────────
 
 export const isCliEnabled = process.env.SSH_MCP_DISABLE_MAIN !== '1';
@@ -392,7 +407,7 @@ export const STORE_KIND: StoreKind = (
   || (RUNTIME_MODE === 'distributed' ? 'redis' : 'memory')
 ) === 'redis' ? 'redis' : 'memory';
 export const REDIS_URL = argvConfig.redisUrl || process.env.SSH_MCP_REDIS_URL || CONFIG_DEFAULTS?.redisUrl;
-export const NODE_ID = resolveInstanceId(argvConfig.nodeId || process.env.SSH_MCP_NODE_ID || INSTANCE_ID);
+export const NODE_ID = resolveInstanceId(argvConfig.nodeId || process.env.SSH_MCP_NODE_ID || CONFIG_DEFAULTS?.nodeId || INSTANCE_ID);
 export const PUBLIC_BASE_URL = sanitizeOptionalText(argvConfig.publicBaseUrl || process.env.SSH_MCP_PUBLIC_BASE_URL || CONFIG_DEFAULTS?.publicBaseUrl);
 export const AUTH_MODE: AuthMode = (
   argvConfig.authMode
@@ -400,11 +415,10 @@ export const AUTH_MODE: AuthMode = (
   || CONFIG_DEFAULTS?.authMode
   || 'off'
 ) === 'proxy' ? 'proxy' : 'off';
-export const TRUST_PROXY = argvConfig.trustProxy === 'true'
-  || argvConfig.trustProxy === '1'
-  || process.env.SSH_MCP_TRUST_PROXY === 'true'
-  || process.env.SSH_MCP_TRUST_PROXY === '1'
-  || CONFIG_DEFAULTS?.trustProxy === true;
+export const TRUST_PROXY = parseBooleanSetting(argvConfig.trustProxy)
+  ?? parseBooleanSetting(process.env.SSH_MCP_TRUST_PROXY)
+  ?? CONFIG_DEFAULTS?.trustProxy
+  ?? false;
 export const AUTH_USER_HEADER = (argvConfig.authUserHeader || process.env.SSH_MCP_AUTH_USER_HEADER || CONFIG_DEFAULTS?.authUserHeader || 'x-ssh-session-mcp-user').toLowerCase();
 export const AUTH_ROLE_HEADER = (argvConfig.authRoleHeader || process.env.SSH_MCP_AUTH_ROLE_HEADER || CONFIG_DEFAULTS?.authRoleHeader || 'x-ssh-session-mcp-role').toLowerCase();
 export const NODE_HEARTBEAT_INTERVAL_MS = 5000;

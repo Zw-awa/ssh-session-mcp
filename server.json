@@ -40,6 +40,69 @@
           "isSecret": false
         },
         {
+          "name": "SSH_MCP_RUNTIME_MODE",
+          "description": "Runtime topology mode. Use distributed to enable a shared control plane, remote-owner routing, and proxy-auth viewer access.",
+          "format": "string",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
+          "name": "SSH_MCP_STORE",
+          "description": "Distributed state store backend. memory is for local skeleton testing only; redis is required for multi-node distributed mode.",
+          "format": "string",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
+          "name": "SSH_MCP_REDIS_URL",
+          "description": "Redis connection URL used when SSH_MCP_RUNTIME_MODE=distributed and SSH_MCP_STORE=redis.",
+          "format": "string",
+          "isRequired": false,
+          "isSecret": true
+        },
+        {
+          "name": "SSH_MCP_NODE_ID",
+          "description": "Stable logical node id advertised in distributed mode. Defaults to the runtime instance id when unset.",
+          "format": "string",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
+          "name": "SSH_MCP_PUBLIC_BASE_URL",
+          "description": "Public viewer base URL for this replica. Used to build remote-owner redirects and routing hints.",
+          "format": "string",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
+          "name": "SSH_MCP_AUTH_MODE",
+          "description": "Viewer auth mode. Use proxy to trust authenticated identity headers from a front proxy in distributed deployments.",
+          "format": "string",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
+          "name": "SSH_MCP_TRUST_PROXY",
+          "description": "Enable trusted proxy header parsing for viewer identity. Recommended only behind a controlled reverse proxy.",
+          "format": "string",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
+          "name": "SSH_MCP_AUTH_USER_HEADER",
+          "description": "HTTP header name used to read the authenticated viewer user when SSH_MCP_AUTH_MODE=proxy.",
+          "format": "string",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
+          "name": "SSH_MCP_AUTH_ROLE_HEADER",
+          "description": "HTTP header name used to read the authenticated viewer roles when SSH_MCP_AUTH_MODE=proxy.",
+          "format": "string",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
           "name": "VIEWER_PORT",
           "description": "Viewer HTTP port. Use auto to allocate a free local port, or 0 to disable the browser viewer.",
           "format": "string",

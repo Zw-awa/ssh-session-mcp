@@ -107,6 +107,38 @@ Container-friendly endpoints:
 
 The bundled Docker image `HEALTHCHECK` uses `/readyz`.
 
+## Distributed v0 Notes
+
+Distributed v0 is intentionally limited:
+
+- It shares control-plane state only: node heartbeats, session metadata, binding metadata, command metadata, and viewer access policy
+- It does not support cross-node PTY migration
+- It does not support transparent cross-node HTTP or websocket proxying
+- When a session is owned by another node, route the request to the owner node returned in the `REMOTE_OWNER` payload
+
+For real multi-node distributed deployments:
+
+- Set `SSH_MCP_RUNTIME_MODE=distributed`
+- Set `SSH_MCP_STORE=redis`
+- Provide `SSH_MCP_REDIS_URL`
+- Give each replica a stable `SSH_MCP_NODE_ID`
+- Give each replica a routable `SSH_MCP_PUBLIC_BASE_URL`
+- Prefer `SSH_MCP_AUTH_MODE=proxy` plus `SSH_MCP_TRUST_PROXY=true` behind a trusted reverse proxy
+
+Example distributed env block:
+
+```bash
+SSH_MCP_RUNTIME_MODE=distributed
+SSH_MCP_STORE=redis
+SSH_MCP_REDIS_URL=redis://redis:6379/0
+SSH_MCP_NODE_ID=node-a
+SSH_MCP_PUBLIC_BASE_URL=https://ssh-mcp.example.com
+SSH_MCP_AUTH_MODE=proxy
+SSH_MCP_TRUST_PROXY=true
+SSH_MCP_AUTH_USER_HEADER=x-forwarded-user
+SSH_MCP_AUTH_ROLE_HEADER=x-forwarded-role
+```
+
 ## Windows, PowerShell, And WSL Notes
 
 Container volume syntax varies by shell:
@@ -132,6 +164,7 @@ Viewer access tips:
 ## Kubernetes Baseline
 
 A single-instance Kubernetes baseline is provided at [docs/examples/ssh-session-mcp.k8s.single-instance.yaml](examples/ssh-session-mcp.k8s.single-instance.yaml).
+A distributed baseline example is provided at [docs/examples/ssh-session-mcp.k8s.distributed.example.yaml](examples/ssh-session-mcp.k8s.distributed.example.yaml).
 
 Recommended first-stage deployment model:
 
@@ -140,6 +173,15 @@ Recommended first-stage deployment model:
 - `readOnlyRootFilesystem: true`
 - liveness probe on `/livez`
 - readiness probe on `/readyz`
+
+Recommended distributed v0 model:
+
+- `replicas: 2+`
+- Redis reachable by every replica
+- stable `SSH_MCP_NODE_ID` per replica or pod template
+- explicit `SSH_MCP_PUBLIC_BASE_URL` per routed entrypoint
+- trusted reverse proxy that injects viewer identity headers
+- readiness probe on `/readyz` so Redis or heartbeat failures keep the pod out of service
 
 ## MCP Client Command Examples
 

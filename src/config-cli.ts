@@ -189,6 +189,7 @@ function parseRuntimeDefaultValue(key: string, raw: string): RuntimeDefaults[key
       return parseBoolean(raw, key);
     case 'logDir':
     case 'redisUrl':
+    case 'nodeId':
     case 'publicBaseUrl':
     case 'authUserHeader':
     case 'authRoleHeader':

@@ -14,6 +14,7 @@ const runtimeDefaultsSchema = z.object({
   runtimeMode: z.enum(['single-node', 'distributed']).optional(),
   store: z.enum(['memory', 'redis']).optional(),
   redisUrl: z.string().min(1).optional(),
+  nodeId: z.string().min(1).optional(),
   publicBaseUrl: z.string().min(1).optional(),
   authMode: z.enum(['off', 'proxy']).optional(),
   trustProxy: z.boolean().optional(),

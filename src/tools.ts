@@ -72,10 +72,12 @@ import {
   forgetSession,
   rememberRunningCommand,
   forgetRunningCommand,
+  clusterSessions,
   findClusterCommandRecord,
   distributedModeEnabled,
   buildOwnerRedirectUrl,
   NODE_ID,
+  refreshDistributedCaches,
   refreshActiveSession,
   sessionDisplayName,
   sessionReadRef,
@@ -142,6 +144,38 @@ import {
 const POLICY_RULE_CATEGORIES = ['dangerous', 'blocked', 'interactive', 'streaming', 'long_running'] as const;
 const POLICY_RULE_MODES = ['safe', 'full', 'both'] as const;
 const POLICY_RULE_ACTIONS = ['error', 'warning', 'log'] as const;
+
+function buildTerminalSessionUrl(baseUrl: string | undefined, sessionId: string) {
+  if (!baseUrl) {
+    return undefined;
+  }
+
+  return `${baseUrl}/terminal/session/${encodeURIComponent(sessionId)}`;
+}
+
+function matchesSessionFilters(
+  summary: {
+    closed: boolean;
+    deviceId?: string;
+    connectionName?: string;
+  },
+  options: {
+    includeClosed?: boolean;
+    deviceFilter?: string;
+    connectionFilter?: string;
+  },
+) {
+  if (options.includeClosed !== true && summary.closed) {
+    return false;
+  }
+  if (options.deviceFilter && summary.deviceId !== options.deviceFilter) {
+    return false;
+  }
+  if (options.connectionFilter && summary.connectionName !== options.connectionFilter) {
+    return false;
+  }
+  return true;
+}
 
 function normalizePolicyRuleInput(input: {
   action: PolicyRuleAction;
@@ -823,15 +857,22 @@ server.tool(
     const deviceFilter = sanitizeOptionalText(device);
     const connectionFilter = sanitizeOptionalText(connectionName);
 
-    const tracked = [...sessions.values()]
-      .filter(session => includeClosed === true || !session.closed)
-      .filter(session => !deviceFilter || session.metadata.deviceId === deviceFilter)
-      .filter(session => !connectionFilter || session.metadata.connectionName === connectionFilter)
-      .map(session => session.summary())
-      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+    const tracked = distributedModeEnabled()
+      ? (await (async () => {
+        await refreshDistributedCaches();
+        return [...clusterSessions.values()]
+          .map(record => record.summary)
+          .filter(summary => matchesSessionFilters(summary, { includeClosed, deviceFilter, connectionFilter }))
+          .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+      })())
+      : [...sessions.values()]
+        .map(session => session.summary())
+        .filter(summary => matchesSessionFilters(summary, { includeClosed, deviceFilter, connectionFilter }))
+        .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 
     return createJsonToolResponse(applyToolContract({
       activeSessionRef: refreshActiveSession()?.metadata.sessionRef || null,
+      distributedMode: distributedModeEnabled() ? 'distributed' : 'single-node',
       sessions: tracked,
     }, {
       resultStatus: 'success',
@@ -869,6 +910,10 @@ server.tool(
       }));
     }
 
+    if (distributedModeEnabled()) {
+      await refreshDistributedCaches();
+    }
+
     const reports = [...sessions.values()]
       .map(buildSessionDiagnostics)
       .sort((a, b) => b.session.updatedAt.localeCompare(a.session.updatedAt));
@@ -877,6 +922,8 @@ server.tool(
       sessions: reports,
       logDir: LOG_CONFIG.dir,
       logMode: LOG_CONFIG.mode,
+      clusterSessionCount: distributedModeEnabled() ? clusterSessions.size : undefined,
+      localSessionCount: sessions.size,
     }), {
       resultStatus: 'success',
       summary: `Built diagnostics overview for ${reports.length} session(s).`,
@@ -885,6 +932,7 @@ server.tool(
         : 'Create a session first with ssh-quick-connect or ssh-session-open.',
       evidence: [
         `sessionCount=${reports.length}`,
+        `clusterSessionCount=${distributedModeEnabled() ? clusterSessions.size : reports.length}`,
         `logMode=${LOG_CONFIG.mode}`,
       ],
     }));
@@ -1986,28 +2034,46 @@ server.tool(
   async () => {
     sweepSessions();
     const activeSession = refreshActiveSession();
-    const active = [...sessions.values()].filter(s => !s.closed).map(s => ({
-      sessionId: s.sessionId,
-      sessionName: s.sessionName,
-      sessionRef: s.metadata.sessionRef,
-      deviceId: s.metadata.deviceId,
-      connectionName: s.metadata.connectionName,
-      instanceId: s.metadata.instanceId,
-      host: s.host,
-      user: s.user,
-      terminalUrl: getViewerBaseUrl()
-        ? `${getViewerBaseUrl()}/terminal/session/${encodeURIComponent(s.sessionId)}`
-        : undefined,
-      idleMinutes: Math.round((Date.now() - Date.parse(s.lastActivityAt)) / 60000),
-      operationMode: s.operationMode,
-      terminalMode: detectTerminalMode(s.buffer.slice(-2000)),
-    }));
+    const active = distributedModeEnabled()
+      ? (await (async () => {
+        await refreshDistributedCaches();
+        return [...clusterSessions.values()]
+          .map(record => ({
+            ...record.summary,
+            ownerNodeId: record.ownerNodeId,
+            routableBaseUrl: record.routableBaseUrl,
+            distributedMode: record.summary.distributedMode || 'distributed',
+            sessionAvailability: record.availability,
+            terminalUrl: buildTerminalSessionUrl(record.routableBaseUrl, record.summary.sessionId),
+            idleMinutes: Math.round((Date.now() - Date.parse(record.summary.lastActivityAt)) / 60000),
+            terminalMode: record.ownerNodeId === NODE_ID
+              ? detectTerminalMode((sessions.get(record.summary.sessionId)?.buffer || '').slice(-2000))
+              : 'remote',
+          }))
+          .filter(summary => !summary.closed)
+          .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+      })())
+      : [...sessions.values()].filter(s => !s.closed).map(s => ({
+        sessionId: s.sessionId,
+        sessionName: s.sessionName,
+        sessionRef: s.metadata.sessionRef,
+        deviceId: s.metadata.deviceId,
+        connectionName: s.metadata.connectionName,
+        instanceId: s.metadata.instanceId,
+        host: s.host,
+        user: s.user,
+        terminalUrl: buildTerminalSessionUrl(getViewerBaseUrl(), s.sessionId),
+        idleMinutes: Math.round((Date.now() - Date.parse(s.lastActivityAt)) / 60000),
+        operationMode: s.operationMode,
+        terminalMode: detectTerminalMode(s.buffer.slice(-2000)),
+      }));
 
     return createJsonToolResponse(applyToolContract({
       instanceId: INSTANCE_ID,
       activeSessions: active.length,
       activeSessionId: activeSession?.sessionId || null,
       activeSessionRef: activeSession?.metadata.sessionRef || null,
+      distributedMode: distributedModeEnabled() ? 'distributed' : 'single-node',
       sessions: active,
       viewerBaseUrl: getViewerBaseUrl(),
       viewerPort: actualViewerPort || undefined,
@@ -2054,7 +2120,7 @@ server.tool(
           error: 'REMOTE_OWNER',
           ownerNodeId: remote.ownerNodeId,
           routableBaseUrl: remote.routableBaseUrl,
-          redirectUrl: buildOwnerRedirectUrl(remote.routableBaseUrl, `/api/command-status/${encodeURIComponent(commandId)}`),
+          redirectUrl: buildOwnerRedirectUrl(remote.routableBaseUrl, `/terminal/session/${encodeURIComponent(remote.sessionId)}`),
           message: `Command ${commandId} is tracked by node ${remote.ownerNodeId}.`,
         }, {
           resultStatus: 'blocked',

@@ -50,7 +50,9 @@ export interface SessionDiagnosticReport {
 }
 
 export interface DiagnosticsOverview {
+  clusterSessionCount?: number;
   generatedAt: string;
+  localSessionCount?: number;
   logging: {
     dir: string;
     enabled: boolean;
@@ -192,12 +194,16 @@ export function buildSessionDiagnosticReport(options: {
 }
 
 export function buildDiagnosticsOverview(options: {
+  clusterSessionCount?: number;
+  localSessionCount?: number;
   logDir: string;
   logMode: LogMode;
   sessions: SessionDiagnosticReport[];
 }) {
   return {
+    clusterSessionCount: options.clusterSessionCount,
     generatedAt: new Date().toISOString(),
+    localSessionCount: options.localSessionCount,
     logging: {
       mode: options.logMode,
       enabled: options.logMode !== 'off',

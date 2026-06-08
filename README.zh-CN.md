@@ -482,6 +482,52 @@ npm run cleanup
 | `SSH_MCP_LOG_MODE` | `off`、`meta` 或 `stderr` 日志 | `off` |
 | `SSH_MCP_LOG_DIR` | 元数据日志目录 | 平台默认目录 |
 
+### Distributed v0
+
+distributed v0 的边界是刻意收窄的：
+
+- 支持的运行模式只有 `single-node` 和 `distributed`
+- distributed 只共享控制面状态：node heartbeat、session 元数据、binding 元数据、command 元数据、viewer access policy
+- 当前副本不是 owner 时，HTTP API 返回 `REMOTE_OWNER`，HTML 页面渲染 remote-owner 错误页，websocket attach 用 `4009` 关闭
+- 不支持跨节点 PTY 热迁移
+- 不支持透明跨节点 HTTP / websocket 代理
+
+distributed v0 的真实多节点部署必须用 Redis。`SSH_MCP_STORE=memory` 只适合本地骨架测试，不能作为多副本共享状态后端。
+
+distributed 配置项：
+
+| 变量 | 含义 | 默认值 |
+|------|------|--------|
+| `SSH_MCP_RUNTIME_MODE` | `single-node` 或 `distributed` | `single-node` |
+| `SSH_MCP_STORE` | `memory` 或 `redis` | distributed 模式下默认 `redis`，否则 `memory` |
+| `SSH_MCP_REDIS_URL` | Redis 连接 URL | `SSH_MCP_STORE=redis` 时必填 |
+| `SSH_MCP_NODE_ID` | 当前副本的稳定逻辑节点 id | 运行时 instance id |
+| `SSH_MCP_PUBLIC_BASE_URL` | 对外可路由的 viewer 基础 URL | 未设置 |
+| `SSH_MCP_AUTH_MODE` | `off` 或 `proxy` | `off` |
+| `SSH_MCP_TRUST_PROXY` | 是否信任代理注入的身份头 | `false` |
+| `SSH_MCP_AUTH_USER_HEADER` | 认证用户头名 | `x-ssh-session-mcp-user` |
+| `SSH_MCP_AUTH_ROLE_HEADER` | 认证角色头名 | `x-ssh-session-mcp-role` |
+
+推荐的 distributed 环境变量示例：
+
+```bash
+SSH_MCP_RUNTIME_MODE=distributed
+SSH_MCP_STORE=redis
+SSH_MCP_REDIS_URL=redis://redis:6379/0
+SSH_MCP_NODE_ID=node-a
+SSH_MCP_PUBLIC_BASE_URL=https://ssh-mcp.example.com
+SSH_MCP_AUTH_MODE=proxy
+SSH_MCP_TRUST_PROXY=true
+SSH_MCP_AUTH_USER_HEADER=x-forwarded-user
+SSH_MCP_AUTH_ROLE_HEADER=x-forwarded-role
+```
+
+proxy auth 最适合放在 distributed + trusted reverse proxy 的组合里。内置角色映射是：
+
+- `viewer_read`：页面、session 列表/读取、history、diagnostics、health、readiness、metrics
+- `viewer_write`：attach input、resize、control
+- `session_admin`：mode 修改、policy 修改、close、set-active、debug-agent 动作、本地 debug session 创建
+
 ### 宏定义 / 环境变量对照表
 
 根据你的安装路径，使用这些变量：
@@ -498,6 +544,15 @@ npm run cleanup
 | `SSH_MCP_CONFIG` | profile 模式，或配置文件不在当前工作目录时 | `/path/to/ssh-session-mcp.config.json` | 当自动发现不够用时显式指定。 |
 | `SSH_MCP_INSTANCE` | 多 agent / 多客户端隔离时 | `agent-a` | 当两个 agent 不应该共享运行时状态时，必须用不同值。 |
 | `SSH_MCP_STATE_DIR` | 覆盖运行时状态根目录时 | `/workspace/state` | 控制 server info、viewer state、默认日志等的落盘目录。容器里建议挂持久卷。 |
+| `SSH_MCP_RUNTIME_MODE` | distributed 拓扑模式选择 | `single-node`, `distributed` | distributed v0 只共享控制面状态，不做跨节点 PTY 迁移。 |
+| `SSH_MCP_STORE` | distributed 状态后端 | `memory`, `redis` | 真正多节点部署要用 `redis`。`memory` 只适合本地 distributed 骨架测试。 |
+| `SSH_MCP_REDIS_URL` | Redis 后端连接 | `redis://redis:6379/0` | 当 `SSH_MCP_RUNTIME_MODE=distributed` 且 `SSH_MCP_STORE=redis` 时必填。 |
+| `SSH_MCP_NODE_ID` | 稳定 distributed 节点 id | `node-a` | 多副本共享 Redis 时建议显式设置。 |
+| `SSH_MCP_PUBLIC_BASE_URL` | 当前节点对外路由提示 URL | `https://ssh-mcp.example.com` | 会出现在 `REMOTE_OWNER` payload 和 cluster 状态输出里。 |
+| `SSH_MCP_AUTH_MODE` | viewer 鉴权模式 | `off`, `proxy` | `proxy` 只建议用于可信反向代理之后。 |
+| `SSH_MCP_TRUST_PROXY` | 是否信任 viewer 身份头 | `true`, `false` | 需与 `SSH_MCP_AUTH_MODE=proxy` 搭配使用。 |
+| `SSH_MCP_AUTH_USER_HEADER` | proxy auth 用户头名 | `x-forwarded-user` | 内部会统一转成小写。 |
+| `SSH_MCP_AUTH_ROLE_HEADER` | proxy auth 角色头名 | `x-forwarded-role` | 角色逗号分隔，映射到 `viewer_read`、`viewer_write`、`session_admin`。 |
 | `VIEWER_HOST` | 自定义 viewer 绑定地址时 | `127.0.0.1`, `0.0.0.0` | 容器里通常用 `0.0.0.0`；普通宿主机默认保持 `127.0.0.1`。 |
 | `VIEWER_PORT` | 需要 viewer 时 | `auto`, `0`, `8793` | `auto` 自动找空闲端口，`0` 关闭 viewer，固定端口更适合 Docker。 |
 | `VIEWER_ACCESS_MODE` | Viewer 访问控制模式 | `allow_all`, `allowlist`, `denylist` | 一般建议在 viewer 首页直接改；若暴露到远端，至少使用 allowlist 或 denylist。 |
@@ -524,11 +579,14 @@ npm run cleanup
 
 - 容器默认会把 `SSH_MCP_LOG_MODE` 设为 `stderr`，这样日志会交给容器运行时收集，同时不会破坏 stdio MCP 协议。
 - 如果希望 viewer policy、server info、state 文件在容器重启后保留，请给 `SSH_MCP_STATE_DIR` 挂持久卷。
+- distributed 多节点部署必须准备 Redis，并且每个副本都要有可路由的 `SSH_MCP_PUBLIC_BASE_URL`。
+- distributed v0 不提供跨节点 PTY 迁移，也不提供透明跨节点代理；拿到 `REMOTE_OWNER` 后应把请求路由到 owner 节点。
 - 健康检查接口：
   - `/livez` 进程存活
   - `/readyz` 就绪检查
   - `/metrics` Prometheus 文本指标
 - 单实例 Kubernetes 基线示例见 [docs/examples/ssh-session-mcp.k8s.single-instance.yaml](docs/examples/ssh-session-mcp.k8s.single-instance.yaml)
+- distributed Kubernetes 基线示例见 [docs/examples/ssh-session-mcp.k8s.distributed.example.yaml](docs/examples/ssh-session-mcp.k8s.distributed.example.yaml)
 
 配置示例：[docs/examples/ssh-session-mcp.config.example.json](docs/examples/ssh-session-mcp.config.example.json)
 

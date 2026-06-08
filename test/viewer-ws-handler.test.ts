@@ -205,6 +205,22 @@ describe('viewer ws handler', () => {
     expect(ws.close).toHaveBeenCalledWith(4004, expect.stringContaining('Unknown session'));
   });
 
+  it('closes with 4009 when the session belongs to a remote owner', () => {
+    const ws = new FakeWebSocket();
+
+    handleWsAttach(ws as any, 'session', 'demo-session', undefined, {
+      remoteOwner: {
+        ownerNodeId: 'node-b',
+        routableBaseUrl: 'https://node-b.example.test',
+        redirectUrl: 'https://node-b.example.test/terminal/session/demo-session',
+        availability: 'remote',
+        sessionId: 'demo-session',
+      },
+    });
+
+    expect(ws.close).toHaveBeenCalledWith(4009, 'remote owner node-b');
+  });
+
   it('replays init/raw/event state and cleans up listeners only once', () => {
     const session = createMockSession();
     sessions.set('demo-session', session as any);
@@ -321,6 +337,78 @@ describe('viewer ws handler', () => {
       { actor: 'codex', text: 'pwd', type: 'input' },
       { actor: 'user', text: 'ctrl_c', type: 'control' },
     ]);
+  });
+
+  it('rejects write actions for viewer_read identities', () => {
+    const session = createMockSession();
+    sessions.set('demo-session', session as any);
+    const ws = new FakeWebSocket();
+
+    handleWsAttach(ws as any, 'session', 'demo-session', undefined, {
+      identity: {
+        user: 'viewer-read',
+        roles: ['viewer_read'],
+      },
+    });
+    ws.emit('message', Buffer.from(JSON.stringify({
+      type: 'input',
+      data: 'pwd\r',
+      records: [],
+    })), false);
+    ws.emit('message', Buffer.from(JSON.stringify({
+      type: 'resize',
+      cols: 140,
+      rows: 50,
+    })), false);
+
+    expect(session.writeRaw).not.toHaveBeenCalled();
+    expect(session.resize).not.toHaveBeenCalled();
+    const forbiddenMessages = ws.sent
+      .map(entry => entry.data)
+      .filter(data => typeof data === 'string')
+      .map(data => JSON.parse(data as string))
+      .filter(payload => payload.type === 'forbidden');
+    expect(forbiddenMessages).toEqual([
+      { type: 'forbidden', error: 'VIEWER_ROLE_REQUIRED', requiredRole: 'viewer_write' },
+      { type: 'forbidden', error: 'VIEWER_ROLE_REQUIRED', requiredRole: 'viewer_write' },
+    ]);
+  });
+
+  it('allows viewer_write input and session_admin mode changes', () => {
+    const session = createMockSession({
+      setOperationMode: vi.fn(function (this: any, mode: 'safe' | 'full') {
+        this.operationMode = mode;
+      }),
+    });
+    sessions.set('demo-session', session as any);
+
+    const writerWs = new FakeWebSocket();
+    handleWsAttach(writerWs as any, 'session', 'demo-session', undefined, {
+      identity: {
+        user: 'writer',
+        roles: ['viewer_write'],
+      },
+    });
+    writerWs.emit('message', Buffer.from(JSON.stringify({
+      type: 'input',
+      data: 'pwd\r',
+      records: [],
+    })), false);
+    expect(session.writeRaw).toHaveBeenCalled();
+
+    const adminWs = new FakeWebSocket();
+    handleWsAttach(adminWs as any, 'session', 'demo-session', undefined, {
+      identity: {
+        user: 'admin',
+        roles: ['session_admin'],
+      },
+    });
+    adminWs.emit('message', Buffer.from(JSON.stringify({
+      type: 'mode',
+      mode: 'full',
+    })), false);
+
+    expect(session.setOperationMode).toHaveBeenCalledWith('full');
   });
 
   it('handles control and resize messages while ignoring unsupported controls', () => {

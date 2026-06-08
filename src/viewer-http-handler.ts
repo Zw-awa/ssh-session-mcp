@@ -17,7 +17,7 @@ import {
   buildConfiguredSessionPolicyRules,
   AUTH_MODE, clusterSessions, distributedModeEnabled, distributedStoreHealthy,
   extractViewerIdentity, forgetSession, getRoutableViewerBaseUrl,
-  hasViewerRole, nodeLastHeartbeatAt, refreshDistributedCaches, rememberSession,
+  hasViewerRole, nodeLastHeartbeatAt, NODE_HEARTBEAT_TTL_SECONDS, refreshDistributedCaches, rememberSession,
   resolveRemoteOwnerForBinding, resolveRemoteOwnerForSessionRef,
   type RemoteOwnerTarget, type ViewerIdentity, type ViewerRole,
   VIEWER_PORT_SETTING, RUNTIME_PATHS, LOG_CONFIG,
@@ -106,13 +106,10 @@ function writeRemoteOwnerError(
     return;
   }
 
-  writers.writeError(409, new McpError(
-    ErrorCode.InvalidRequest,
-    JSON.stringify({
-      routeType,
-      ...buildRemoteOwnerPayload(target),
-    }),
-  ));
+  writers.writeJson(409, {
+    routeType,
+    ...buildRemoteOwnerPayload(target),
+  });
 }
 
 function parseWriterError(error: unknown) {
@@ -138,7 +135,7 @@ function requiredViewerRoleForRoute(route: ReturnType<typeof matchViewerHttpRout
     case 'ready':
     case 'metrics':
     case 'health':
-      return undefined;
+      return 'viewer_read';
     case 'viewer-access-policy-api':
       return method?.toUpperCase() === 'GET' ? 'viewer_read' : 'session_admin';
     case 'attach-input':
@@ -293,7 +290,9 @@ async function buildReadinessPayload() {
 
   if (distributedModeEnabled()) {
     checks.distributedStoreReachable = await distributedStoreHealthy();
-    checks.nodeHeartbeatFresh = Boolean(nodeLastHeartbeatAt);
+    checks.nodeHeartbeatFresh = typeof nodeLastHeartbeatAt === 'string'
+      && Number.isFinite(Date.parse(nodeLastHeartbeatAt))
+      && (Date.now() - Date.parse(nodeLastHeartbeatAt)) < NODE_HEARTBEAT_TTL_SECONDS * 1000;
   }
 
   const ok = checks.stateDirWritable

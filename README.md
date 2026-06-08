@@ -474,6 +474,52 @@ Key environment variables:
 | `SSH_MCP_LOG_MODE` | `off`, `meta`, or `stderr` logging | `off` |
 | `SSH_MCP_LOG_DIR` | Metadata log directory | platform default |
 
+### Distributed v0
+
+Distributed v0 intentionally implements a narrow boundary:
+
+- Supported runtime modes: `single-node` and `distributed`
+- Distributed mode shares control-plane state only: node heartbeat, session metadata, binding metadata, command metadata, and viewer access policy
+- When the current replica is not the owner, HTTP APIs return `REMOTE_OWNER`, HTML pages render a remote-owner error page, and websocket attaches close with code `4009`
+- Cross-node PTY migration is not supported
+- Transparent cross-node HTTP or websocket proxying is not supported
+
+Distributed v0 requires Redis for real multi-node deployments. `SSH_MCP_STORE=memory` only exists for local skeleton testing and does not provide a shared store across replicas.
+
+Distributed configuration:
+
+| Variable | Meaning | Default |
+|----------|---------|---------|
+| `SSH_MCP_RUNTIME_MODE` | `single-node` or `distributed` | `single-node` |
+| `SSH_MCP_STORE` | `memory` or `redis` | `redis` in distributed mode, otherwise `memory` |
+| `SSH_MCP_REDIS_URL` | Redis connection URL | required when `SSH_MCP_STORE=redis` |
+| `SSH_MCP_NODE_ID` | Stable logical node id for this replica | runtime instance id |
+| `SSH_MCP_PUBLIC_BASE_URL` | Public viewer base URL advertised to other replicas | unset |
+| `SSH_MCP_AUTH_MODE` | `off` or `proxy` | `off` |
+| `SSH_MCP_TRUST_PROXY` | Whether to trust authenticated proxy headers | `false` |
+| `SSH_MCP_AUTH_USER_HEADER` | Authenticated user header name | `x-ssh-session-mcp-user` |
+| `SSH_MCP_AUTH_ROLE_HEADER` | Authenticated role header name | `x-ssh-session-mcp-role` |
+
+Recommended distributed env example:
+
+```bash
+SSH_MCP_RUNTIME_MODE=distributed
+SSH_MCP_STORE=redis
+SSH_MCP_REDIS_URL=redis://redis:6379/0
+SSH_MCP_NODE_ID=node-a
+SSH_MCP_PUBLIC_BASE_URL=https://ssh-mcp.example.com
+SSH_MCP_AUTH_MODE=proxy
+SSH_MCP_TRUST_PROXY=true
+SSH_MCP_AUTH_USER_HEADER=x-forwarded-user
+SSH_MCP_AUTH_ROLE_HEADER=x-forwarded-role
+```
+
+Proxy auth is most useful in distributed mode behind a trusted reverse proxy. The built-in role mapping is:
+
+- `viewer_read`: pages, session list/read endpoints, history, diagnostics, health, readiness, metrics
+- `viewer_write`: attach input, resize, control
+- `session_admin`: mode changes, policy updates, close, set-active, debug-agent actions, local debug session creation
+
 ### Macro / Environment Variable Reference
 
 Use these variables according to your installation path:
@@ -490,6 +536,15 @@ Use these variables according to your installation path:
 | `SSH_MCP_CONFIG` | Profile-based mode or config outside cwd | `/path/to/ssh-session-mcp.config.json` | Use this when config auto-discovery is not enough. |
 | `SSH_MCP_INSTANCE` | Multi-agent / multi-client isolation | `agent-a` | Use different values when two agents should not share runtime state. |
 | `SSH_MCP_STATE_DIR` | Runtime state root override | `/workspace/state` | Controls where per-instance server info, viewer state, and default logs are stored. Mount it persistently in containers. |
+| `SSH_MCP_RUNTIME_MODE` | Distributed topology selection | `single-node`, `distributed` | Distributed v0 only shares control-plane state; it does not migrate PTYs across nodes. |
+| `SSH_MCP_STORE` | Distributed state backend | `memory`, `redis` | Use `redis` for any real multi-node deployment. `memory` is only for local distributed skeleton testing. |
+| `SSH_MCP_REDIS_URL` | Redis backend enabled | `redis://redis:6379/0` | Required when `SSH_MCP_RUNTIME_MODE=distributed` and `SSH_MCP_STORE=redis`. |
+| `SSH_MCP_NODE_ID` | Stable distributed node id | `node-a` | Useful when multiple replicas share Redis and need durable owner ids. |
+| `SSH_MCP_PUBLIC_BASE_URL` | Public routing hint for this node | `https://ssh-mcp.example.com` | Used in `REMOTE_OWNER` payloads and cluster status output. |
+| `SSH_MCP_AUTH_MODE` | Viewer auth mode | `off`, `proxy` | `proxy` is recommended only behind a trusted reverse proxy. |
+| `SSH_MCP_TRUST_PROXY` | Trust viewer identity headers | `true`, `false` | Must be enabled together with `SSH_MCP_AUTH_MODE=proxy`. |
+| `SSH_MCP_AUTH_USER_HEADER` | Proxy-auth viewer user header | `x-forwarded-user` | Header names are normalized to lowercase internally. |
+| `SSH_MCP_AUTH_ROLE_HEADER` | Proxy-auth viewer role header | `x-forwarded-role` | Roles are comma-separated and mapped to `viewer_read`, `viewer_write`, `session_admin`. |
 | `VIEWER_HOST` | Custom viewer bind | `127.0.0.1`, `0.0.0.0` | Use `0.0.0.0` inside containers; keep `127.0.0.1` on normal host installs unless you need remote access. |
 | `VIEWER_PORT` | Viewer enabled | `auto`, `0`, `8793` | `auto` picks a free port, `0` disables the viewer, fixed ports are best for Docker. |
 | `VIEWER_ACCESS_MODE` | Viewer access control mode | `allow_all`, `allowlist`, `denylist` | Usually edited in the viewer home page. Keep `allow_all` only when you stay on localhost. |
@@ -516,11 +571,14 @@ Choose one of these minimum configuration sets:
 
 - Container defaults now set `SSH_MCP_LOG_MODE=stderr` so logs go to the container runtime without corrupting stdio MCP transport.
 - Mount `SSH_MCP_STATE_DIR` persistently when you want viewer policy, server info, and state files to survive container restarts.
+- Distributed multi-node deployments need Redis plus a routable `SSH_MCP_PUBLIC_BASE_URL` per replica.
+- Distributed v0 does not provide cross-node PTY migration or transparent cross-node proxying. Route requests to the owner node when you receive `REMOTE_OWNER`.
 - Health endpoints:
   - `/livez` for process liveness
   - `/readyz` for readiness checks
   - `/metrics` for Prometheus text metrics
 - Example single-instance Kubernetes baseline: [docs/examples/ssh-session-mcp.k8s.single-instance.yaml](docs/examples/ssh-session-mcp.k8s.single-instance.yaml)
+- Example distributed Kubernetes baseline: [docs/examples/ssh-session-mcp.k8s.distributed.example.yaml](docs/examples/ssh-session-mcp.k8s.distributed.example.yaml)
 
 Example config file: [docs/examples/ssh-session-mcp.config.example.json](docs/examples/ssh-session-mcp.config.example.json)
 

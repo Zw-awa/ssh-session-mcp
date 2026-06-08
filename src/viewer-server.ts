@@ -1,11 +1,12 @@
 import { createServer, type Server as HttpServer } from 'node:http';
+import type { Duplex } from 'node:stream';
 import { WebSocketServer } from 'ws';
 
 import {
   AUTH_MODE,
   extractViewerIdentity,
-  findCachedRemoteOwnerForBindingKey,
-  findCachedRemoteOwnerForSessionRef,
+  resolveRemoteOwnerForBinding,
+  resolveRemoteOwnerForSessionRef,
   viewerServer,
   actualViewerPort,
   setViewerServer,
@@ -21,6 +22,24 @@ import {
 import { handleViewerHttpRequest } from './viewer-http-handler.js';
 import { matchViewerWsRoute } from './viewer-routes.js';
 import { handleWsAttach } from './viewer-ws-handler.js';
+
+function rejectUpgrade(socket: Pick<Duplex, 'write' | 'destroy'>, statusCode: number, payload: object) {
+  const statusText = statusCode === 403
+    ? 'Forbidden'
+    : statusCode === 404
+      ? 'Not Found'
+      : 'Bad Request';
+  const body = JSON.stringify(payload, null, 2);
+  socket.write(
+    `HTTP/1.1 ${statusCode} ${statusText}\r\n`
+    + 'Connection: close\r\n'
+    + 'Content-Type: application/json; charset=utf-8\r\n'
+    + `Content-Length: ${Buffer.byteLength(body, 'utf8')}\r\n`
+    + '\r\n'
+    + body,
+  );
+  socket.destroy();
+}
 
 export async function startViewerServer() {
   if (!VIEWER_PORT_SETTING.enabled || viewerServer) {
@@ -69,36 +88,53 @@ export async function startViewerServer() {
   setViewerWss(wss);
 
   httpServer.on('upgrade', (request, socket, head) => {
-    if (!viewerRequestAllowed(request.socket.remoteAddress) || !viewerOriginAllowed(typeof request.headers.origin === 'string' ? request.headers.origin : undefined)) {
-      socket.destroy();
-      return;
-    }
+    void (async () => {
+      if (!viewerRequestAllowed(request.socket.remoteAddress) || !viewerOriginAllowed(typeof request.headers.origin === 'string' ? request.headers.origin : undefined)) {
+        rejectUpgrade(socket, 403, { error: 'Viewer access denied by policy.' });
+        return;
+      }
 
-    if (AUTH_MODE === 'proxy' && !extractViewerIdentity(request.headers)) {
-      socket.destroy();
-      return;
-    }
+      const identity = extractViewerIdentity(request.headers);
+      if (AUTH_MODE === 'proxy' && !identity) {
+        rejectUpgrade(socket, 403, { error: 'Missing trusted viewer identity headers.' });
+        return;
+      }
 
-    const url = new URL(request.url || '/', 'http://127.0.0.1');
-    const route = matchViewerWsRoute(url.pathname);
+      const url = new URL(request.url || '/', 'http://127.0.0.1');
+      const route = matchViewerWsRoute(url.pathname);
 
-    if (!route) {
-      socket.destroy();
-      return;
-    }
+      if (!route) {
+        rejectUpgrade(socket, 404, { error: 'Unknown websocket attach route.' });
+        return;
+      }
 
-    const rawOffsetParam = url.searchParams.get('rawOffset');
-    const rawOffset = rawOffsetParam !== null ? parseInt(rawOffsetParam, 10) : undefined;
-    const remoteOwner = route.kind === 'binding'
-      ? findCachedRemoteOwnerForBindingKey(route.ref, `${url.pathname}${url.search}`)
-      : findCachedRemoteOwnerForSessionRef(route.ref, `${url.pathname}${url.search}`);
-    if (remoteOwner) {
-      socket.destroy();
-      return;
-    }
+      const rawOffsetParam = url.searchParams.get('rawOffset');
+      const rawOffset = rawOffsetParam !== null ? parseInt(rawOffsetParam, 10) : undefined;
+      const remoteOwner = route.kind === 'binding'
+        ? await resolveRemoteOwnerForBinding(route.ref, `${url.pathname}${url.search}`)
+        : await resolveRemoteOwnerForSessionRef(route.ref, `${url.pathname}${url.search}`);
+      if (remoteOwner) {
+        logServerEvent('viewer_ws.remote_owner', {
+          kind: route.kind,
+          ref: route.ref,
+          ownerNodeId: remoteOwner.ownerNodeId,
+          redirectUrl: remoteOwner.redirectUrl,
+        });
+      }
 
-    wss.handleUpgrade(request, socket, head, (ws) => {
-      handleWsAttach(ws, route.kind, route.ref, Number.isFinite(rawOffset) ? rawOffset : undefined);
+      wss.handleUpgrade(request, socket, head, (ws) => {
+        handleWsAttach(
+          ws,
+          route.kind,
+          route.ref,
+          Number.isFinite(rawOffset) ? rawOffset : undefined,
+          { identity, remoteOwner },
+        );
+      });
+    })().catch(error => {
+      rejectUpgrade(socket, 400, {
+        error: error instanceof Error ? error.message : String(error),
+      });
     });
   });
 }

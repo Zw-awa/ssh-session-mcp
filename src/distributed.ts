@@ -380,6 +380,30 @@ class RedisDistributedStateStore implements DistributedStateStore {
     this.target = parseRedisUrl(redisUrl);
   }
 
+  private resetConnection(error?: Error) {
+    const resolvedError = error || new Error('Redis connection closed');
+    if (this.socket && !this.socket.destroyed) {
+      this.socket.destroy();
+    }
+    this.socket = undefined;
+    this.connecting = undefined;
+    this.buffer = '';
+    while (this.pending.length > 0) {
+      this.pending.shift()!.reject(resolvedError);
+    }
+  }
+
+  private sendCommand(name: string, ...args: Array<string | number>) {
+    if (!this.socket || this.socket.destroyed) {
+      return Promise.reject(new Error('Redis connection is not available'));
+    }
+
+    return new Promise<unknown>((resolve, reject) => {
+      this.pending.push({ resolve, reject });
+      this.socket!.write(encodeRedisCommand([name, ...args]));
+    });
+  }
+
   private async ensureConnected() {
     if (this.socket && !this.socket.destroyed) {
       return;
@@ -391,32 +415,50 @@ class RedisDistributedStateStore implements DistributedStateStore {
 
     this.connecting = new Promise<void>((resolve, reject) => {
       const socket = new Socket();
+      let settled = false;
+      const settleReject = (error: Error) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        reject(error);
+      };
+      const settleResolve = () => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        resolve();
+      };
       socket.setNoDelay(true);
       socket.on('data', (chunk: Buffer) => {
         this.buffer += chunk.toString('utf8');
         this.flushPending();
       });
       socket.on('error', (error) => {
-        while (this.pending.length > 0) {
-          this.pending.shift()!.reject(error instanceof Error ? error : new Error(String(error)));
-        }
+        const resolvedError = error instanceof Error ? error : new Error(String(error));
+        this.resetConnection(resolvedError);
+        settleReject(resolvedError);
       });
       socket.on('close', () => {
-        this.socket = undefined;
-        this.connecting = undefined;
+        const resolvedError = new Error('Redis connection closed');
+        this.resetConnection(resolvedError);
+        settleReject(resolvedError);
       });
       socket.connect(this.target.port, this.target.host, async () => {
         this.socket = socket;
         try {
           if (this.target.password) {
-            await this.command('AUTH', this.target.password);
+            await this.sendCommand('AUTH', this.target.password);
           }
           if (this.target.db > 0) {
-            await this.command('SELECT', this.target.db);
+            await this.sendCommand('SELECT', this.target.db);
           }
-          resolve();
+          settleResolve();
         } catch (error) {
-          reject(error instanceof Error ? error : new Error(String(error)));
+          const resolvedError = error instanceof Error ? error : new Error(String(error));
+          this.resetConnection(resolvedError);
+          settleReject(resolvedError);
         } finally {
           this.connecting = undefined;
         }
@@ -455,10 +497,7 @@ class RedisDistributedStateStore implements DistributedStateStore {
 
   private async command(name: string, ...args: Array<string | number>) {
     await this.ensureConnected();
-    return new Promise<unknown>((resolve, reject) => {
-      this.pending.push({ resolve, reject });
-      this.socket!.write(encodeRedisCommand([name, ...args]));
-    });
+    return this.sendCommand(name, ...args);
   }
 
   private async setJson(key: string, value: unknown, ttlSeconds?: number) {
@@ -500,12 +539,7 @@ class RedisDistributedStateStore implements DistributedStateStore {
   }
 
   async close() {
-    if (this.socket && !this.socket.destroyed) {
-      this.socket.destroy();
-    }
-    this.socket = undefined;
-    this.connecting = undefined;
-    this.buffer = '';
+    this.resetConnection(new Error('Redis connection closed'));
   }
 
   async ping() {

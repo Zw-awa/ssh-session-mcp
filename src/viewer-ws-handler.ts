@@ -5,15 +5,20 @@ import {
   viewerWss,
   viewerClientSessions,
   sessions,
+  findCachedRemoteOwnerForBindingKey,
+  findCachedRemoteOwnerForSessionRef,
   resolveAttachTarget,
   sanitizeActor,
   sanitizePositiveInt,
   logSessionEvent,
   logServerEvent,
   broadcastLock,
+  hasViewerRole,
   type OperationMode,
+  type RemoteOwnerTarget,
   type SessionWriteRecord,
   SSHSession,
+  type ViewerIdentity,
 } from './server-state.js';
 import type { ViewerAttachKind } from './viewer-routes.js';
 
@@ -153,7 +158,39 @@ function collectInputRecords(rawRecords: unknown): SessionWriteRecord[] {
   return records;
 }
 
-function handleViewerSocketMessage(ws: WebSocket, session: SSHSession, viewerId: string, data: WebSocket.RawData, isBinary: boolean) {
+function sendViewerForbidden(ws: WebSocket, requiredRole: 'viewer_write' | 'session_admin') {
+  ws.send(JSON.stringify({
+    type: 'forbidden',
+    error: 'VIEWER_ROLE_REQUIRED',
+    requiredRole,
+  }));
+}
+
+function enforceViewerRole(
+  ws: WebSocket,
+  identity: ViewerIdentity | undefined,
+  requiredRole: 'viewer_write' | 'session_admin',
+) {
+  if (!identity) {
+    return true;
+  }
+
+  if (hasViewerRole(identity, requiredRole)) {
+    return true;
+  }
+
+  sendViewerForbidden(ws, requiredRole);
+  return false;
+}
+
+function handleViewerSocketMessage(
+  ws: WebSocket,
+  session: SSHSession,
+  viewerId: string,
+  identity: ViewerIdentity | undefined,
+  data: WebSocket.RawData,
+  isBinary: boolean,
+) {
   if (isBinary) {
     return;
   }
@@ -162,6 +199,9 @@ function handleViewerSocketMessage(ws: WebSocket, session: SSHSession, viewerId:
     const msg = JSON.parse(data.toString());
 
     if (msg.type === 'lock' && typeof msg.lock === 'string') {
+      if (!enforceViewerRole(ws, identity, 'session_admin')) {
+        return;
+      }
       const validLocks = ['none', 'agent', 'user', 'auto'];
       if (validLocks.includes(msg.lock)) {
         session.setLockPolicy((msg.lock === 'none' ? 'common' : msg.lock) as 'common' | 'agent' | 'user' | 'auto');
@@ -171,12 +211,18 @@ function handleViewerSocketMessage(ws: WebSocket, session: SSHSession, viewerId:
     }
 
     if (msg.type === 'draft_state' && typeof msg.active === 'boolean') {
+      if (!enforceViewerRole(ws, identity, 'viewer_write')) {
+        return;
+      }
       session.setViewerDraftState(viewerId, msg.active);
       broadcastLock(session);
       return;
     }
 
     if (msg.type === 'mode' && typeof msg.mode === 'string') {
+      if (!enforceViewerRole(ws, identity, 'session_admin')) {
+        return;
+      }
       const validModes = ['safe', 'full'];
       if (validModes.includes(msg.mode)) {
         if (typeof (session as SSHSession & { setOperationMode?: (mode: OperationMode) => void }).setOperationMode === 'function') {
@@ -190,6 +236,9 @@ function handleViewerSocketMessage(ws: WebSocket, session: SSHSession, viewerId:
     }
 
     if (msg.type === 'input' && typeof msg.data === 'string' && msg.data.length > 0) {
+      if (!enforceViewerRole(ws, identity, 'viewer_write')) {
+        return;
+      }
       const effectiveLock = session.effectiveInputLock();
       if (effectiveLock === 'agent') {
         sendLockRejected(ws, effectiveLock, 'Input locked by AI agent. Switch to "common" or "user" mode to type.');
@@ -209,6 +258,9 @@ function handleViewerSocketMessage(ws: WebSocket, session: SSHSession, viewerId:
     }
 
     if (msg.type === 'control' && typeof msg.key === 'string') {
+      if (!enforceViewerRole(ws, identity, 'viewer_write')) {
+        return;
+      }
       const effectiveLock = session.effectiveInputLock();
       if (effectiveLock === 'agent') {
         sendLockRejected(ws, effectiveLock, 'Input locked by AI agent.');
@@ -227,6 +279,9 @@ function handleViewerSocketMessage(ws: WebSocket, session: SSHSession, viewerId:
     }
 
     if (msg.type === 'resize' && typeof msg.cols === 'number' && typeof msg.rows === 'number') {
+      if (!enforceViewerRole(ws, identity, 'viewer_write')) {
+        return;
+      }
       session.resize(
         sanitizePositiveInt(msg.cols, 'cols', session.cols),
         sanitizePositiveInt(msg.rows, 'rows', session.rows),
@@ -237,10 +292,30 @@ function handleViewerSocketMessage(ws: WebSocket, session: SSHSession, viewerId:
   }
 }
 
-export function handleWsAttach(ws: WebSocket, kind: ViewerAttachKind, ref: string, rawOffset?: number) {
+export function handleWsAttach(
+  ws: WebSocket,
+  kind: ViewerAttachKind,
+  ref: string,
+  rawOffset?: number,
+  options?: {
+    identity?: ViewerIdentity;
+    remoteOwner?: RemoteOwnerTarget;
+  },
+) {
   let session: SSHSession;
   let bindingKey: string | undefined;
   const viewerId = `viewer-${Math.random().toString(36).slice(2, 10)}`;
+
+  const remoteOwner = options?.remoteOwner || (
+    kind === 'binding'
+      ? findCachedRemoteOwnerForBindingKey(ref, `/ws/attach/binding/${encodeURIComponent(ref)}`)
+      : findCachedRemoteOwnerForSessionRef(ref, `/ws/attach/session/${encodeURIComponent(ref)}`)
+  );
+
+  if (remoteOwner) {
+    ws.close(4009, `remote owner ${remoteOwner.ownerNodeId}`);
+    return;
+  }
 
   try {
     const target = resolveAttachTarget(kind, ref);
@@ -277,7 +352,7 @@ export function handleWsAttach(ws: WebSocket, kind: ViewerAttachKind, ref: strin
   });
 
   const onMessage = (data: WebSocket.RawData, isBinary: boolean) => {
-    handleViewerSocketMessage(ws, session, viewerId, data, isBinary);
+    handleViewerSocketMessage(ws, session, viewerId, options?.identity, data, isBinary);
   };
   ws.on('message', onMessage);
 
