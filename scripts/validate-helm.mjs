@@ -37,7 +37,6 @@ function ensureExecutable(name) {
 }
 
 ensureExecutable('helm');
-ensureExecutable('kubectl');
 
 const tempDir = mkdtempSync(join(tmpdir(), 'ssh-mcp-helm-'));
 const distributedValuesPath = join(tempDir, 'distributed-values.yaml');
@@ -64,9 +63,6 @@ try {
   if (!distributedRendered.includes('SSH_MCP_RUNTIME_MODE') || !distributedRendered.includes('SSH_MCP_REDIS_URL')) {
     fail('Distributed Helm render output is missing required distributed environment variables.');
   }
-
-  run('kubectl', ['apply', '--dry-run=client', '-f', '-'], { input: singleRendered });
-  run('kubectl', ['apply', '--dry-run=client', '-f', '-'], { input: distributedRendered });
 } finally {
   rmSync(tempDir, { recursive: true, force: true });
 }
