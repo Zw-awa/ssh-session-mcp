@@ -65,6 +65,7 @@ jobs:
           tags: ssh-session-mcp:ci
           push: false
           load: true
+          pull: true
 
       - name: Install Trivy
         shell: bash
@@ -72,6 +73,8 @@ jobs:
 
       - name: Run Trivy filesystem scan
         shell: bash
+        env:
+          TRIVY_DISABLE_VEX_NOTICE: "true"
         run: |
           set -euo pipefail
           trivy fs . \
@@ -81,6 +84,8 @@ jobs:
 
       - name: Run Trivy image scan
         shell: bash
+        env:
+          TRIVY_DISABLE_VEX_NOTICE: "true"
         run: |
           set -euo pipefail
           trivy image ssh-session-mcp:ci \

@@ -134,6 +134,7 @@ jobs:
           file: ./Dockerfile
           platforms: linux/amd64,linux/arm64
           push: true
+          pull: true
           tags: ${{ steps.docker-meta-hub.outputs.tags }}
           labels: ${{ steps.docker-meta-hub.outputs.labels }}
 
@@ -155,6 +156,7 @@ jobs:
           file: ./Dockerfile
           platforms: linux/amd64,linux/arm64
           push: true
+          pull: true
           tags: ${{ steps.docker-meta-ghcr.outputs.tags }}
           labels: ${{ steps.docker-meta-ghcr.outputs.labels }}
 
@@ -164,6 +166,8 @@ jobs:
 
       - name: Run Trivy filesystem scan
         shell: bash
+        env:
+          TRIVY_DISABLE_VEX_NOTICE: "true"
         run: |
           set -euo pipefail
           trivy fs . \
@@ -173,6 +177,8 @@ jobs:
 
       - name: Run Trivy image scan against GHCR release image
         shell: bash
+        env:
+          TRIVY_DISABLE_VEX_NOTICE: "true"
         run: |
           set -euo pipefail
           trivy image "ghcr.io/${GITHUB_REPOSITORY}@${{ steps.ghcr-build.outputs.digest }}" \

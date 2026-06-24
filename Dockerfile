@@ -5,10 +5,15 @@ FROM node:20-bookworm-slim AS build
 
 WORKDIR /opt/ssh-session-mcp
 
+RUN apt-get update \
+  && apt-get upgrade -y \
+  && rm -rf /var/lib/apt/lists/*
+
 COPY package.json package-lock.json tsconfig.json ./
 RUN npm ci --ignore-scripts
 
 COPY src ./src
+COPY scripts ./scripts
 RUN npm run build
 
 FROM node:20-bookworm-slim AS runtime
@@ -19,6 +24,10 @@ ENV NODE_ENV=production \
 
 WORKDIR /opt/ssh-session-mcp
 
+RUN apt-get update \
+  && apt-get upgrade -y \
+  && rm -rf /var/lib/apt/lists/*
+
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --ignore-scripts
 
@@ -26,7 +35,10 @@ COPY --from=build /opt/ssh-session-mcp/build ./build
 COPY scripts/ctl.mjs ./scripts/ctl.mjs
 COPY docker/entrypoint.sh /usr/local/bin/ssh-session-mcp-entrypoint
 
-RUN chmod 755 /usr/local/bin/ssh-session-mcp-entrypoint \
+RUN rm -rf /usr/local/lib/node_modules/npm \
+  && rm -f package.json package-lock.json \
+  && find /usr/local/bin -maxdepth 1 -type l \( -name 'npm*' -o -name 'npx' -o -name 'corepack' \) -delete \
+  && chmod 755 /usr/local/bin/ssh-session-mcp-entrypoint \
   && mkdir -p /workspace /workspace/state /tmp \
   && chown -R node:node /workspace /opt/ssh-session-mcp /tmp
 

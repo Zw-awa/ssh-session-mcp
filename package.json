@@ -23,7 +23,7 @@
   },
   "scripts": {
     "prepare": "npm run build",
-    "build": "tsc && shx chmod +x build/*.js",
+    "build": "tsc && node scripts/chmod-build.mjs",
     "build:site": "node scripts/build-site.mjs",
     "validate:helm": "node scripts/validate-helm.mjs",
     "version:check": "node scripts/check-version-consistency.mjs",
@@ -37,9 +37,9 @@
     "logs": "node scripts/ctl.mjs logs",
     "inspect": "npx @modelcontextprotocol/inspector node build/index.js",
     "validate:repo": "node build/validate-repo.js",
-    "test": "cross-env SSH_MCP_DISABLE_MAIN=1 vitest --run",
-    "test:watch": "cross-env SSH_MCP_DISABLE_MAIN=1 vitest",
-    "coverage": "cross-env SSH_MCP_DISABLE_MAIN=1 vitest --run --coverage"
+    "test": "node scripts/run-vitest.mjs --run",
+    "test:watch": "node scripts/run-vitest.mjs",
+    "coverage": "node scripts/run-vitest.mjs --run --coverage"
   },
   "files": [
     "build",
@@ -65,13 +65,15 @@
     "@types/node": "^24.5.2",
     "@types/ssh2": "^1.15.5",
     "@types/ws": "^8.18.1",
-    "cross-env": "^7.0.3",
-    "shx": "^0.4.0",
-    "testcontainers": "^11.7.0",
     "ts-node": "^10.9.2",
     "tsx": "^4.20.6",
     "typescript": "^5.9.2",
-    "vitest": "^3.2.4"
+    "vitest": "^3.2.6"
+  },
+  "overrides": {
+    "vite": {
+      "esbuild": "0.28.1"
+    }
   },
   "keywords": [
     "ssh",
