@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: 2026 Zw-awa
+SPDX-License-Identifier: Apache-2.0 -->
+
 # ssh-session-mcp
 
 **中文** | [English](README.md)
@@ -599,6 +602,7 @@ proxy auth 最适合放在 distributed + trusted reverse proxy 的组合里。�
 - Viewer 默认只绑定到本机 localhost
 - MCP server 把终端模式和输入锁当成一等安全信号
 - CI 会对源码文件系统和容器镜像运行 Trivy 高危/严重漏洞扫描
+- CI 会固定下载 Trivy CLI 版本并校验 checksum，而不是依赖漂移的第三方 action tag
 - Release 会为发布到 GHCR 的镜像 digest 生成 CycloneDX SBOM，并作为 GitHub Release 附件发布
 - Release 会对发布到 GHCR 的镜像 digest 执行 Cosign 无密钥签名
 - GHCR digest 是官方验签主路径；Docker Hub 仍可分发，但不是主验签入口

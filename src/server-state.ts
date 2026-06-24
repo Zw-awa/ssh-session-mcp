@@ -1,3 +1,8 @@
+/*
+ * SPDX-FileCopyrightText: 2026 Zw-awa
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
 import { promises as fs, existsSync, readFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';

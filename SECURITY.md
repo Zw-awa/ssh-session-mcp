@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: 2026 Zw-awa
+SPDX-License-Identifier: Apache-2.0 -->
+
 # 安全策略
 
 ## 报告漏洞

@@ -1,3 +1,8 @@
+/*
+ * SPDX-FileCopyrightText: 2026 Zw-awa
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
 import { escapeHtml } from '../server-state.js';
 import { renderViewerDocument } from './page-shell.js';
 import { ERROR_PAGE_STYLES } from './page-styles.js';

@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: 2026 Zw-awa
+SPDX-License-Identifier: Apache-2.0 -->
+
 # ssh-session-mcp Helm Chart
 
 This chart is the primary Kubernetes deployment entrypoint for `ssh-session-mcp`.

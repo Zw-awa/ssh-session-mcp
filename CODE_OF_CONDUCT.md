@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: 2026 Zw-awa
+SPDX-License-Identifier: Apache-2.0 -->
+
 # 贡献者行为准则
 
 ## 我们的承诺

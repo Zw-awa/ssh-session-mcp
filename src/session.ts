@@ -1,3 +1,8 @@
+/*
+ * SPDX-FileCopyrightText: 2026 Zw-awa
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
 import { ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
 import { Client, type ClientChannel, type ConnectConfig } from 'ssh2';
 import { StringDecoder } from 'node:string_decoder';

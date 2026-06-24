@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: 2026 Zw-awa
+SPDX-License-Identifier: Apache-2.0 -->
+
 # Acceptance Scenarios
 
 These scenario ids are the minimum regression checklist for the current architecture.

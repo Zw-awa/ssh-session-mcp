@@ -1,3 +1,8 @@
+/*
+ * SPDX-FileCopyrightText: 2026 Zw-awa
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
 import { createServer, type Server as HttpServer } from 'node:http';
 import type { Duplex } from 'node:stream';
 import { WebSocketServer } from 'ws';

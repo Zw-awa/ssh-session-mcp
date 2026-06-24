@@ -1,4 +1,9 @@
 #!/usr/bin/env node
+/*
+ * SPDX-FileCopyrightText: 2026 Zw-awa
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
 
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';

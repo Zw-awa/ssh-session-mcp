@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: 2026 Zw-awa
+SPDX-License-Identifier: Apache-2.0 -->
+
 # Failure Taxonomy
 
 `ssh-session-mcp` uses a small set of normalized failure categories so AI agents can react consistently without depending on one-off error strings.

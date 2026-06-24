@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Zw-awa
+# SPDX-License-Identifier: Apache-2.0
+
 FROM node:20-bookworm-slim AS build
 
 WORKDIR /opt/ssh-session-mcp

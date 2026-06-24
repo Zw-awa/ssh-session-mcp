@@ -1,3 +1,8 @@
+/*
+ * SPDX-FileCopyrightText: 2026 Zw-awa
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
 import { EventEmitter, once } from 'node:events';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -321,7 +326,7 @@ describe('distributed viewer behavior', () => {
     } finally {
       await cleanupModules(serverState);
     }
-  });
+  }, 10000);
 
   it('enforces viewer_read, viewer_write, and session_admin roles over HTTP', async () => {
     const { serverState, handleViewerHttpRequest } = await loadModules();

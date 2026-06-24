@@ -1,3 +1,8 @@
+/*
+ * SPDX-FileCopyrightText: 2026 Zw-awa
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
 export type HistoryLineType = 'output' | 'input' | 'control' | 'lifecycle';
 
 export interface HistoryLine {

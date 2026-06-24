@@ -1,3 +1,8 @@
+/*
+ * SPDX-FileCopyrightText: 2026 Zw-awa
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
 const MONO_FONT_STACK = 'Consolas, "SFMono-Regular", "Courier New", monospace';
 
 export const HOME_PAGE_STYLES = `

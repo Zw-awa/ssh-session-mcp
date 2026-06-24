@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: 2026 Zw-awa
+SPDX-License-Identifier: Apache-2.0 -->
+
 # Docker Distribution
 
 `ssh-session-mcp` supports container-based distribution in addition to npm.

@@ -1,3 +1,8 @@
+/*
+ * SPDX-FileCopyrightText: 2026 Zw-awa
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
 import { promises as fs } from 'node:fs';
 import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';

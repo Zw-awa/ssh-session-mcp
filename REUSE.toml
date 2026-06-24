@@ -1,0 +1,27 @@
+version = 1
+
+[[annotations]]
+path = [
+  ".eslintrc.json",
+  ".prettierrc.json",
+  "LICENSE",
+  "NOTICE",
+  "docs/examples/*.json",
+  "package-lock.json",
+  "package.json",
+  "server.json",
+  "tsconfig.json"
+]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2026 Zw-awa"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = [
+  "site/assets/.gitkeep",
+  "site/assets/hero-loop.gif",
+  "site/assets/logo-monogram-v1.png"
+]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2026 Zw-awa"
+SPDX-License-Identifier = "Apache-2.0"

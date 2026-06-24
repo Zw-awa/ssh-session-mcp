@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Zw-awa
+# SPDX-License-Identifier: Apache-2.0
+
 services:
   ssh-session-mcp:
     image: ${SSH_SESSION_MCP_IMAGE:-docker.io/zwawa/ssh-session-mcp:latest}

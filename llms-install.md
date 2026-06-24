@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: 2026 Zw-awa
+SPDX-License-Identifier: Apache-2.0 -->
+
 # SSH Session MCP Installation Guide for AI Agents
 
 This file is intended for AI agents such as Cline that need to install and configure `ssh-session-mcp` automatically.

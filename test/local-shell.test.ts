@@ -1,3 +1,8 @@
+/*
+ * SPDX-FileCopyrightText: 2026 Zw-awa
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
 import { describe, expect, it } from 'vitest';
 
 import { LocalShellStream, LocalConnection } from '../src/local-shell';

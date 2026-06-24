@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: 2026 Zw-awa
+SPDX-License-Identifier: Apache-2.0 -->
+
 # 贡献指南
 
 感谢您考虑为 SSH Session MCP 项目做出贡献！

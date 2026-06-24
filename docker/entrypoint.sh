@@ -1,4 +1,7 @@
 #!/bin/sh
+# SPDX-FileCopyrightText: 2026 Zw-awa
+# SPDX-License-Identifier: Apache-2.0
+
 set -eu
 
 if [ -z "${VIEWER_PORT:-}" ] || [ "${VIEWER_PORT}" = "auto" ]; then

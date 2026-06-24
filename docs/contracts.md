@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: 2026 Zw-awa
+SPDX-License-Identifier: Apache-2.0 -->
+
 # Tool Response Contract
 
 `ssh-session-mcp` keeps existing MCP tool payloads compatible, and adds a lightweight cross-tool contract for agents that need predictable automation.

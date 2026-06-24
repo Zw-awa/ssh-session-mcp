@@ -1,3 +1,8 @@
+/*
+ * SPDX-FileCopyrightText: 2026 Zw-awa
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -28,6 +33,7 @@ const REQUIRED_FILES = [
   'deploy/helm/ssh-session-mcp/values-single-node.yaml',
   'deploy/helm/ssh-session-mcp/values-distributed-v0.yaml',
   'scripts/validate-helm.mjs',
+  'scripts/install-trivy.sh',
   'src/index.ts',
 ] as const;
 

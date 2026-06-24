@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Zw-awa
+# SPDX-License-Identifier: Apache-2.0
+
 {{- if and (eq .Values.deploymentMode "distributedV0") (not .Values.distributed.redis.url) (not .Values.distributed.redis.existingSecret) }}
 {{- fail "distributedV0 mode requires distributed.redis.url or distributed.redis.existingSecret" }}
 {{- end }}

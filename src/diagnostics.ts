@@ -1,3 +1,8 @@
+/*
+ * SPDX-FileCopyrightText: 2026 Zw-awa
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
 import type { LogMode } from './logger.js';
 import type { SessionSummary } from './session.js';
 import type { CustomPolicyRule } from './validation.js';

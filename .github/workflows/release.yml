@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Zw-awa
+# SPDX-License-Identifier: Apache-2.0
+
 name: Release
 
 on:
@@ -155,24 +158,27 @@ jobs:
           tags: ${{ steps.docker-meta-ghcr.outputs.tags }}
           labels: ${{ steps.docker-meta-ghcr.outputs.labels }}
 
+      - name: Install Trivy
+        shell: bash
+        run: ./scripts/install-trivy.sh
+
       - name: Run Trivy filesystem scan
-        uses: aquasecurity/trivy-action@0.28.0
-        with:
-          scan-type: fs
-          scan-ref: .
-          format: table
-          ignore-unfixed: true
-          severity: CRITICAL,HIGH
-          exit-code: 1
+        shell: bash
+        run: |
+          set -euo pipefail
+          trivy fs . \
+            --severity CRITICAL,HIGH \
+            --ignore-unfixed \
+            --exit-code 1
 
       - name: Run Trivy image scan against GHCR release image
-        uses: aquasecurity/trivy-action@0.28.0
-        with:
-          image-ref: ghcr.io/${{ github.repository }}@${{ steps.ghcr-build.outputs.digest }}
-          format: table
-          ignore-unfixed: true
-          severity: CRITICAL,HIGH
-          exit-code: 1
+        shell: bash
+        run: |
+          set -euo pipefail
+          trivy image "ghcr.io/${GITHUB_REPOSITORY}@${{ steps.ghcr-build.outputs.digest }}" \
+            --severity CRITICAL,HIGH \
+            --ignore-unfixed \
+            --exit-code 1
 
       - name: Install Syft
         shell: bash

@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: 2026 Zw-awa
+SPDX-License-Identifier: Apache-2.0 -->
+
 # ssh-session-mcp
 
 [中文](README.zh-CN.md) | **English**
@@ -591,6 +594,7 @@ Example config file: [docs/examples/ssh-session-mcp.config.example.json](docs/ex
 - Viewer HTTP binds to localhost by default.
 - The MCP server treats terminal mode and input lock as first-class safety signals.
 - CI runs Trivy filesystem and container-image scans against high and critical vulnerabilities.
+- CI installs a pinned Trivy CLI release with checksum verification instead of relying on a floating third-party action tag.
 - Release builds generate a CycloneDX SBOM for the published GHCR image digest and attach it to the GitHub release.
 - Release builds sign the published GHCR image digest with keyless Cosign.
 - GHCR digest is the primary verification path. Docker Hub remains a distribution path, not the main signature-verification target.

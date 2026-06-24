@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Zw-awa
+# SPDX-License-Identifier: Apache-2.0
+
 apiVersion: v2
 name: ssh-session-mcp
 description: Helm chart for deploying ssh-session-mcp in single-node or distributed v0 mode.

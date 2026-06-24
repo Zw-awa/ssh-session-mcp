@@ -1,3 +1,8 @@
+/*
+ * SPDX-FileCopyrightText: 2026 Zw-awa
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -123,6 +128,7 @@ function writeValidRepositoryFixture(root: string) {
   writeText(root, 'deploy/helm/ssh-session-mcp/values-single-node.yaml', 'deploymentMode: singleNode\n');
   writeText(root, 'deploy/helm/ssh-session-mcp/values-distributed-v0.yaml', 'deploymentMode: distributedV0\n');
   writeText(root, 'scripts/validate-helm.mjs', 'console.log("ok");\n');
+  writeText(root, 'scripts/install-trivy.sh', '#!/usr/bin/env bash\necho ok\n');
 }
 
 describe('repo validation helpers', () => {

@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: 2026 Zw-awa
+SPDX-License-Identifier: Apache-2.0 -->
+
 # AGENT.md
 
 This file is the primary playbook for AI agents that need to install, inspect, configure, and operate `ssh-session-mcp` for a user.

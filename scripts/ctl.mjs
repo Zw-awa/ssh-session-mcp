@@ -1,4 +1,9 @@
 #!/usr/bin/env node
+/*
+ * SPDX-FileCopyrightText: 2026 Zw-awa
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
 
 import { exec, execSync, spawn } from 'node:child_process';
 import { existsSync, readFileSync, statSync, unlinkSync } from 'node:fs';

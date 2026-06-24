@@ -48,7 +48,12 @@
     ".env.example",
     "AGENT.md",
     "AI_AGENT_GUIDE.md",
-    "README.zh-CN.md"
+    "LICENSE",
+    "LICENSES",
+    "NOTICE",
+    "README.md",
+    "README.zh-CN.md",
+    "REUSE.toml"
   ],
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.17.5",
