@@ -188,6 +188,8 @@ ssh-session-mcp.config.json
 docs/*
 !docs/contracts.md
 !docs/docker.md
+!docs/kubernetes.md
+!docs/ingress-proxy-auth.md
 !docs/failure-taxonomy.md
 !docs/acceptance-scenarios.md
 !docs/platform-compatibility.md
