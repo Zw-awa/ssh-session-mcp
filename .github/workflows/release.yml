@@ -160,7 +160,7 @@ jobs:
 
       - name: Install Trivy
         shell: bash
-        run: ./scripts/install-trivy.sh
+        run: bash ./scripts/install-trivy.sh
 
       - name: Run Trivy filesystem scan
         shell: bash
