@@ -315,6 +315,36 @@ afterEach(() => {
 });
 
 describe('distributed viewer behavior', () => {
+  it('keeps probe endpoints unauthenticated under proxy auth mode', async () => {
+    const { serverState, handleViewerHttpRequest } = await loadModules({ viewerPort: '8794' });
+    serverState.setActualViewerPort(8794);
+    serverState.setNodeLastHeartbeatAt(new Date().toISOString());
+
+    try {
+      const { response: liveResponse, state: liveState } = createMockResponse();
+      await handleViewerHttpRequest(createMockRequest('/livez'), liveResponse);
+      expect(liveState.statusCode).toBe(200);
+
+      const { response: readyResponse, state: readyState } = createMockResponse();
+      await handleViewerHttpRequest(createMockRequest('/readyz'), readyResponse);
+      expect(readyState.statusCode).toBe(200);
+      expect(JSON.parse(readyState.body)).toMatchObject({
+        ok: true,
+        distributedMode: true,
+        checks: {
+          nodeHeartbeatFresh: true,
+        },
+      });
+
+      const { response: metricsResponse, state: metricsState } = createMockResponse();
+      await handleViewerHttpRequest(createMockRequest('/metrics'), metricsResponse);
+      expect(metricsState.statusCode).toBe(200);
+      expect(metricsState.body).toContain('ssh_session_mcp_up 1');
+    } finally {
+      await cleanupModules(serverState);
+    }
+  }, 10000);
+
   it('returns 403 when proxy auth headers are missing', async () => {
     const { serverState, handleViewerHttpRequest } = await loadModules();
     try {

@@ -148,7 +148,9 @@ function requiredViewerRoleForRoute(route: ReturnType<typeof matchViewerHttpRout
     case 'ready':
     case 'metrics':
     case 'health':
-      return 'viewer_read';
+      // Health and probe endpoints must stay reachable without proxy identity headers
+      // so container health checks and cluster probes keep working under authMode=proxy.
+      return undefined;
     case 'viewer-access-policy-api':
       return method?.toUpperCase() === 'GET' ? 'viewer_read' : 'session_admin';
     case 'attach-input':
