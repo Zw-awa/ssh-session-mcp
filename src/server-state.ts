@@ -726,10 +726,6 @@ export const runningCommands = new Map<string, RunningCommand>();
 export const server = new McpServer({
   name: 'ssh-session-mcp',
   version: PACKAGE_VERSION,
-  capabilities: {
-    resources: {},
-    tools: {},
-  },
 });
 
 // ── Logging helpers ──────────────────────────────────────────────────────────

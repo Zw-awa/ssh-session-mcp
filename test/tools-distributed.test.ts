@@ -9,6 +9,8 @@ import { join } from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { getRegisteredToolHandler } from './mcp-test-helpers.js';
+
 const previousArgv = [...process.argv];
 const envKeys = [
   'SSH_MCP_DISABLE_MAIN',
@@ -120,6 +122,12 @@ function parseToolJson(result: any) {
   return JSON.parse(result.content[0].text);
 }
 
+function toolHandler(server: {
+  _registeredTools: Record<string, { handler?: Function; callback?: Function }>;
+}, name: string) {
+  return getRegisteredToolHandler(server, name);
+}
+
 afterEach(() => {
   restoreProcessState();
   vi.restoreAllMocks();
@@ -151,7 +159,9 @@ describe('distributed tool views', () => {
         },
       }));
 
-      const result = await serverState.server._registeredTools['ssh-session-list'].callback({
+      const result = await toolHandler(serverState.server as unknown as {
+        _registeredTools: Record<string, { handler?: Function; callback?: Function }>;
+      }, 'ssh-session-list')({
         includeClosed: false,
         device: 'board-a',
         connectionName: 'main',
@@ -180,7 +190,9 @@ describe('distributed tool views', () => {
         },
       }));
 
-      const result = await serverState.server._registeredTools['ssh-status'].callback({});
+      const result = await toolHandler(serverState.server as unknown as {
+        _registeredTools: Record<string, { handler?: Function; callback?: Function }>;
+      }, 'ssh-status')({});
       const payload = parseToolJson(result);
 
       expect(payload.distributedMode).toBe('distributed');
@@ -214,7 +226,9 @@ describe('distributed tool views', () => {
         routableBaseUrl: 'https://node-b.example.test',
       } as any);
 
-      const result = await serverState.server._registeredTools['ssh-command-status'].callback({
+      const result = await toolHandler(serverState.server as unknown as {
+        _registeredTools: Record<string, { handler?: Function; callback?: Function }>;
+      }, 'ssh-command-status')({
         commandId: 'cmd-remote',
       });
       const payload = parseToolJson(result);

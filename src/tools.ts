@@ -230,10 +230,11 @@ function buildValidationWarningMetadata(validation: ReturnType<typeof validateCo
 }
 
 export function registerTools() {
-server.tool(
+server.registerTool(
   'ssh-session-open',
-  'Open a persistent interactive SSH PTY session with automatic idle cleanup and a terminal-style dashboard view.',
   {
+    description: 'Open a persistent interactive SSH PTY session with automatic idle cleanup and a terminal-style dashboard view.',
+    inputSchema: {
     sessionName: z.string().optional().describe('Optional human-readable alias for the session'),
     device: z.string().optional().describe('Device profile id from ssh-session-mcp.config.json'),
     connectionName: z.string().optional().describe('Logical connection name for the selected device'),
@@ -259,6 +260,7 @@ server.tool(
     autoOpenViewer: z.boolean().optional().describe('Automatically ensure a local viewer is opened for this session'),
     viewerMode: z.enum(['terminal', 'browser']).optional().describe('Viewer launch mode when autoOpenViewer is enabled'),
     viewerSingletonScope: z.enum(['connection', 'session']).optional().describe('How viewer singleton deduplication is scoped when autoOpenViewer is enabled'),
+  },
   },
   async ({
     sessionName,
@@ -484,14 +486,16 @@ server.tool(
   },
 );
 
-server.tool(
+server.registerTool(
   'ssh-session-send',
-  'Send raw input to an interactive SSH PTY session. Actor is shown inline in the dashboard transcript.',
   {
+    description: 'Send raw input to an interactive SSH PTY session. Actor is shown inline in the dashboard transcript.',
+    inputSchema: {
     session: z.string().optional().describe('Session id, session ref, or session name. Defaults to the active session'),
     input: z.string().describe('Raw text to send into the PTY'),
     appendNewline: z.boolean().optional().describe('Append a newline after the input'),
     actor: z.string().optional().describe('Label for the sender shown inline in the dashboard, e.g. codex, claude, user'),
+  },
   },
   async ({ session, input, appendNewline, actor }) => {
     const target = resolveSession(session);
@@ -539,10 +543,12 @@ server.tool(
   },
 );
 
-server.tool(
+server.registerTool(
   'ssh-device-list',
-  'List configured SSH device profiles discovered from ssh-session-mcp.config.json.',
-  {},
+  {
+    description: 'List configured SSH device profiles discovered from ssh-session-mcp.config.json.',
+    inputSchema: {},
+  },
   async () => {
     const defaultDeviceId = resolveConfiguredDefaultDeviceId();
     const devices = (PROFILES.config?.devices || []).map(device => ({
@@ -588,14 +594,16 @@ server.tool(
   },
 );
 
-server.tool(
+server.registerTool(
   'ssh-session-read',
-  'Read raw buffered terminal output from an SSH PTY session. Supports optional long-polling for new terminal output.',
   {
+    description: 'Read raw buffered terminal output from an SSH PTY session. Supports optional long-polling for new terminal output.',
+    inputSchema: {
     session: z.string().optional().describe('Session id, session ref, or session name. Defaults to the active session'),
     offset: z.number().int().nonnegative().optional().describe('Read from this output offset. If omitted, return the latest tail'),
     maxChars: z.number().int().positive().optional().describe('Maximum chars to return'),
     waitForChangeMs: z.number().int().nonnegative().optional().describe('Wait up to this many milliseconds for new terminal output before returning'),
+  },
   },
   async ({ session, offset, maxChars, waitForChangeMs }) => {
     const target = resolveSession(session);
@@ -638,10 +646,11 @@ server.tool(
   },
 );
 
-server.tool(
+server.registerTool(
   'ssh-session-watch',
-  'Long-poll an SSH PTY session and render a terminal-style dashboard with inline actor markers.',
   {
+    description: 'Long-poll an SSH PTY session and render a terminal-style dashboard with inline actor markers.',
+    inputSchema: {
     session: z.string().optional().describe('Session id, session ref, or session name. Defaults to the active session'),
     outputOffset: z.number().int().nonnegative().optional().describe('Wait until terminal output grows beyond this offset'),
     eventSeq: z.number().int().nonnegative().optional().describe('Wait until transcript events grow beyond this sequence number'),
@@ -652,6 +661,7 @@ server.tool(
     dashboardRightEvents: z.number().int().positive().optional().describe('How many recent input/control/lifecycle events to retain for actor markers'),
     stripAnsiFromLeft: z.boolean().optional().describe('Strip ANSI escape sequences from rendered SSH output'),
     includeDashboard: z.boolean().optional().describe('Include the rendered dashboard text in the tool response'),
+  },
   },
   async ({
     session,
@@ -725,13 +735,15 @@ server.tool(
   },
 );
 
-server.tool(
+server.registerTool(
   'ssh-session-history',
-  'Read line-numbered session history built from terminal output and user/agent actions.',
   {
+    description: 'Read line-numbered session history built from terminal output and user/agent actions.',
+    inputSchema: {
     session: z.string().optional().describe('Session id, session ref, or session name. Defaults to the active session'),
     line: z.number().int().nonnegative().optional().describe('Read from this history line number'),
     maxLines: z.number().int().positive().optional().describe('Maximum number of history lines to return'),
+  },
   },
   async ({ session, line, maxLines }) => {
     const target = resolveSession(session);
@@ -763,13 +775,15 @@ server.tool(
   },
 );
 
-server.tool(
+server.registerTool(
   'ssh-session-control',
-  'Send a control key to an interactive SSH PTY session. Actor is shown inline in the dashboard transcript.',
   {
+    description: 'Send a control key to an interactive SSH PTY session. Actor is shown inline in the dashboard transcript.',
+    inputSchema: {
     session: z.string().optional().describe('Session id, session ref, or session name. Defaults to the active session'),
     control: z.enum(['ctrl_c', 'ctrl_d', 'enter', 'tab', 'esc', 'up', 'down', 'left', 'right', 'backspace']).describe('Control key to send'),
     actor: z.string().optional().describe('Label for the sender shown inline in the dashboard, e.g. codex, claude, user'),
+  },
   },
   async ({ session, control, actor }) => {
     const target = resolveSession(session);
@@ -813,13 +827,15 @@ server.tool(
   },
 );
 
-server.tool(
+server.registerTool(
   'ssh-session-resize',
-  'Resize the PTY window of an interactive SSH session.',
   {
+    description: 'Resize the PTY window of an interactive SSH session.',
+    inputSchema: {
     session: z.string().optional().describe('Session id, session ref, or session name. Defaults to the active session'),
     cols: z.number().int().positive().describe('New column count'),
     rows: z.number().int().positive().describe('New row count'),
+  },
   },
   async ({ session, cols, rows }) => {
     const target = resolveSession(session);
@@ -849,13 +865,15 @@ server.tool(
   },
 );
 
-server.tool(
+server.registerTool(
   'ssh-session-list',
-  'List tracked SSH PTY sessions. Closed sessions are kept briefly for inspection, then automatically pruned.',
   {
+    description: 'List tracked SSH PTY sessions. Closed sessions are kept briefly for inspection, then automatically pruned.',
+    inputSchema: {
     includeClosed: z.boolean().optional().describe('Include recently closed retained sessions'),
     device: z.string().optional().describe('Filter by device id'),
     connectionName: z.string().optional().describe('Filter by connection name'),
+  },
   },
   async ({ includeClosed, device, connectionName }) => {
     sweepSessions();
@@ -894,11 +912,13 @@ server.tool(
   },
 );
 
-server.tool(
+server.registerTool(
   'ssh-session-diagnostics',
-  'Inspect session health, buffer trim state, viewer attachment state, input lock state, and tracked command metadata.',
   {
+    description: 'Inspect session health, buffer trim state, viewer attachment state, input lock state, and tracked command metadata.',
+    inputSchema: {
     session: z.string().optional().describe('Session id or unique session name. Omit to inspect all tracked sessions'),
+  },
   },
   async ({ session }) => {
     sweepSessions();
@@ -944,11 +964,13 @@ server.tool(
   },
 );
 
-server.tool(
+server.registerTool(
   'ssh-session-policy-list',
-  'List the inherited and session-level custom policy rules currently active for an SSH session.',
   {
+    description: 'List the inherited and session-level custom policy rules currently active for an SSH session.',
+    inputSchema: {
     session: z.string().optional().describe('Session id, session ref, or session name. Defaults to the active session'),
+  },
   },
   async ({ session }) => {
     const target = resolveSession(session);
@@ -982,10 +1004,11 @@ server.tool(
   },
 );
 
-server.tool(
+server.registerTool(
   'ssh-session-policy-upsert',
-  'Add or update a session-level custom policy rule. Session rules are applied after immutable built-in hard blocks and before the built-in safe/full warning set.',
   {
+    description: 'Add or update a session-level custom policy rule. Session rules are applied after immutable built-in hard blocks and before the built-in safe/full warning set.',
+    inputSchema: {
     session: z.string().optional().describe('Session id, session ref, or session name. Defaults to the active session'),
     id: z.string().min(1).describe('Stable rule id used for future updates or removal'),
     pattern: z.string().min(1).describe('JavaScript regular expression source without surrounding slashes'),
@@ -997,6 +1020,7 @@ server.tool(
     priority: z.number().int().nonnegative().optional().describe('Lower numbers run earlier within the same severity band'),
     suggestion: z.string().optional().describe('Optional remediation hint shown alongside the message'),
     enabled: z.boolean().optional().describe('Whether the rule is active. Defaults to true'),
+  },
   },
   async ({ session, id, pattern, flags, mode, category, action, message, priority, suggestion, enabled }) => {
     const target = resolveSession(session);
@@ -1033,12 +1057,14 @@ server.tool(
   },
 );
 
-server.tool(
+server.registerTool(
   'ssh-session-policy-remove',
-  'Remove a session-level custom policy rule by id.',
   {
+    description: 'Remove a session-level custom policy rule by id.',
+    inputSchema: {
     session: z.string().optional().describe('Session id, session ref, or session name. Defaults to the active session'),
     id: z.string().min(1).describe('Rule id to remove from the current session rule set'),
+  },
   },
   async ({ session, id }) => {
     const target = resolveSession(session);
@@ -1084,11 +1110,13 @@ server.tool(
   },
 );
 
-server.tool(
+server.registerTool(
   'ssh-session-policy-reset',
-  'Reset the current session custom policy rules back to the inherited defaults loaded from configuration.',
   {
+    description: 'Reset the current session custom policy rules back to the inherited defaults loaded from configuration.',
+    inputSchema: {
     session: z.string().optional().describe('Session id, session ref, or session name. Defaults to the active session'),
+  },
   },
   async ({ session }) => {
     const target = resolveSession(session);
@@ -1112,11 +1140,13 @@ server.tool(
   },
 );
 
-server.tool(
+server.registerTool(
   'ssh-session-set-active',
-  'Set or clear the active session used by tools when the session argument is omitted.',
   {
+    description: 'Set or clear the active session used by tools when the session argument is omitted.',
+    inputSchema: {
     session: z.string().optional().describe('Session id, session ref, or session name. Omit to clear the active session'),
+  },
   },
   async ({ session }) => {
     const requested = sanitizeOptionalText(session);
@@ -1158,13 +1188,15 @@ server.tool(
   },
 );
 
-server.tool(
+server.registerTool(
   'ssh-viewer-ensure',
-  'Ensure that a viewer exists for a session. Terminal mode is singleton-scoped and will reuse a running viewer instead of opening duplicates.',
   {
+    description: 'Ensure that a viewer exists for a session. Terminal mode is singleton-scoped and will reuse a running viewer instead of opening duplicates.',
+    inputSchema: {
     session: z.string().optional().describe('Session id, session ref, or session name. Defaults to the active session'),
     mode: z.enum(['terminal', 'browser']).optional().describe('Viewer launch mode'),
     singletonScope: z.enum(['connection', 'session']).optional().describe('Deduplication scope for terminal viewers'),
+  },
   },
   async ({ session, mode, singletonScope }) => {
     const target = resolveSession(session);
@@ -1201,10 +1233,12 @@ server.tool(
   },
 );
 
-server.tool(
+server.registerTool(
   'ssh-viewer-list',
-  'List persisted local viewer processes and their current binding state.',
-  {},
+  {
+    description: 'List persisted local viewer processes and their current binding state.',
+    inputSchema: {},
+  },
   async () => {
     await loadViewerProcessState();
     let pruned = false;
@@ -1248,11 +1282,13 @@ server.tool(
   },
 );
 
-server.tool(
+server.registerTool(
   'ssh-session-close',
-  'Close an interactive SSH PTY session immediately and remove it from the MCP server.',
   {
+    description: 'Close an interactive SSH PTY session immediately and remove it from the MCP server.',
+    inputSchema: {
     session: z.string().optional().describe('Session id, session ref, or session name. Defaults to the active session'),
+  },
   },
   async ({ session }) => {
     const target = resolveSession(session);
@@ -1283,13 +1319,15 @@ server.tool(
 
 // ── Simplified tools for AI agents ──────────────────────────────────────────
 
-server.tool(
+server.registerTool(
   'ssh-quick-connect',
-  'One-step: open SSH session using configured device profiles when available, otherwise fall back to legacy .env defaults. Reuse an existing session when possible and return viewer details when enabled.',
   {
+    description: 'One-step: open SSH session using configured device profiles when available, otherwise fall back to legacy .env defaults. Reuse an existing session when possible and return viewer details when enabled.',
+    inputSchema: {
     sessionName: z.string().optional().describe('Optional session name. Defaults to "default"'),
     device: z.string().optional().describe('Device profile id. Defaults to config defaultDevice when available'),
     connectionName: z.string().optional().describe('Logical connection name. Defaults to "main" for profile-based sessions'),
+  },
   },
   async ({ sessionName, device, connectionName }) => {
     sweepSessions();
@@ -1559,15 +1597,17 @@ server.tool(
   },
 );
 
-server.tool(
+server.registerTool(
   'ssh-run',
-  'Execute a command in the SSH session and return the output. Uses intelligent completion detection (prompt matching + idle timeout). In safe mode, dangerous/interactive commands are blocked. Long-running commands automatically transition to async mode.',
   {
+    description: 'Execute a command in the SSH session and return the output. Uses intelligent completion detection (prompt matching + idle timeout). In safe mode, dangerous/interactive commands are blocked. Long-running commands automatically transition to async mode.',
+    inputSchema: {
     command: z.string().describe('Shell command to execute'),
     session: z.string().optional().describe('Session name or id. Defaults to "default"'),
     waitMs: z.number().int().nonnegative().optional().describe('Maximum wait time in ms (default 30000). Command may return earlier if prompt detected or idle timeout reached.'),
     idleMs: z.number().int().positive().optional().describe('Idle timeout in ms - if no new output for this duration, consider command done (default 2000)'),
     maxChars: z.number().int().positive().optional().describe('Max chars to read from output (default 16000). When output exceeds this limit, head (30%) and tail (70%) are returned with the middle omitted.'),
+  },
   },
   async ({ command, session, waitMs, idleMs, maxChars }) => {
     sweepSessions();
@@ -2032,10 +2072,12 @@ server.tool(
   },
 );
 
-server.tool(
+server.registerTool(
   'ssh-status',
-  'Quick status check: list active sessions, viewer URL, connection state. Use this to check if a session is already running.',
-  {},
+  {
+    description: 'Quick status check: list active sessions, viewer URL, connection state. Use this to check if a session is already running.',
+    inputSchema: {},
+  },
   async () => {
     sweepSessions();
     const activeSession = refreshActiveSession();
@@ -2109,12 +2151,14 @@ server.tool(
 
 // --- ssh-command-status tool ---
 
-server.tool(
+server.registerTool(
   'ssh-command-status',
-  'Check the status of a long-running async command. Returns current output if completed, or partial output if still running.',
   {
+    description: 'Check the status of a long-running async command. Returns current output if completed, or partial output if still running.',
+    inputSchema: {
     commandId: z.string().describe('The async command ID returned by ssh-run'),
     maxChars: z.number().int().positive().optional().describe('Max chars to read from output (default 16000)'),
+  },
   },
   async ({ commandId, maxChars }) => {
     let entry = runningCommands.get(commandId);
@@ -2267,10 +2311,11 @@ server.tool(
 
 // --- ssh-retry tool ---
 
-server.tool(
+server.registerTool(
   'ssh-retry',
-  'Execute a command with automatic retry and backoff on failure. Useful for flaky network commands or services that need time to start.',
   {
+    description: 'Execute a command with automatic retry and backoff on failure. Useful for flaky network commands or services that need time to start.',
+    inputSchema: {
     command: z.string().describe('Shell command to execute'),
     session: z.string().optional().describe('Session name or id. Defaults to "default"'),
     maxRetries: z.number().int().positive().optional().describe('Maximum number of retries (default 3)'),
@@ -2278,6 +2323,7 @@ server.tool(
     delayMs: z.number().int().positive().optional().describe('Base delay between retries in ms (default 1000)'),
     successPattern: z.string().optional().describe('Regex pattern - if output matches this, consider command successful regardless of exit code'),
     failPattern: z.string().optional().describe('Regex pattern - if output matches this, consider command failed regardless of exit code'),
+  },
   },
   async ({ command, session, maxRetries, backoff, delayMs, successPattern, failPattern }) => {
     sweepSessions();

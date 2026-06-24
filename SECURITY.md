@@ -120,7 +120,8 @@ npm audit fix
 
 ### 关键依赖
 - `ssh2`: SSH 客户端库，定期更新以获取安全修复
-- `@modelcontextprotocol/sdk`: MCP SDK，关注安全公告
+- `@modelcontextprotocol/sdk`: MCP SDK，关注安全公告，并及时升级已披露的安全修复版本
+- `ws`: WebSocket 依赖，需要随上游安全更新及时升级
 - `zod`: 输入验证库，确保所有输入都经过验证
 
 ## 供应链安全

@@ -57,7 +57,7 @@ function escapeRegExp(value: string) {
 }
 
 export function extractMcpToolNames(source: string) {
-  const matches = [...source.matchAll(/server\.tool\(\s*'([^']+)'/g)];
+  const matches = [...source.matchAll(/server\.(?:tool|registerTool)\(\s*'([^']+)'/g)];
   return [...new Set(matches.map(match => match[1]).sort())];
 }
 
@@ -80,7 +80,7 @@ export function validateRepository(rootDir: string) {
   const readmePath = join(rootDir, 'README.md');
   const readmeZhPath = join(rootDir, 'README.zh-CN.md');
   const aiGuidePath = join(rootDir, 'AI_AGENT_GUIDE.md');
-  const indexPath = join(rootDir, 'src/index.ts');
+  const toolsPath = join(rootDir, 'src/tools.ts');
   const acceptanceScenariosPath = join(rootDir, 'docs/acceptance-scenarios.md');
   const exampleConfigPath = join(rootDir, 'docs/examples/ssh-session-mcp.config.example.json');
   const envExamplePath = join(rootDir, '.env.example');
@@ -96,8 +96,8 @@ export function validateRepository(rootDir: string) {
     }
   }
 
-  if (existsSync(indexPath) && existsSync(readmePath) && existsSync(readmeZhPath) && existsSync(aiGuidePath)) {
-    const toolNames = extractMcpToolNames(readText(indexPath));
+  if (existsSync(toolsPath) && existsSync(readmePath) && existsSync(readmeZhPath) && existsSync(aiGuidePath)) {
+    const toolNames = extractMcpToolNames(readText(toolsPath));
     const docs = [
       { label: 'README.md', text: readText(readmePath) },
       { label: 'README.zh-CN.md', text: readText(readmeZhPath) },

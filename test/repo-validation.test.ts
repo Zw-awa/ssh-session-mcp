@@ -32,9 +32,10 @@ function writeValidRepositoryFixture(root: string) {
   writeText(root, 'docker-compose.yml', 'services:\n  app:\n    image: example\n');
   writeText(root, 'docker-compose.env.yml', 'services:\n  app:\n    image: example\n');
 
-  writeText(root, 'src/index.ts', [
-    "server.tool('ssh-quick-connect', '...', {}, async () => ({}));",
-    "server.tool('ssh-run', '...', {}, async () => ({}));",
+  writeText(root, 'src/index.ts', 'export {};\n');
+  writeText(root, 'src/tools.ts', [
+    "server.registerTool('ssh-quick-connect', { description: '...', inputSchema: {} }, async () => ({}));",
+    "server.registerTool('ssh-run', { description: '...', inputSchema: {} }, async () => ({}));",
   ].join('\n'));
 
   writeText(root, 'README.md', [
@@ -134,9 +135,9 @@ function writeValidRepositoryFixture(root: string) {
 describe('repo validation helpers', () => {
   it('extracts unique MCP tool names', () => {
     const source = [
-      "server.tool('ssh-run', '...', {}, async () => ({}));",
-      "server.tool('ssh-quick-connect', '...', {}, async () => ({}));",
-      "server.tool('ssh-run', '...', {}, async () => ({}));",
+      "server.registerTool('ssh-run', { description: '...', inputSchema: {} }, async () => ({}));",
+      "server.registerTool('ssh-quick-connect', { description: '...', inputSchema: {} }, async () => ({}));",
+      "server.registerTool('ssh-run', { description: '...', inputSchema: {} }, async () => ({}));",
     ].join('\n');
 
     expect(extractMcpToolNames(source)).toEqual(['ssh-quick-connect', 'ssh-run']);

@@ -9,6 +9,8 @@ import { join } from 'node:path';
 
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
+import { getRegisteredToolHandler } from './mcp-test-helpers.js';
+
 const MODULE_LOAD_TIMEOUT_MS = 60000;
 
 let server: typeof import('../src/server-state.js').server;
@@ -146,6 +148,12 @@ function extractJson(text: string) {
   return JSON.parse(text);
 }
 
+function toolHandler(name: string) {
+  return getRegisteredToolHandler(server as unknown as {
+    _registeredTools: Record<string, { handler?: Function; callback?: Function }>;
+  }, name);
+}
+
 describe('tool locking', () => {
   it('blocks ssh-run when a background command is already running on the same session', async () => {
     const session = createMockSession();
@@ -160,7 +168,7 @@ describe('tool locking', () => {
       status: 'running',
     } as any);
 
-    const result = await server._registeredTools['ssh-run'].callback({
+    const result = await toolHandler('ssh-run')({
       command: 'echo second',
       session: 'demo-session',
     });
@@ -193,7 +201,7 @@ describe('tool locking', () => {
     });
     sessions.set('demo-session', session as any);
 
-    const result = await server._registeredTools['ssh-run'].callback({
+    const result = await toolHandler('ssh-run')({
       command: 'echo ok',
       session: 'demo-session',
       waitMs: 1000,
