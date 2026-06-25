@@ -191,7 +191,7 @@ function sessionMarkup(session) {
         '<div class="session-meta" data-role="times">Created: ' + escapeText(prettyTime(session.createdAt)) + ' · Last activity: ' + escapeText(prettyTime(session.updatedAt)) + '</div>' +
       '</div>' +
       '<div class="session-actions">' +
-        '<a class="btn btn-primary" data-role="terminal-link" target="_blank" href="/terminal/session/' + encodeURIComponent(session.sessionId) + '">Terminal</a>' +
+        '<a class="btn btn-primary" data-role="terminal-link" href="/terminal/session/' + encodeURIComponent(session.sessionId) + '">Terminal</a>' +
         '<button class="btn" data-action="details" data-role="details-button" data-session="' + escapeText(session.sessionId) + '">Details</button>' +
         '<button class="btn" data-action="mode" data-session="' + escapeText(session.sessionId) + '">Mode</button>' +
         '<button class="btn btn-danger" data-action="close" data-session="' + escapeText(session.sessionId) + '">Close</button>' +
@@ -242,7 +242,9 @@ function renderSessions(list) {
   const root = qs('sessions');
   if (!root) return;
   if (!Array.isArray(list) || list.length === 0) {
-    root.innerHTML = '<div class="empty-state">No active SSH sessions</div>';
+    if (!root.querySelector('.empty-state')) {
+      root.innerHTML = '<div class="empty-state">No active SSH sessions</div>';
+    }
     return;
   }
   const existingCards = new Map(Array.from(root.querySelectorAll('.session-card[data-session-card]')).map(card => [card.getAttribute('data-session-card'), card]));

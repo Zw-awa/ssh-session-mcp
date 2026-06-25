@@ -21,6 +21,7 @@ export const HOME_PAGE_STYLES = `
       --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
       font-family: ${MONO_FONT_STACK};
     }
+    * { box-sizing: border-box; }
     @keyframes fadeIn {
       from { opacity: 0; transform: translateY(6px); }
       to { opacity: 1; transform: translateY(0); }
@@ -134,10 +135,13 @@ export const HOME_PAGE_STYLES = `
       gap: 6px;
       font-size: 12px;
       color: var(--muted);
+      min-width: 0;
     }
     .rule-textarea,
     .rule-input {
       width: 100%;
+      max-width: 100%;
+      min-width: 0;
       border: 1px solid var(--line);
       border-radius: 10px;
       background: var(--panel-alt);
@@ -270,7 +274,6 @@ export const HOME_PAGE_STYLES = `
       padding: 40px 20px;
       color: var(--muted);
       font-style: italic;
-      animation: fadeIn 0.5s var(--ease);
     }
     .status-badge {
       display: inline-block;
@@ -282,7 +285,7 @@ export const HOME_PAGE_STYLES = `
       margin-left: 6px;
       transition: background 0.3s var(--ease);
     }
-    .badge-active { background: #1f7a43; color: #dfffe7; animation: pulse 2s ease-in-out infinite; }
+    .badge-active { background: #1f7a43; color: #dfffe7; }
     .badge-idle { background: #835d16; color: #ffe4a0; }
     .badge-mode { background: rgba(120, 210, 191, 0.14); color: var(--accent); }
     .badge-agent { background: rgba(255, 107, 107, 0.16); color: #ffc9c9; }
@@ -774,7 +777,7 @@ export const XTERM_PAGE_STYLES = `
       height: 30px; padding: 0 10px; border-radius: 6px; border: 1px solid var(--line);
       background: rgba(255,255,255,0.04); color: var(--text); font: inherit; font-size: 12px; cursor: pointer;
       text-decoration: none; display: inline-flex; align-items: center;
-      transition: all 0.2s var(--ease);
+      transition: background-color 0.2s var(--ease), border-color 0.2s var(--ease), color 0.2s var(--ease), transform 0.2s var(--ease);
     }
     .btn:hover {
       border-color: var(--accent);
@@ -796,6 +799,7 @@ export const XTERM_PAGE_STYLES = `
       background-image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='8' height='5'><path d='M0 0l4 5 4-5z' fill='%2391a0b3'/></svg>");
       background-repeat: no-repeat;
       background-position: right 8px center;
+      background-size: 8px 5px;
     }
     select.btn option {
       background: #161b22;
