@@ -78,6 +78,37 @@ describe('viewer UI contracts', () => {
     expect(html).toContain('overflow-wrap: anywhere;');
   });
 
+  it('keeps viewer access policy fields inside their grid columns', () => {
+    const html = renderViewerHomePage();
+
+    expect(html).toContain('* { box-sizing: border-box; }');
+    expect(html).toContain('grid-template-columns: repeat(2, minmax(0, 1fr));');
+    expect(html).toContain('min-width: 0;');
+    expect(html).toContain('max-width: 100%;');
+  });
+
+  it('keeps the empty sessions state stable across auto-refresh', () => {
+    const html = renderViewerHomePage();
+
+    expect(html).toContain("if (!root.querySelector('.empty-state'))");
+    expect(html).toContain("root.innerHTML = '<div class=\"empty-state\">No active SSH sessions</div>';");
+    expect(html).not.toContain('.empty-state {\n      text-align: center;\n      padding: 40px 20px;\n      color: var(--muted);\n      font-style: italic;\n      animation:');
+  });
+
+  it('does not animate active session badges during auto-refresh', () => {
+    const html = renderViewerHomePage();
+
+    expect(html).toContain('.badge-active { background: #1f7a43; color: #dfffe7; }');
+    expect(html).not.toContain('.badge-active { background: #1f7a43; color: #dfffe7; animation:');
+  });
+
+  it('opens terminal links in the same tab so Home returns to the same viewer page', () => {
+    const html = renderViewerHomePage();
+
+    expect(html).toContain('data-role="terminal-link" href="/terminal/session/');
+    expect(html).not.toContain('data-role="terminal-link" target="_blank"');
+  });
+
   it('treats xterm common mode as an unlocked mode instead of coercing it to user lock', () => {
     const html = renderXtermTerminalPage({
       attachKind: 'session',
@@ -101,6 +132,24 @@ describe('viewer UI contracts', () => {
     expect(html).toContain("if (s.lockPolicy) { updateLockPolicy(s.lockPolicy); }");
     expect(html).toContain("if (msg.lockPolicy) { updateLockPolicy(msg.lockPolicy); }");
     expect(html).not.toContain("var actor = getActor();");
+  });
+
+  it('keeps xterm select arrows from animating across the toolbar', () => {
+    const html = renderXtermTerminalPage({
+      attachKind: 'session',
+      attachRef: 'demo-session',
+      baseUrl: 'http://127.0.0.1:8793',
+      footerLabel: 'Session ID',
+      footerValue: 'demo-session',
+      meta: 'remote-user@DEVICE_A_HOST:22',
+      operationMode: 'safe',
+      subtitle: 'Shared SSH Terminal',
+      title: 'DEVICE_A_LABEL',
+    });
+
+    expect(html).toContain('transition: background-color 0.2s var(--ease), border-color 0.2s var(--ease), color 0.2s var(--ease), transform 0.2s var(--ease);');
+    expect(html).toContain('background-position: right 8px center;');
+    expect(html).toContain('background-size: 8px 5px;');
   });
 
   it('keeps the legacy browser attach page polling loop and retry backoff intact', () => {
